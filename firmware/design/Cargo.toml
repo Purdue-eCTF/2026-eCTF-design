@@ -1,0 +1,19 @@
+[package]
+name = "design"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cortex-m = "0.7.7"
+cortex-m-rt = { version = "0.7.2", features = [
+    "set-sp",
+    "set-vtor",
+    "device",
+], default-features = false }
+mspm0l222x-hal = { git = "https://github.com/Purdue-eCTF/mspm0l222x-hal.git", features = [
+    "rt",
+] }
+# mspm0l222x-hal = { path = "../mspm0l222x-hal", features = ["rt"] }
+
+[profile.release]
+lto = "fat"
