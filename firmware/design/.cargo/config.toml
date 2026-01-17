@@ -1,5 +1,17 @@
 [build]
 target = "thumbv6m-none-eabi"
 
+[unstable]
+profile-rustflags = true
+
+
 [target.thumbv6m-none-eabi]
-runner = ["sh", "openocd/run.sh"]
+rustflags = [
+    "-C",
+    "linker=arm-none-eabi-gcc",
+    "-C",
+    "link-arg=-nostartfiles",
+    "-C",
+    "link-arg=-Tlink.x",
+]
+runner = ["sh", "run.sh"]
