@@ -10,6 +10,8 @@ use mspm0l222x_hal::{
     uart::{Uart, println},
 };
 
+mod message;
+
 unsafe extern "C" {
     static _stack_start: usize;
 }
