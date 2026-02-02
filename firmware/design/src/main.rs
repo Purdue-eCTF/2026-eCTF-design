@@ -42,6 +42,7 @@ fn main() -> ! {
         // TODO: implement flash
     });
     let peripherals = Peripherals::take().unwrap();
+<<<<<<< HEAD
     let iomux = Iomux::new(&peripherals.iomux);
     Uart::init(&iomux, peripherals.uart0);
     Led::init(&iomux, peripherals.gpioa, peripherals.gpiob);
@@ -58,6 +59,17 @@ fn main() -> ! {
             Opcode::Listen => todo!(),
             Opcode::Ack => panic!("ACK without message"),
             e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
+=======
+    Uart::init(&peripherals.iomux, peripherals.uart0);
+    Led::init(&peripherals.iomux, peripherals.gpioa, peripherals.gpiob);
+    for i in 0u64.. {
+        led().set(LedColor::Blue);
+        println!("loop iter {i}");
+        println!("stack: {}", (&raw const _stack_start) as usize);
+        led().clear(LedColor::Blue);
+        for _ in core::hint::black_box(0..100_000) {
+            nop();
+>>>>>>> 974d04e (update linker script)
         }
     }
 }
