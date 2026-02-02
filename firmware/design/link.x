@@ -90,8 +90,9 @@ SECTIONS {
     __sidata = LOADADDR(.data);
 
     .files : {
+        _files = .;
         . += 8 * 8192;
-    } > APP1
+    } > FILETABLE
 
     /* pad secton to 8 bytes so flashing program doesn't complain */
     .padding :
@@ -127,6 +128,11 @@ SECTIONS {
     {
         KEEP(*(.got .got.*));
     }
+
+    .filetable : {
+        _filetable = .;
+        . += 0x400;
+    } =0x00 > FILETABLE
 
     /* ## Discarded sections */
     /DISCARD/ :
