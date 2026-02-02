@@ -1,0 +1,36 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+          cache: "pip" # Optional: Caches dependencies for faster subsequent runs
+
+      - name: Install pyzmq
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyzmq
+
+      - name: Run
+        env:
+          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+          IP: ${{ secrets.IP }}
+          BUILD_PORT: ${{ secrets.BUILD_PORT }}
+          BUILD_LOG_PORT: ${{ secrets.BUILD_LOG_PORT }}
+          TEST_LOG_PORT: ${{ secrets.TEST_LOG_PORT }}
+          ACTOR: ${{ github.actor }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: python upload.py '${{ github.sha }}' "$ACTOR" "$COMMIT_MESSAGE" '${{ github.run_id }}'
