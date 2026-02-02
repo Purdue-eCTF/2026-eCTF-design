@@ -2,13 +2,14 @@
 #![no_main]
 
 use core::panic::PanicInfo;
-use cortex_m::asm::nop;
 use cortex_m_rt::entry;
 use mspm0l222x_hal::{
-    Peripherals,
-    led::{Led, LedColor, led},
+    Peripherals, Trng,
+    led::Led,
     uart::{Uart, println},
 };
+
+use crate::message::{Message, Opcode};
 
 mod message;
 
@@ -27,14 +28,19 @@ fn main() -> ! {
     let peripherals = Peripherals::take().unwrap();
     Uart::init(&peripherals.iomux, peripherals.uart0);
     Led::init(&peripherals.iomux, peripherals.gpioa, peripherals.gpiob);
-    for i in 0u64.. {
-        led().set(LedColor::Blue);
-        println!("loop iter {i}");
-        led().clear(LedColor::Blue);
-        for _ in core::hint::black_box(0..100_000) {
-            nop();
+    Trng::init(peripherals.trng);
+
+    loop {
+        let msg = Message::read().unwrap();
+        match msg.opcode {
+            Opcode::List => todo!(),
+            Opcode::Read => todo!(),
+            Opcode::Write => todo!(),
+            Opcode::Receive => todo!(),
+            Opcode::Interrogate => todo!(),
+            Opcode::Listen => todo!(),
+            Opcode::Ack => panic!("ACK without message"),
+            e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
         }
     }
-
-    loop {}
 }

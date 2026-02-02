@@ -1,5 +1,6 @@
+use bytemuck::bytes_of_mut;
 use mspm0l222x_hal::uart::uart;
-use thiserror_no_std::Error;
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum MessageError {
@@ -11,34 +12,36 @@ pub enum MessageError {
     IncorrectMagic(u8),
     #[error("Body too long")]
     BodyLengthError,
+    #[error("No ACK received")]
+    AckError,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Opcode {
-    List, // L
-    Read, // R
-    Write, // W 
-    Receive, // C
+    List,        // L
+    Read,        // R
+    Write,       // W
+    Receive,     // C
     Interrogate, // I
-    Listen, // N
-    Ack, // A
-    Error, // E
-    Debug // D
+    Listen,      // N
+    Ack,         // A
+    Error,       // E
+    Debug,       // D
 }
 
 impl TryFrom<u8> for Opcode {
     type Error = ();
     fn try_from(value: u8) -> Result<Self, ()> {
         match value {
-            0x4c => Ok(Self::List),
-            0x52 => Ok(Self::Read),
-            0x57 => Ok(Self::Write),
-            0x43 => Ok(Self::Receive),
-            0x49 => Ok(Self::Interrogate),
-            0x4e => Ok(Self::Listen),
-            0x41 => Ok(Self::Ack),
-            0x45 => Ok(Self::Error),
-            0x44 => Ok(Self::Debug),
+            b'L' => Ok(Self::List),
+            b'R' => Ok(Self::Read),
+            b'W' => Ok(Self::Write),
+            b'C' => Ok(Self::Receive),
+            b'I' => Ok(Self::Interrogate),
+            b'N' => Ok(Self::Listen),
+            b'A' => Ok(Self::Ack),
+            b'E' => Ok(Self::Error),
+            b'D' => Ok(Self::Debug),
             _ => Err(()),
         }
     }
@@ -47,21 +50,23 @@ impl TryFrom<u8> for Opcode {
 impl From<Opcode> for u8 {
     fn from(opcode: Opcode) -> u8 {
         match opcode {
-            Opcode::List => 0x4c,
-            Opcode::Read => 0x52,
-            Opcode::Write => 0x57,
-            Opcode::Receive => 0x43,
-            Opcode::Interrogate => 0x49,
-            Opcode::Listen => 0x4e,
-            Opcode::Ack => 0x41,
-            Opcode::Error => 0x45,
-            Opcode::Debug => 0x44,
+            Opcode::List => b'L',
+            Opcode::Read => b'R',
+            Opcode::Write => b'W',
+            Opcode::Receive => b'C',
+            Opcode::Interrogate => b'I',
+            Opcode::Listen => b'N',
+            Opcode::Ack => b'A',
+            Opcode::Error => b'E',
+            Opcode::Debug => b'D',
         }
     }
 }
 
 /// Value required at the start of every message
 pub const MAGIC: u8 = b'%';
+
+// TODO: how to chunk files for sending? 8kb is like 1/4 of RAM
 /// Maximum body size for a message: 4.5 KiB
 pub const MAX_BODY_SIZE: usize = 4608;
 /// Messages get sent in 256-byte chunks, with an ack for each chunk
@@ -89,11 +94,15 @@ impl Message {
 
     /// Creates a new message from the given opcode and byte slice.
     #[inline]
-    pub fn from_data(opcode: Opcode, data: &[u8]) -> Self {
+    pub fn from_data(opcode: Opcode, data: &[u8]) -> Result<Self, MessageError> {
+        if data.len() > MAX_BODY_SIZE {
+            return Err(MessageError::BodyLengthError);
+        }
+
         let mut body = [0; MAX_BODY_SIZE];
         body[..data.len()].copy_from_slice(data);
 
-        Self::new(opcode, data.len() as u16, body)
+        Ok(Self::new(opcode, data.len() as u16, body))
     }
 
     /// Gets the message body as a mutable byte slice.
@@ -105,20 +114,25 @@ impl Message {
     /// Reads a message header from UART without reading the body.
     #[inline]
     pub fn read_header() -> Result<Self, MessageError> {
+        // TODO: once uart0/uart1 support is merged:
+        // - replace uart with uart0
+        // - replace read_bytes(1) with read_byte
         let reader = uart();
 
-        let magic = reader.read_byte();
+        let mut magic = 0u8;
+        reader.read_bytes(bytes_of_mut(&mut magic)).unwrap();
         if magic != MAGIC {
             return Err(MessageError::IncorrectMagic(magic));
         }
 
-        let opcode_byte = reader.read_byte();
+        let mut opcode_byte = 0u8;
+        reader.read_bytes(bytes_of_mut(&mut opcode_byte)).unwrap();
         let Ok(opcode) = Opcode::try_from(opcode_byte) else {
             return Err(MessageError::UnexpectedOpcode(opcode_byte));
         };
 
         let mut length = [0, 0];
-        reader.read_bytes(&mut length);
+        reader.read_bytes(&mut length).unwrap();
         let length = u16::from_le_bytes(length);
         Ok(Self {
             opcode,
@@ -136,7 +150,7 @@ impl Message {
 
         if message.length != 0 {
             for chunk in message.body[..message.length.into()].chunks_mut(CHUNK_SIZE) {
-                reader.read_bytes(chunk);
+                reader.read_bytes(chunk).unwrap();
                 Self::send_ack();
             }
         }
@@ -194,7 +208,7 @@ impl Message {
         if data.len() > MAX_BODY_SIZE {
             return Err(MessageError::BodyLengthError);
         }
-        let msg = Message::from_data(opcode, data);
+        let msg = Message::from_data(opcode, data)?;
         msg.write()
     }
 
