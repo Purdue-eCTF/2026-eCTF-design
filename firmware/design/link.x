@@ -9,9 +9,10 @@ Offset  | Size    | Name                  | Description
 
 MEMORY {
     BOOTLOADER(r) : ORIGIN = 0x0, LENGTH = 0x6000
-    APP1(rwx) : ORIGIN = 0x6000, LENGTH = 0x34000
+    APP1(rx) : ORIGIN = 0x6000, LENGTH = 0x34000
+    FILES(rw) : ORIGIN = 0x3A000 - (8*8192), LENGTH = 8*8192
     FILETABLE(rw) : ORIGIN = 0x3A000, LENGTH = 0x400
-    APP2(rwx) : ORIGIN = 0x3A400, LENGTH = 0x5c00
+    APP2(r) : ORIGIN = 0x3A400, LENGTH = 0x5c00
 }
 
 INCLUDE memory.x
@@ -92,7 +93,7 @@ SECTIONS {
     .files : {
         _files = .;
         . += 8 * 8192;
-    } > FILETABLE
+    } > FILES
 
     /* pad secton to 8 bytes so flashing program doesn't complain */
     .padding :
@@ -132,7 +133,7 @@ SECTIONS {
     .filetable : {
         _filetable = .;
         . += 0x400;
-    } =0x00 > FILETABLE
+    } > FILETABLE
 
     /* ## Discarded sections */
     /DISCARD/ :
