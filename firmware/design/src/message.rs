@@ -158,6 +158,16 @@ impl Message {
         Ok(message)
     }
 
+    /// Reads up to CHUNK_SIZE bytes from UART, skipping the header.
+    pub fn read_block() -> Result<[u8; CHUNK_SIZE], MessageError> {
+        let mut content: [u8; CHUNK_SIZE] = [0; CHUNK_SIZE];
+        let reader = uart();
+        reader.read_bytes(&mut content).unwrap();
+        Self::send_ack();
+
+        Ok(content)
+    }
+
     /// Writes an ack to UART.
     pub fn send_ack() {
         let ack = Self::ack();
@@ -199,6 +209,18 @@ impl Message {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Writes up to CHUNK_SIZE bytes to UART without sending a header.
+    pub fn write_block(data: &[u8]) -> Result<(), MessageError> {
+        if (data.len() > CHUNK_SIZE) {
+            return Err(MessageError::BodyLengthError);
+        }
+
+        let writer = uart();
+        writer.write_bytes(data);
+        Self::read_ack()?;
         Ok(())
     }
 
