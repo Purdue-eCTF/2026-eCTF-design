@@ -214,7 +214,7 @@ impl Message {
 
     /// Writes up to CHUNK_SIZE bytes to UART without sending a header.
     pub fn write_block(data: &[u8]) -> Result<(), MessageError> {
-        if (data.len() > CHUNK_SIZE) {
+        if data.len() > CHUNK_SIZE {
             return Err(MessageError::BodyLengthError);
         }
 

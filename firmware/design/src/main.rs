@@ -2,11 +2,10 @@
 #![no_main]
 
 use core::panic::PanicInfo;
+
 use cortex_m_rt::entry;
 use mspm0l222x_hal::{
-    Peripherals, Trng,
-    led::Led,
-    uart::{Uart, println},
+    Peripherals, Trng, iomux::Iomux, led::Led, uart::{Uart, println}
 };
 
 use crate::message::{Message, Opcode};
@@ -14,7 +13,9 @@ use crate::message::{Message, Opcode};
 mod message;
 
 unsafe extern "C" {
-    static _stack_start: usize;
+    static _stack_start: u8;
+    static _boot_seed: u8;
+    static _boot_salt: u8;
 }
 
 #[panic_handler]
@@ -23,11 +24,27 @@ fn handle_panics(info: &PanicInfo) -> ! {
     cortex_m::peripheral::SCB::sys_reset();
 }
 
+const BOOT_SEED: [u8; 32] = [0; _];
+
+macro_rules! sensitive {
+    ($context:ident, $($body:stmt)+) => {
+        $context.move_salt_to_ram();
+        $($body)+
+        $context.move_salt_to_flash();
+    };
+}
+
 #[entry]
 fn main() -> ! {
+    let context = [];
+    sensitive!(context, {
+        // Do something sensitive
+        // TODO: implement flash
+    });
     let peripherals = Peripherals::take().unwrap();
-    Uart::init(&peripherals.iomux, peripherals.uart0);
-    Led::init(&peripherals.iomux, peripherals.gpioa, peripherals.gpiob);
+    let iomux = Iomux::new(&peripherals.iomux);
+    Uart::init(&iomux, peripherals.uart0);
+    Led::init(&iomux, peripherals.gpioa, peripherals.gpiob);
     Trng::init(peripherals.trng);
 
     loop {

@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+
 bytemuck = "1.25.0"
+argon2 = { version = "0.5.3", default-features = false }
+blake2 = { version = "0.10.6", default-features = false }
+chacha20poly1305 = { version = "0.10.1", default-features = false }
 cortex-m = "0.7.7"
 cortex-m-rt = { version = "0.7.2", features = [
     "set-sp",
@@ -15,6 +19,7 @@ mspm0l222x-hal = { git = "https://github.com/Purdue-eCTF/mspm0l222x-hal.git", fe
     "rt",
 ] }
 thiserror = { version = "2.0.18", default-features = false }
+x25519-dalek = { version = "2.0.1", default-features = false }
 # mspm0l222x-hal = { path = "../mspm0l222x-hal", features = ["rt"] }
 
 [profile.release]
