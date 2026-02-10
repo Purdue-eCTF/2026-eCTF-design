@@ -67,6 +67,20 @@ name = "bytemuck"
 version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
+dependencies = [
+ "bytemuck_derive",
+]
+
+[[package]]
+name = "bytemuck_derive"
+version = "1.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9abbd1bc6865053c427f7198e6af43bfdedc55ab791faed4fbd361d789575ff"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "cfg-if"
@@ -262,7 +276,7 @@ checksum = "459427e2af2b9c839b132acb702a1c654d95e10f8c326bfc2ad11310e458b1c5"
 [[package]]
 name = "mspm0l222x-hal"
 version = "0.1.0"
-source = "git+https://github.com/Purdue-eCTF/mspm0l222x-hal.git#4e9a15cc7334e42632120423bc78aa6d0f951674"
+source = "git+https://github.com/Purdue-eCTF/mspm0l222x-hal.git#8ce492764e1f5f9da4fa767788081985824d2609"
 dependencies = [
  "bytemuck",
  "cortex-m",
@@ -275,7 +289,7 @@ dependencies = [
 [[package]]
 name = "mspm0l222x-pac"
 version = "0.1.0"
-source = "git+https://github.com/Purdue-eCTF/mspm0l222x-pac.git#48b6ddbb2c12782424d4bbb71e4833a7a0687857"
+source = "git+https://github.com/Purdue-eCTF/mspm0l222x-pac.git#4448b3893016c76c2dcf6fc3f4f945acd2d86fd2"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
