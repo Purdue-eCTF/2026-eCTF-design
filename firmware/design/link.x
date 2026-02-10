@@ -18,8 +18,20 @@
   "Address (..) is out of bounds" in the disassembly produced by `objdump`.
 */
 
+<<<<<<< Updated upstream
 /* Provides information about the memory layout of the device */
 /* This will be provided by the user (see `memory.x`) or by a Board Support Crate */
+=======
+/* TODO: NOLOAD on bootloader? */
+MEMORY {
+    BOOTLOADER(r) : ORIGIN = 0x0, LENGTH = 0x6000
+    APP1(rx) : ORIGIN = 0x6000, LENGTH = 0x34000
+    FILES(rw) : ORIGIN = 0x3A000 - (8*8192), LENGTH = 8*8192
+    FILETABLE(rw) : ORIGIN = 0x3A000, LENGTH = 0x400
+    APP2(r) : ORIGIN = 0x3A400, LENGTH = 0x5c00
+}
+
+>>>>>>> Stashed changes
 INCLUDE memory.x
 INCLUDE device.x
 

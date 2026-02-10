@@ -43,10 +43,20 @@ def gen_secrets(groups: list[int]) -> bytes:
         "some_secrets": "EXAMPLE",
     }
 
+    # TODO: generate appropriate keys
+    for group in groups:
+        write_keypair = ...
+        read_keypair = ...
+        transfer_keypair = ...
+        interrogate_keypair = ...
+        shared_k0 = ...
+        shared_k1 = ...
+
     # NOTE: if you choose to use JSON for your file type, you will not
     # be able to store binary data, and must either use a different file
     # type or encode the binary data to hex, base64, or another type of
     # ASCII-only encoding
+    # TODO: do we care about binary data
     return json.dumps(secrets).encode()
 
 
