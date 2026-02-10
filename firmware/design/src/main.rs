@@ -5,15 +5,14 @@ mod message;
 mod secrets;
 
 use core::panic::PanicInfo;
-
 use cortex_m_rt::entry;
 use mspm0l222x_hal::{
-    Peripherals,
     flash::FlashController,
+    uart::{println, Uart},
+    Peripherals,
+    trng::Trng,
     iomux::Iomux,
     led::Led,
-    trng::Trng,
-    uart::{Uart, println},
 };
 
 use crate::message::{Message, Opcode};
