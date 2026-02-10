@@ -7,14 +7,7 @@ Offset  | Size    | Name                  | Description
 0x3A400 | 0x5c00  | APP2                  | Flash region that may be used by your design however you see fit.
 */
 
-<<<<<<< HEAD
-<<<<<<< Updated upstream
-/* Provides information about the memory layout of the device */
-/* This will be provided by the user (see `memory.x`) or by a Board Support Crate */
-=======
 /* TODO: NOLOAD on bootloader? */
-=======
->>>>>>> refs/remotes/origin/main
 MEMORY {
     BOOTLOADER(r) : ORIGIN = 0x0, LENGTH = 0x6000
     APP1(rx) : ORIGIN = 0x6000, LENGTH = 0x34000
@@ -23,10 +16,6 @@ MEMORY {
     APP2(r) : ORIGIN = 0x3A400, LENGTH = 0x5c00
 }
 
-<<<<<<< HEAD
->>>>>>> Stashed changes
-=======
->>>>>>> refs/remotes/origin/main
 INCLUDE memory.x
 INCLUDE device.x
 
@@ -102,18 +91,10 @@ SECTIONS {
 
     __sidata = LOADADDR(.data);
 
-    .files : {
+    .files (NOLOAD) : {
         _files = .;
         . += 8 * 8192;
     } > FILES
-
-    /* pad secton to 8 bytes so flashing program doesn't complain */
-    .padding :
-    {
-        __padding = .;
-        . += (8 - (__padding & 7)) & 7;
-        FILL(0x00);
-    } > FLASH
 
     /* ### .bss */
     .bss (NOLOAD) : ALIGN(4)
@@ -142,7 +123,7 @@ SECTIONS {
         KEEP(*(.got .got.*));
     }
 
-    .filetable : {
+    .filetable (NOLOAD) : {
         _filetable = .;
         . += 0x400;
     } > FILETABLE

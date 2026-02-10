@@ -243,3 +243,6 @@ impl Message {
         }
     }
 }
+
+
+// TODO: inter-device messaging over UART1
