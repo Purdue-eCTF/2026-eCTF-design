@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+mod crypto;
 mod message;
 mod secrets;
 
