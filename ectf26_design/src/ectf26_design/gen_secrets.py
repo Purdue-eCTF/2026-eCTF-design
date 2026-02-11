@@ -13,7 +13,8 @@ Copyright: Copyright (c) 2026 The MITRE Corporation
 import argparse
 import json
 from pathlib import Path
-
+from Crypto.PublicKey import ECC
+from Crypto.Cipher import ChaCha20_Poly1305 # XChaCha is included in this
 from loguru import logger
 
 
@@ -44,11 +45,17 @@ def gen_secrets(groups: list[int]) -> bytes:
     }
 
     # TODO: generate appropriate keys
+    # 32 random bytes (and double check that they're random using secrets.toke_bytes)
     for group in groups:
-        write_keypair = ...
-        read_keypair = ...
-        transfer_keypair = ...
-        interrogate_keypair = ...
+        write_keypair = ECC.generate(curve='Ed25519')
+        read_keypair = ECC.generate(curve='Ed25519')
+        transfer_keypair = ECC.generate(curve='Ed25519')
+        interrogate_keypair = ECC.generate(curve='Ed25519')
+
+        '''
+        These are supposed to be XChaCha, from pycrptodome.org something like:
+        https://pycryptodome.readthedocs.io/en/latest/src/cipher/chacha20_poly1305.html
+        '''
         shared_k0 = ...
         shared_k1 = ...
 
@@ -102,6 +109,7 @@ def main():
     # Open the file, erroring if the file exists unless the --force arg is provided
     with open(args.secrets_file, "wb" if args.force else "xb") as f:
         # Dump the secrets to the file
+        # TODO: (by Ved) add control flow to pick which secrets to write to file based on permissions
         f.write(secrets)
 
     # For your own debugging. Feel free to remove
