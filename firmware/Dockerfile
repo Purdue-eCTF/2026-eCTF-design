@@ -12,7 +12,7 @@ Suites: trixie trixie-updates
 Components: main
 Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
 EOF
-apt-get update && apt-get install -y gcc-arm-none-eabi && rm -rf /var/lib/apt/lists/*
+apt-get update && apt-get install -y --no-install-recommends gcc-arm-none-eabi && rm -rf /var/lib/apt/lists/*
 EOF2
 
 RUN <<EOF
