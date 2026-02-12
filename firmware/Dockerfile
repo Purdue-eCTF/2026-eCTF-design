@@ -6,8 +6,9 @@ FROM rust:slim-trixie
 ARG DEBIAN_FRONTEND=noninteractive
 RUN <<EOF
 apt-get update && apt-get install -y gcc-arm-none-eabi
-rustup +nightly toolchain update
-rustup +nightly target install thumbv6m-none-eabi
+rustup toolchain update nightly
+rustup target install --toolchain nightly thumbv6m-none-eabi
+rustup component add --toolchain nightly rustc-dev rustfmt
 EOF
 
 WORKDIR /hsm
