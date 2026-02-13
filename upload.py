@@ -31,7 +31,9 @@ def listen_logs(run_id):
         socks = dict(poller.poll())
         for sock in socks:
             if socks[sock] == zmq.POLLIN:
-                _, msg = sock.recv_multipart()
+                resp = sock.recv_multipart()
+                print(resp)
+                _, msg = resp
                 print(msg.decode())
 
 
@@ -58,7 +60,6 @@ def main():
     print("Authenticated with build server")
 
     conn.send(f"{sys.argv[1]}\x1b{sys.argv[2]}\x1b{sys.argv[3]}\x1b{sys.argv[4]}".encode())
-
     while True:
         data = conn.recv(1024)
         if not data:
