@@ -32,9 +32,11 @@ def listen_logs(run_id):
         for sock in socks:
             if socks[sock] == zmq.POLLIN:
                 resp = sock.recv_multipart()
-                print(resp)
-                _, msg = resp
-                print(msg.decode())
+                if len(resp) != 2:
+                    print("Invalid pub message", resp)
+                else:
+                    _, msg = resp
+                    print(msg.decode())
 
 
 def main():
