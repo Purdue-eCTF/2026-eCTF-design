@@ -19,6 +19,17 @@ pub enum CryptoError {
     KDFFailure,
 }
 
+// expect gn || ct
+pub fn decrypt_payload_pub_combined(payload: &mut [u8], key: &[u8; 32]) -> Result<(), CryptoError> {
+    if (payload.len() < GN_SIZE) {
+        return Err(CryptoError::InvalidDecryptionPayload);
+    }
+    let (gn, ct) = payload.split_at_mut(GN_SIZE);
+    let gn = &gn[0..32];
+    decrypt_payload_pub(ct, key, gn.try_into().unwrap())?;
+    Ok(())
+}
+
 pub fn decrypt_payload_pub<'a>(
     payload: &'a mut [u8],
     key: &[u8; 32],
