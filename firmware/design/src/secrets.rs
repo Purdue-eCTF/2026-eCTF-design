@@ -2,13 +2,13 @@
 const BOOT_SALT_0: [u8; 32] = [0; _];
 
 #[derive(Default)]
-struct SymmetricKey([u32; 8]);
+pub struct SymmetricKey(pub [u32; 8]);
 
 struct AsymmetricKey([u32; 8]);
 
 #[derive(Default)]
-struct GroupKey {
-    group: u16,
+pub struct GroupKey {
+    pub group: u16,
     sk_sign: SymmetricKey,
     pk_sign: SymmetricKey,
     sk_read: SymmetricKey,
@@ -16,7 +16,7 @@ struct GroupKey {
     sk_trans: SymmetricKey,
     pk_trans: SymmetricKey,
     sk_inter: SymmetricKey,
-    pk_inter: SymmetricKey,
+    pub pk_inter: SymmetricKey,
     t0: SymmetricKey,
     t1: SymmetricKey,
     s0: SymmetricKey,

@@ -147,9 +147,8 @@ fn handle_list(ctx: &mut Context) {
     let mut counter: [u8; 1] = [0];
 
     for i in 0..8 {
-        // find if file slot is in use TODO check convention
         // if not in use, continue
-        if ctx.files[i].contents[0] == 0 {
+        if ctx.files[i].contents[FILE_USED_SIZE + MAX_GUID_SIZE..FILE_USED_SIZE + MAX_GUID_SIZE + NAME_SIZE].is_empty() {
             continue;
         }
         counter[0] += 1;
@@ -166,7 +165,6 @@ fn handle_list(ctx: &mut Context) {
 
         // read guid
         // TODO is try_into needed if we know that u8 is fine?
-        // TODO need to know size of guid spot to read (or is it varying?)
         let name: [u8; NAME_SIZE] = ctx.files[i]
             .contents[FILE_USED_SIZE + MAX_GUID_SIZE..FILE_USED_SIZE + MAX_GUID_SIZE + NAME_SIZE]
             .try_into().unwrap();
@@ -176,7 +174,6 @@ fn handle_list(ctx: &mut Context) {
             .contents[FILE_USED_SIZE..FILE_USED_SIZE + MAX_GUID_SIZE]
             .try_into().unwrap();
         list[(4usize + (i * size_of_everything) + 1usize + NAME_SIZE)..(4usize + (i * size_of_everything) + 1usize + NAME_SIZE + GID_SIZE)].copy_from_slice(&gid);
-        // TODO
 
         let newline: [u8; 1] = [10];
         list[(4usize + (i * size_of_everything) + 1usize + NAME_SIZE + GID_SIZE)..(4usize + (i * size_of_everything) + 2usize + NAME_SIZE + GID_SIZE)].copy_from_slice(&newline);
@@ -186,7 +183,7 @@ fn handle_list(ctx: &mut Context) {
     list[0..1].copy_from_slice(&counter);
     let body = if list.is_empty() {"No files found.".as_bytes()} else {&list};
 
-    // PRAYING THIS WORKS
+    // PRAYING THIS WORKS (TODO does result need to be used)
     Message::from_data(Opcode::List, body).unwrap().write();
     
     // (does metadata need to be formatted??)
@@ -240,9 +237,13 @@ fn handle_interrogate(ctx: &mut Context) {
     // check for right pin from host
     // - if not right pin, panic w message
 
-    // retrieve perms
-    for group in secrets::GROUP_KEYS.iter_mut().enumerate() {
-
+    let mut groups: [u8; secrets::GROUP_KEYS.len() * GID_SIZE] = [0u8; secrets::GROUP_KEYS.len() * GID_SIZE];
+    let mut group_count = 0;
+    // TODO retrieve perms. if group's key is loaded into flash, add group?
+    for group in secrets::GROUP_KEYS.iter().enumerate() {
+        if group.1.pk_inter.0.is_empty() { continue };
+        group_count += 1;
+        groups[group_count * GID_SIZE..(group_count * GID_SIZE + GID_SIZE)].copy_from_slice(&group.1.group.to_ne_bytes());
     }
 
     // TODO replace with uart1 io. pretend Interrogate_retrieve exists pls
