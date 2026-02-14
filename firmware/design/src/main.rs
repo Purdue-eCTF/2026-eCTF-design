@@ -53,6 +53,47 @@ struct FatEntry {
     addr: usize,
 }
 
+const NAME_SIZE: usize = 32;
+const UUID_SIZE: usize = 16;
+const MAX_FILE_SIZE: usize = 8192;
+const SIGNATURE_SIZE: usize = 32;
+
+#[derive(Debug)]
+pub enum FileViewError {
+    TooMuchData,
+}
+
+pub struct FileView<'a> {
+    name: &'a [u8; NAME_SIZE],
+    group: u16,
+    uuid: &'a [u8; UUID_SIZE],
+    data: &'a [u8],
+}
+
+impl<'a> FileView<'a> {
+    pub fn new(
+        name: &'a [u8; NAME_SIZE],
+        group: u16,
+        uuid: &'a [u8; UUID_SIZE],
+        data: &'a [u8],
+    ) -> Self {
+        Self {
+            name,
+            group,
+            uuid,
+            data,
+        }
+    }
+
+    pub fn concat_bytes(&self, buf: &mut [u8]) -> Result<(), FileViewError> {
+        todo!();
+    }
+
+    const fn calculate_concat_size(&self) -> usize {
+        todo!();
+    }
+}
+
 // TODO: move File/FatEntry to FlashEntry abstraction
 pub(crate) struct Context {
     pub files: &'static [File; 8],
@@ -119,7 +160,7 @@ fn handle_read(ctx: &mut Context) {
 
     let pk_sign: &[u8; 32] = &[0; _];
     let group = 0u16;
-    let uuid = 0u16;
+    let uuid = ctx.fat[slot].uuid;
 
     //TODO: Hardcoded name length
     let name: &[u8; 32] = &[0; _];
