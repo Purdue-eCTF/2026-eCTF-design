@@ -7,13 +7,14 @@ mod secrets;
 
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use mspm0l222x_hal::{
-    flash::FlashController,
-    uart::{println, Uart},
     Peripherals,
-    trng::Trng,
+    flash::FlashController,
     iomux::Iomux,
     led::Led,
+    trng::Trng,
+    uart::{Uart, println},
 };
 
 use crate::message::{Message, Opcode};
@@ -111,7 +112,39 @@ fn handle_list(ctx: &mut Context) {
     todo!()
 }
 
+// read file on given slot
 fn handle_read(ctx: &mut Context) {
+    //TODO: discover correct values
+    let slot: usize = 0;
+
+    let pk_sign: &[u8; 32] = &[0; _];
+    let group = 0u16;
+    let uuid = 0u16;
+
+    //TODO: Hardcoded name length
+    let name: &[u8; 32] = &[0; _];
+    let signature: &[u8; 64] = &[0; _];
+    let expected_signature = Signature::from_bytes(signature);
+
+    let file_length = ctx.fat[slot].length as usize;
+
+    let key = VerifyingKey::from_bytes(pk_sign).unwrap();
+    // N || G || U || C
+
+    let mut vbuf: [u8; 32 + 2 + 2 + 8192] = [0u8; _];
+    //surely there is a more idiomatic way to do this
+    (&mut vbuf[0..32]).copy_from_slice(name);
+    (&mut vbuf[32..34]).copy_from_slice(&group.to_le_bytes());
+    (&mut vbuf[34..36]).copy_from_slice(&uuid.to_le_bytes());
+    (&mut vbuf[36..36 + file_length]).copy_from_slice(&ctx.files[slot].contents[..file_length]);
+
+    let _ = key
+        .verify(&vbuf[..36 + file_length], &expected_signature)
+        .unwrap();
+
+    //TODO: Where does this come from
+    let sk_read: &[u8; 32] = &[0; _];
+
     todo!()
 }
 

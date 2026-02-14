@@ -20,6 +20,7 @@ mspm0l222x-hal = { git = "https://github.com/Purdue-eCTF/mspm0l222x-hal.git", fe
 ] }
 thiserror = { version = "2.0.18", default-features = false }
 x25519-dalek = { version = "2.0.1", default-features = false }
+ed25519-dalek = { version = "2.2.0", default-features = false }
 # mspm0l222x-hal = { path = "../mspm0l222x-hal", features = ["rt"] }
 
 [profile.release]
