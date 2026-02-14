@@ -8,6 +8,53 @@ pub enum FileViewError {
     BufferTooSmall,
 }
 
+#[derive(Debug)]
+pub enum ConcatViewError {
+    BadOffsets,
+    BufferTooSmall,
+}
+
+pub struct ConcatView<'a> {
+    name: &'a mut [u8],
+    group: &'a mut [u8; 2],
+    uuid: &'a mut [u8; 16],
+    data: &'a mut [u8],
+}
+
+impl<'a> ConcatView<'a> {
+    pub fn new(offsets: ConcatOffsets, underlying: &'a mut [u8]) -> Result<Self, ConcatViewError> {
+        let name_l = offsets.group - offsets.name;
+        let group_l = offsets.uuid - offsets.group;
+        let uuid_l = offsets.data - offsets.uuid;
+        let data_l = offsets.end - offsets.data;
+        let total = name_l + group_l + uuid_l + data_l;
+
+        if (name_l <= 0)
+            || (group_l != 2)
+            || (uuid_l != 16)
+            || (data_l <= 0)
+            || (offsets.end - offsets.name != total)
+        {
+            return Err(ConcatViewError::BadOffsets);
+        }
+
+        if (total > underlying.len()) {
+            return Err(ConcatViewError::BufferTooSmall);
+        }
+
+        let (name, rest) = underlying.split_at_mut(name_l);
+        let (group, rest) = rest.split_at_mut(2);
+        let (uuid, rest) = rest.split_at_mut(16);
+        let (data, _) = rest.split_at_mut(data_l);
+        Ok(Self {
+            name,
+            group: group.try_into().unwrap(),
+            uuid: uuid.try_into().unwrap(),
+            data,
+        })
+    }
+}
+
 #[derive(Default)]
 pub struct ConcatOffsets {
     pub name: usize,

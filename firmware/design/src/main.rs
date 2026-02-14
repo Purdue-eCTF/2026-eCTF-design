@@ -2,16 +2,15 @@
 #![no_main]
 
 mod crypto;
-mod file_view;
 mod message;
 mod secrets;
+mod view;
 
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use x25519_dalek::StaticSecret;
 
-use file_view::FileView;
+use view::FileView;
 
 use mspm0l222x_hal::{
     Peripherals,
