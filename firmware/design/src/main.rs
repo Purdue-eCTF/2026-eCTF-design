@@ -60,8 +60,10 @@ const SIGNATURE_SIZE: usize = 32;
 
 #[derive(Debug)]
 pub enum FileViewError {
-    TooMuchData,
+    BufferTooSmall,
 }
+
+pub struct ConcatInfo {}
 
 pub struct FileView<'a> {
     name: &'a [u8; NAME_SIZE],
@@ -85,12 +87,27 @@ impl<'a> FileView<'a> {
         }
     }
 
-    pub fn concat_bytes(&self, buf: &mut [u8]) -> Result<(), FileViewError> {
-        todo!();
+    pub fn concat_bytes(&self, buf: &mut [u8]) -> Result<usize, FileViewError> {
+        let capacity = self.calculate_concat_size();
+        if buf.len() < capacity {
+            return Err(FileViewError::BufferTooSmall);
+        }
+        let mut i = 0;
+        buf[i..i + NAME_SIZE].copy_from_slice(self.name);
+        i += NAME_SIZE;
+
+        buf[i..i + 2].copy_from_slice(&self.group.to_le_bytes());
+        i += 2;
+
+        buf[i..i + UUID_SIZE].copy_from_slice(self.uuid);
+        i += UUID_SIZE;
+
+        buf[i..i + self.data.len()].copy_from_slice(self.data);
+        Ok(i)
     }
 
-    const fn calculate_concat_size(&self) -> usize {
-        todo!();
+    fn calculate_concat_size(&self) -> usize {
+        NAME_SIZE + 2 + UUID_SIZE + self.data.len()
     }
 }
 
@@ -160,7 +177,7 @@ fn handle_read(ctx: &mut Context) {
 
     let pk_sign: &[u8; 32] = &[0; _];
     let group = 0u16;
-    let uuid = ctx.fat[slot].uuid;
+    let uuid = &ctx.fat[slot].uuid;
 
     //TODO: Hardcoded name length
     let name: &[u8; 32] = &[0; _];
@@ -169,22 +186,19 @@ fn handle_read(ctx: &mut Context) {
 
     let file_length = ctx.fat[slot].length as usize;
 
-    let key = VerifyingKey::from_bytes(pk_sign).unwrap();
-    // N || G || U || C
-
+    let pk_sign_k = VerifyingKey::from_bytes(pk_sign).unwrap();
+    let fv = FileView::new(name, group, uuid, &ctx.files[slot].contents[..file_length]);
     let mut vbuf: [u8; 32 + 2 + 2 + 8192] = [0u8; _];
-    //surely there is a more idiomatic way to do this
-    (&mut vbuf[0..32]).copy_from_slice(name);
-    (&mut vbuf[32..34]).copy_from_slice(&group.to_le_bytes());
-    (&mut vbuf[34..36]).copy_from_slice(&uuid.to_le_bytes());
-    (&mut vbuf[36..36 + file_length]).copy_from_slice(&ctx.files[slot].contents[..file_length]);
 
-    let _ = key
-        .verify(&vbuf[..36 + file_length], &expected_signature)
+    let concat_length = fv.concat_bytes(&mut vbuf).unwrap();
+    let _ = pk_sign_k
+        .verify(&vbuf[..concat_length], &expected_signature)
         .unwrap();
 
     //TODO: Where does this come from
     let sk_read: &[u8; 32] = &[0; _];
+
+    crypto::decrypt_payload_symmetric(vbuf, sk_read, associated_data).unwrap();
 
     todo!()
 }
