@@ -2,12 +2,17 @@
 #![no_main]
 
 mod crypto;
+mod file_view;
 mod message;
 mod secrets;
 
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use x25519_dalek::StaticSecret;
+
+use file_view::FileView;
+
 use mspm0l222x_hal::{
     Peripherals,
     flash::FlashController,
@@ -241,6 +246,7 @@ fn handle_list(ctx: &mut Context) {
 }
 
 // read file on given slot
+
 fn handle_read(ctx: &mut Context) {
     //TODO: discover correct values
     let slot: usize = 0;
@@ -252,25 +258,25 @@ fn handle_read(ctx: &mut Context) {
     //TODO: Hardcoded name length
     let name: &[u8; 32] = &[0; _];
     let signature: &[u8; 64] = &[0; _];
-    let expected_signature = Signature::from_bytes(signature);
 
     let file_length = ctx.fat[slot].length as usize;
 
     let pk_sign_k = VerifyingKey::from_bytes(pk_sign).unwrap();
+
     let fv = FileView::new(name, group, uuid, &ctx.files[slot].contents[..file_length]);
     let mut vbuf: [u8; 32 + 2 + 2 + 8192] = [0u8; _];
     let offsets = fv.concat_bytes(&mut vbuf).unwrap();
+
+    let expected_signature = Signature::from_bytes(&[0u8; 64]);
 
     let _ = pk_sign_k
         .verify(&vbuf[..offsets.end], &expected_signature)
         .unwrap();
 
     //TODO: Where does this come from
+
     let sk_read: &[u8; 32] = &[0; _];
-
     let cipher_text = &mut vbuf[offsets.data..offsets.end];
-    crypto::decrypt_payload_symmetric(cipher_text, sk_read, todo!()).unwrap();
-
     todo!()
 }
 
