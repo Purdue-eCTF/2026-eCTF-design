@@ -23,7 +23,7 @@ struct GroupKey {
     s1: SymmetricKey,
 }
 
-const GROUP_KEYS: [GroupKey; 1] = [GroupKey {
+pub const GROUP_KEYS: [GroupKey; 1] = [GroupKey {
     group: 0x0000,
     sk_sign: SymmetricKey([0; _]),
     pk_sign: SymmetricKey([0; _]),

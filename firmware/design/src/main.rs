@@ -54,6 +54,7 @@ struct FatEntry {
 }
 
 const NAME_SIZE: usize = 32;
+const GID_SIZE: usize = 2;
 const UUID_SIZE: usize = 16;
 const MAX_FILE_SIZE: usize = 8192;
 const SIGNATURE_SIZE: usize = 32;
@@ -167,7 +168,7 @@ fn main() -> ! {
 
         sensitive!(ctx, {
             match msg.opcode {
-                Opcode::List => handle_list(&mut ctx),
+                Opcode::List => handle_list(&mut ctx, msg),
                 Opcode::Read => handle_read(&mut ctx),
                 Opcode::Write => handle_write(&mut ctx),
                 Opcode::Receive => handle_receive(&mut ctx),
@@ -184,13 +185,14 @@ fn main() -> ! {
 fn handle_list(ctx: &mut Context) {
     // do i need to do this
     // check pin
+
     // - if not right pin, panic w message
     const FILE_USED_SIZE: usize = 1;
-    const MAX_GUID_SIZE: usize = 32;
-    const MAX_NAME_SIZE: usize = 64;
+    const MAX_GUID_SIZE: usize = 2;
 
     // extra 8 bytes for newlines lolol
-    let list: [u8; (MAX_GUID_SIZE + MAX_NAME_SIZE + 8) * 8];
+    let mut list: [u8; 4 + (MAX_GUID_SIZE + NAME_SIZE + 2) * 8] = [0u8; 4 + (MAX_GUID_SIZE + NAME_SIZE + 2) * 8];
+    let mut counter: [u8; 1] = [0];
 
     for i in 0..8 {
         // find if file slot is in use TODO check convention
@@ -198,30 +200,43 @@ fn handle_list(ctx: &mut Context) {
         if ctx.files[i].contents[0] == 0 {
             continue;
         }
+        counter[0] += 1;
             
+        // index * info + newline + file slot
+        let size_of_everything = NAME_SIZE + GID_SIZE + 2usize;
+
         // iterate through file slots (?) and retrieve metadata for each file
-        // - file name and group ids
+        // - slot, file name, group ids, newline
         // - print while iterating?
+
+        let slot: [u8; 1] = [i as u8];
+        list[(i * size_of_everything)..((i * size_of_everything) + 1usize)].copy_from_slice(&slot);
 
         // read guid
         // TODO is try_into needed if we know that u8 is fine?
         // TODO need to know size of guid spot to read (or is it varying?)
-        let guid: [u8; MAX_GUID_SIZE] = ctx.files[i]
+        let name: [u8; NAME_SIZE] = ctx.files[i]
+            .contents[FILE_USED_SIZE + MAX_GUID_SIZE..FILE_USED_SIZE + MAX_GUID_SIZE + NAME_SIZE]
+            .try_into().unwrap();
+        list[(4usize + (i * size_of_everything) + 1usize)..(4usize + (i * size_of_everything) + 1usize + NAME_SIZE)].copy_from_slice(&name);
+
+        let gid: [u8; MAX_GUID_SIZE] = ctx.files[i]
             .contents[FILE_USED_SIZE..FILE_USED_SIZE + MAX_GUID_SIZE]
             .try_into().unwrap();
-        let name: [u8; MAX_NAME_SIZE] = ctx.files[i]
-            .contents[FILE_USED_SIZE + MAX_GUID_SIZE..FILE_USED_SIZE + MAX_GUID_SIZE + MAX_NAME_SIZE]
-            .try_into().unwrap();
+        list[(4usize + (i * size_of_everything) + 1usize + NAME_SIZE)..(4usize + (i * size_of_everything) + 1usize + NAME_SIZE + GID_SIZE)].copy_from_slice(&gid);
         // TODO
+
+        let newline: [u8; 1] = [10];
+        list[(4usize + (i * size_of_everything) + 1usize + NAME_SIZE + GID_SIZE)..(4usize + (i * size_of_everything) + 2usize + NAME_SIZE + GID_SIZE)].copy_from_slice(&newline);
 
         // guid + \t + name
     }
-    let body = if list.is_empty() {"No files found.".as_bytes()} else {list.as_bytes()};
+    list[0..1].copy_from_slice(&counter);
+    let body = if list.is_empty() {"No files found.".as_bytes()} else {&list};
 
-    // HELP
+    // PRAYING THIS WORKS
     Message::from_data(Opcode::List, body).unwrap().write();
     
-    // if no more file slots and nothing's (to be) printed, panic w message
     // (does metadata need to be formatted??)
 }
 
@@ -272,9 +287,13 @@ fn handle_interrogate(ctx: &mut Context) {
     // check for right pin from host
     // - if not right pin, panic w message
 
-    // TODO replace with uart1 io. pretend Interrogate_retrieve exists pls
-    Message::from_data(Opcode::Interrogate_Retrieve)
+    // retrieve perms
+    for group in secrets::GROUP_KEYS.iter_mut().enumerate() {
 
+    }
+
+    // TODO replace with uart1 io. pretend Interrogate_retrieve exists pls
+//    Message::from_data(Opcode::Interrogate_Retrieve, "");
 
     // send interrogate request alongside permissions
     // - (group id 1, group id 2 ... associated data = interrogate)
