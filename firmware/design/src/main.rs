@@ -106,8 +106,49 @@ fn main() -> ! {
     }
 }
 
+// TODO
 fn handle_list(ctx: &mut Context) {
-    todo!()
+    // do i need to do this
+    // check pin
+    // - if not right pin, panic w message
+    const FILE_USED_SIZE: usize = 1;
+    const MAX_GUID_SIZE: usize = 32;
+    const MAX_NAME_SIZE: usize = 64;
+
+    // extra 8 bytes for newlines lolol
+    let list: [u8; (MAX_GUID_SIZE + MAX_NAME_SIZE + 8) * 8];
+
+    for i in 0..8 {
+        // find if file slot is in use TODO check convention
+        // if not in use, continue
+        if ctx.files[i].contents[0] == 0 {
+            continue;
+        }
+            
+        // iterate through file slots (?) and retrieve metadata for each file
+        // - file name and group ids
+        // - print while iterating?
+
+        // read guid
+        // TODO is try_into needed if we know that u8 is fine?
+        // TODO need to know size of guid spot to read (or is it varying?)
+        let guid: [u8; MAX_GUID_SIZE] = ctx.files[i]
+            .contents[FILE_USED_SIZE..FILE_USED_SIZE + MAX_GUID_SIZE]
+            .try_into().unwrap();
+        let name: [u8; MAX_NAME_SIZE] = ctx.files[i]
+            .contents[FILE_USED_SIZE + MAX_GUID_SIZE..FILE_USED_SIZE + MAX_GUID_SIZE + MAX_NAME_SIZE]
+            .try_into().unwrap();
+        // TODO
+
+        // guid + \t + name
+    }
+    let body = if list.is_empty() {"No files found.".as_bytes()} else {list.as_bytes()};
+
+    // HELP
+    Message::from_data(Opcode::List, body).unwrap().write();
+    
+    // if no more file slots and nothing's (to be) printed, panic w message
+    // (does metadata need to be formatted??)
 }
 
 fn handle_read(ctx: &mut Context) {
@@ -122,8 +163,40 @@ fn handle_receive(ctx: &mut Context) {
     todo!()
 }
 
+// TODO
 fn handle_interrogate(ctx: &mut Context) {
-    todo!()
+    // check for right pin from host
+    // - if not right pin, panic w message
+
+    // TODO replace with uart1 io. pretend Interrogate_retrieve exists pls
+    Message::from_data(Opcode::Interrogate_Retrieve)
+
+
+    // send interrogate request alongside permissions
+    // - (group id 1, group id 2 ... associated data = interrogate)
+    // wait for response
+    // - response can time out (<1000ms?)
+    // receive response
+    // read response
+    // - check if header is for interrogate
+    // - on failure (if somehow), panic w message
+    // - on success:
+    //   - decrypt data (I1)
+    //   - un-concatenate data
+    //   - verify that all files are associated with the right perms
+    //   - print to host failure, no files, or the files
+}
+
+// should only be able to be called by handle_interrogate's request
+// should be similar to handle_list
+// TODO
+fn receive_interrogate() {
+    // check sent permissions
+    // iterate through files and if match put information into a variable
+    // - encI1 (pk-inter(file name, slot id, group id), pk-inter(file name, slot id, group id))
+    // encrypt variable string/whatever (I1)
+    // send everything back
+
 }
 
 fn handle_listen(ctx: &mut Context) {
