@@ -120,7 +120,7 @@ fn main() -> ! {
 
         sensitive!(ctx, {
             match msg.opcode {
-                Opcode::List => handle_list(&mut ctx, msg),
+                Opcode::List => handle_list(&mut ctx),
                 Opcode::Read => handle_read(&mut ctx),
                 Opcode::Write => handle_write(&mut ctx),
                 Opcode::Receive => handle_receive(&mut ctx),
