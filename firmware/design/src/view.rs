@@ -15,14 +15,14 @@ pub enum ConcatViewError {
 }
 
 pub struct ConcatView<'a> {
-    name: &'a mut [u8],
-    group: &'a mut [u8; 2],
-    uuid: &'a mut [u8; 16],
-    data: &'a mut [u8],
+    pub name: &'a mut [u8],
+    pub group: &'a mut [u8; 2],
+    pub uuid: &'a mut [u8; 16],
+    pub data: &'a mut [u8],
 }
 
 impl<'a> ConcatView<'a> {
-    pub fn new(offsets: ConcatOffsets, underlying: &'a mut [u8]) -> Result<Self, ConcatViewError> {
+    pub fn new(offsets: &ConcatOffsets, underlying: &'a mut [u8]) -> Result<Self, ConcatViewError> {
         let name_l = offsets.group - offsets.name;
         let group_l = offsets.uuid - offsets.group;
         let uuid_l = offsets.data - offsets.uuid;
@@ -38,7 +38,7 @@ impl<'a> ConcatView<'a> {
             return Err(ConcatViewError::BadOffsets);
         }
 
-        if (total > underlying.len()) {
+        if total > underlying.len() {
             return Err(ConcatViewError::BufferTooSmall);
         }
 

@@ -10,7 +10,7 @@ use core::panic::PanicInfo;
 use cortex_m_rt::entry;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
-use view::FileView;
+use view::{FileView, ConcatView};
 
 use mspm0l222x_hal::{
     Peripherals,
@@ -196,33 +196,30 @@ fn handle_list(ctx: &mut Context) {
 fn handle_read(ctx: &mut Context) {
     //TODO: discover correct values
     let slot: usize = 0;
-
     let pk_sign: &[u8; 32] = &[0; _];
+    let pk_sign = VerifyingKey::from_bytes(pk_sign).unwrap();
+
     let group = 0u16;
     let uuid = &ctx.fat[slot].uuid;
 
     //TODO: Hardcoded name length
     let name: &[u8; 32] = &[0; _];
-    let signature: &[u8; 64] = &[0; _];
-
     let file_length = ctx.fat[slot].length as usize;
 
-    let pk_sign_k = VerifyingKey::from_bytes(pk_sign).unwrap();
 
     let fv = FileView::new(name, group, uuid, &ctx.files[slot].contents[..file_length]);
-    let mut vbuf: [u8; 32 + 2 + 2 + 8192] = [0u8; _];
-    let offsets = fv.concat_bytes(&mut vbuf).unwrap();
-
+    let mut concat: [u8; 32 + 2 + 2 + 8192] = [0u8; _];
+    let offsets = fv.concat_bytes(&mut concat).unwrap();
     let expected_signature = Signature::from_bytes(&[0u8; 64]);
 
-    let _ = pk_sign_k
-        .verify(&vbuf[..offsets.end], &expected_signature)
+    let _ = pk_sign
+        .verify(&concat[offsets.name..offsets.end], &expected_signature)
         .unwrap();
 
     //TODO: Where does this come from
-
     let sk_read: &[u8; 32] = &[0; _];
-    let cipher_text = &mut vbuf[offsets.data..offsets.end];
+    let concat_view = ConcatView::new(&offsets, &mut concat).unwrap();
+    crypto::decrypt_payload_pub_combined(concat_view.data, sk_read).unwrap();
     todo!()
 }
 
