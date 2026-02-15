@@ -205,18 +205,18 @@ fn handle_read(ctx: &mut Context) {
 
 
     let fv = FileView::new(name, group, uuid, &ctx.files[slot].contents[..file_length]);
-    let mut concat: [u8; 32 + 2 + 2 + 8192] = [0u8; _];
-    let offsets = fv.concat_bytes(&mut concat).unwrap();
+    let mut buf: [u8; 32 + 2 + 2 + 8192] = [0u8; _];
+    let mut concat = fv.concat_bytes(&mut buf).unwrap();
     let expected_signature = Signature::from_bytes(&[0u8; 64]);
 
     let _ = pk_sign
-        .verify(&concat[offsets.name..offsets.end], &expected_signature)
+        .verify(&concat.get_buf(), &expected_signature)
         .unwrap();
 
     //TODO: Where does this come from
     let sk_read: &[u8; 32] = &[0; _];
-    let concat_view = ConcatView::new(&offsets, &mut concat).unwrap();
-    crypto::decrypt_payload_pub_combined(concat_view.data, sk_read).unwrap();
+    let view = concat.as_view().unwrap();
+    crypto::decrypt_payload_pub_combined(view.data, sk_read).unwrap();
     todo!()
 }
 
