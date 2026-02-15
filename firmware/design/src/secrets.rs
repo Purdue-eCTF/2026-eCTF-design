@@ -2,9 +2,9 @@
 const BOOT_SALT_0: [u8; 32] = [0; _];
 
 #[derive(Default)]
-pub struct SymmetricKey(pub [u32; 8]);
+pub struct SymmetricKey(pub [u8; 32]);
 
-pub struct AsymmetricKey([u32; 8]);
+pub struct AsymmetricKey([u8; 32]);
 
 #[derive(Default)]
 pub struct GroupKey {
