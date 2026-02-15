@@ -238,9 +238,25 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
         .verify(&concat.get_buf(), &expected_signature)
         .unwrap();
 
-    let view = concat.as_view().unwrap();
-    crypto::decrypt_payload_pub_combined(view.data, &group_key.sk_read.0).unwrap();
-    todo!()
+    let concat_view = concat.as_view().unwrap();
+    crypto::decrypt_payload_pub_combined(concat_view.data, &group_key.sk_read.0).unwrap();
+
+    let data = concat_view.data;
+    // If the file is too big this won't work
+    let mut body = [0u8; message::MAX_BODY_SIZE];
+    let (body_name, body_data) = body.split_at_mut(view::NAME_SIZE);
+
+    //TODO: Some files are too big
+    if data.len() + view::NAME_SIZE > message::MAX_BODY_SIZE {
+        todo!()
+    }
+
+    body[0..view::NAME_SIZE].copy_from_slice(name);
+    body[view::NAME_SIZE..view::NAME_SIZE+data.len()].copy_from_slice(data);
+
+    let total_length = view::NAME_SIZE+data.len();
+    let response = Message::new(Opcode::Read, total_length.try_into().unwrap(), body);
+    response.write().unwrap();
 }
 
 fn handle_write(ctx: &mut Context) {
