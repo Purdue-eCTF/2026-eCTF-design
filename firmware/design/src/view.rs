@@ -1,7 +1,12 @@
-const NAME_SIZE: usize = 32;
-const UUID_SIZE: usize = 16;
-const MAX_FILE_SIZE: usize = 8192;
-const SIGNATURE_SIZE: usize = 32;
+pub const NAME_SIZE: usize = 32;
+pub const UUID_SIZE: usize = 16;
+pub const MAX_FILE_SIZE: usize = 8192;
+pub const SIGNATURE_SIZE: usize = 32;
+
+// TODO: Unsure if MAX_FILE_SIZE is actually the max because file is stored as
+// GN || ct which is why I'm adding 128 to be safe
+
+pub const MAX_VIEW_SIZE: usize = NAME_SIZE + 2 + 2 + MAX_FILE_SIZE + SIGNATURE_SIZE + 128;
 
 #[derive(Debug)]
 pub enum ConcatError {
