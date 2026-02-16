@@ -1,24 +1,60 @@
-use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
+use argon2::{self, Block};
 use chacha20poly1305::aead::generic_array::GenericArray;
+use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
 use mspm0l222x_hal::trng;
 use thiserror::Error;
+use x25519_dalek::{PublicKey, StaticSecret};
 
 const NONCE_SIZE: usize = 24;
 const TAG_SIZE: usize = 16;
+const GN_SIZE: usize = 32;
 
+// TODO: Tests
 #[derive(Debug, Error)]
 pub enum CryptoError {
     #[error("Invalid decrypt payload")]
     InvalidDecryptionPayload,
     #[error("Invalid encrypt payload")]
     InvalidEncryptionPayload,
+    #[error("Failed to derive key")]
+    KDFFailure,
 }
 
-pub fn decrypt_payload_pub<'a>(payload: &'a mut [u8], key: &[u8; 32]) -> Result<&'a mut [u8], CryptoError> {
-    todo!()
+// expect gn || ct
+pub fn decrypt_payload_pub_combined(payload: &mut [u8], key: &[u8; 32]) -> Result<(), CryptoError> {
+    if (payload.len() < GN_SIZE) {
+        return Err(CryptoError::InvalidDecryptionPayload);
+    }
+    let (gn, ct) = payload.split_at_mut(GN_SIZE);
+    let gn = &gn[0..32];
+    decrypt_payload_pub(ct, key, gn.try_into().unwrap())?;
+    Ok(())
 }
 
-pub fn encrypt_payload_pub<'a>(payload: &'a mut [u8], key: &[u8; 32]) -> Result<&'a mut [u8], CryptoError> {
+pub fn decrypt_payload_pub<'a>(
+    payload: &'a mut [u8],
+    key: &[u8; 32],
+    gn: &[u8; GN_SIZE],
+) -> Result<&'a mut [u8], CryptoError> {
+    let sk = StaticSecret::from(key.clone());
+    let pubkey = PublicKey::from(gn.clone());
+    let shared = sk.diffie_hellman(&pubkey).to_bytes();
+
+    let mut sym_key = [0u8; 32];
+    let memory = Block::new();
+
+    argon2::Argon2::default()
+        .hash_password_into_with_memory(&shared, gn, &mut sym_key, [memory])
+        .map_err(|_| CryptoError::KDFFailure)?;
+
+    decrypt_payload_symmetric(payload, &sym_key, &[])?;
+    Ok(payload)
+}
+
+pub fn encrypt_payload_pub<'a>(
+    payload: &'a mut [u8],
+    key: &[u8; 32],
+) -> Result<&'a mut [u8], CryptoError> {
     todo!()
 }
 
