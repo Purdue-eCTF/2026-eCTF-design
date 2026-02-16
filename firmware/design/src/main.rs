@@ -21,7 +21,7 @@ use mspm0l222x_hal::{
     uart::{Uart, println},
 };
 
-use crate::{crypto::{encrypt_payload_pub, encrypt_payload_symmetric}, message::{Message, Opcode}, secrets::SymmetricKey};
+use crate::{crypto::{decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, message::{Message, Opcode}, secrets::SymmetricKey};
 
 unsafe extern "C" {
     static _stack_start: u8;
@@ -150,50 +150,49 @@ fn handle_list(ctx: &mut Context) {
 
     // - if not right pin, panic w message
     const FILE_USED_SIZE: usize = 1;
-    const MAX_GUID_SIZE: usize = 2;
 
-    // extra 8 bytes for newlines lolol
-    let mut list: [u8; 4 + (MAX_GUID_SIZE + NAME_SIZE + 2) * 8] = [0u8; 4 + (MAX_GUID_SIZE + NAME_SIZE + 2) * 8];
-    let mut counter: [u8; 1] = [0];
+    // 4 bytes at start for total number of files; group id, name of file, file slot, newline, for 8 files
+    let mut list: [u8; 4 + (GID_SIZE + NAME_SIZE + 2) * 8] = [0u8; 4 + (GID_SIZE + NAME_SIZE + 2) * 8];
+    let mut counter: usize = 0;
 
     for i in 0..8 {
         // name | groupid | uuid | data
         // if not in use, continue
-        if ctx.files[i].contents[0..NAME_SIZE].is_empty() { continue; }
-        counter[0] += 1;
+        if ctx.files[i].contents[0..NAME_SIZE].iter().all(|&byte| byte == 0) { continue; }
 
         // index * info + newline + file slot
-        let size_of_everything = NAME_SIZE + GID_SIZE + 2usize;
+        const size_of_everything: usize = NAME_SIZE + GID_SIZE + 2usize;
 
         // iterate through file slots (?) and retrieve metadata for each file
         // - slot, file name, group ids, newline
         // - print while iterating?
 
         let slot: [u8; 1] = [i as u8];
-        list[(i * size_of_everything)..((i * size_of_everything) + 1usize)].copy_from_slice(&slot);
+        list[(counter * size_of_everything)..((counter * size_of_everything) + 1usize)].copy_from_slice(&slot);
 
         // read guid
         // TODO is try_into needed if we know that u8 is fine?
         let name: [u8; NAME_SIZE] = ctx.files[i]
             .contents[0..NAME_SIZE]
             .try_into().unwrap();
-        list[(4usize + (i * size_of_everything) + 1usize)..(4usize + (i * size_of_everything) + 1usize + NAME_SIZE)].copy_from_slice(&name);
+        list[(4usize + (counter * size_of_everything) + 1usize)..(4usize + (counter * size_of_everything) + 1usize + NAME_SIZE)].copy_from_slice(&name);
 
-        let gid: [u8; MAX_GUID_SIZE] = ctx.files[i]
-            .contents[NAME_SIZE..NAME_SIZE + MAX_GUID_SIZE]
+        let gid: [u8; GID_SIZE] = ctx.files[i]
+            .contents[NAME_SIZE..NAME_SIZE + GID_SIZE]
             .try_into().unwrap();
-        list[(4usize + (i * size_of_everything) + 1usize + NAME_SIZE)..(4usize + (i * size_of_everything) + 1usize + NAME_SIZE + GID_SIZE)].copy_from_slice(&gid);
+        list[(4usize + (counter * size_of_everything) + 1usize + NAME_SIZE)..(4usize + (counter * size_of_everything) + 1usize + NAME_SIZE + GID_SIZE)].copy_from_slice(&gid);
 
         let newline: [u8; 1] = [10];
-        list[(4usize + (i * size_of_everything) + 1usize + NAME_SIZE + GID_SIZE)..(4usize + (i * size_of_everything) + 2usize + NAME_SIZE + GID_SIZE)].copy_from_slice(&newline);
+        list[(4usize + (counter * size_of_everything) + 1usize + NAME_SIZE + GID_SIZE)..(4usize + (counter * size_of_everything) + 2usize + NAME_SIZE + GID_SIZE)].copy_from_slice(&newline);
 
+        counter += 1;
         // guid + \t + name
     }
-    list[0..1].copy_from_slice(&counter);
-    let body = if list.is_empty() {"No files found.".as_bytes()} else {&list};
+    list[0..1].copy_from_slice(&[counter as u8]);
+    let body = if list.iter().all(|&byte| byte == 0) {"No files found.".as_bytes()} else {&list};
 
     // PRAYING THIS WORKS (TODO does result need to be used)
-    Message::from_data(Opcode::List, body).unwrap().write();
+    Message::send_data(Opcode::List, body).unwrap();
     
     // (does metadata need to be formatted??)
 }
@@ -281,12 +280,21 @@ fn handle_interrogate(ctx: &mut Context) {
         groups[group_count * GID_SIZE..(group_count * GID_SIZE + GID_SIZE)].copy_from_slice(&group.1.group.to_ne_bytes());
     }
     // TODO symmetric key to be replaced
-    let payload = encrypt_payload_symmetric(&mut groups, secrets::GROUP_KEYS[0].s0.0, "INTERROGATE".as_bytes().unwrap());
+    let payload = encrypt_payload_symmetric(&mut groups, &secrets::GROUP_KEYS[0].s0.0, "INTERROGATE".as_bytes()).unwrap();
 
     // TODO replace with uart1 io. pretend Interrogate_retrieve exists pls
-    let request= Message::from_data(Opcode::Interrogate_Retrieve, &payload).unwrap().write();
+    let request= Message::send_data(Opcode::Interrogate_Retrieve, &payload).unwrap();
 
     let info = Message::read().unwrap();
+
+    if info.opcode != Opcode::Interrogate_Retrieve {
+        panic!("Incorrect Opcode for Retrieve Interrogate");
+    }
+
+    let body = decrypt_payload_symmetric(&mut info.body, &secrets::GROUP_KEYS[0].s1.0, "INTERROGATE".as_bytes()).unwrap();
+
+    let no_files_er = encrypt_payload_pub(&mut *"No files found.".as_bytes(), &secrets::GROUP_KEYS[0].pk_inter.0).unwrap();
+    if body[0..no_files_er.len()] == no_files_er
 
     // send interrogate request alongside permissions
     // - (group id 1, group id 2 ... associated data = interrogate)
@@ -306,25 +314,70 @@ fn handle_interrogate(ctx: &mut Context) {
 // should only be able to be called by handle_interrogate's request
 // should be similar to handle_list
 // TODO
-fn receive_interrogate(ctx: &mut Context) {
+fn receive_interrogate(ctx: &mut Context, msg: Message) {
     // check sent permissions
-    let msg = Message::read().unwrap();
-    // TODO
-    if msg.opcode != Opcode::Interrogate {
-    } else {
-        let groups = msg.body;
-        for i in 0..8 {
-            if ctx.files[i].contents[0..NAME_SIZE].is_empty() { continue; }
-            for j in (0..secrets::GROUP_KEYS.len()).step_by(GID_SIZE) {
-                
+
+    // group id, name of file, newline for 8 files
+    let mut list: [u8; (GID_SIZE + NAME_SIZE + 2) * 8] = [0u8; (GID_SIZE + NAME_SIZE + 2) * 8];
+    let mut counter: usize = 0;
+
+    const size_of_everything: usize = NAME_SIZE + GID_SIZE + 2;
+    let mut body = msg.body;
+    // TODO replace key
+    // use S0 key for symmetric decryption
+    let groups = decrypt_payload_symmetric(&mut body, &secrets::GROUP_KEYS[0].s0.0, "INTERROGATE".as_bytes()).unwrap();
+    // for every file slot
+    for i in 0..8 {
+        if ctx.files[i].contents[0..NAME_SIZE].iter().all(|&byte| byte == 0) { continue; }
+        // read every group key from payload
+        for j in (0..groups.len()).step_by(GID_SIZE) {
+            // if a group key matches
+            if groups[j..GID_SIZE] == ctx.files[i].contents[NAME_SIZE..NAME_SIZE + GID_SIZE] {
+                let mut group: [u8; size_of_everything] = [0u8; size_of_everything];
+                    
+                let slot: [u8; 1] = [i as u8];
+                group[0..1usize].copy_from_slice(&slot);
+        
+                // read guid
+                // TODO is try_into needed if we know that u8 is fine?
+                let name: [u8; NAME_SIZE] = ctx.files[i]
+                    .contents[0..NAME_SIZE]
+                    .try_into().unwrap();
+                group[(1usize)..(1usize + NAME_SIZE)].copy_from_slice(&name);
+        
+                let gid: [u8; GID_SIZE] = ctx.files[i]
+                    .contents[NAME_SIZE..NAME_SIZE + GID_SIZE]
+                    .try_into().unwrap();
+                group[(1usize + NAME_SIZE)..(1usize + NAME_SIZE + GID_SIZE)].copy_from_slice(&gid);
+        
+                let newline: [u8; 1] = [10];
+                group[(1usize + NAME_SIZE + GID_SIZE)..(size_of_everything)].copy_from_slice(&newline);
+
+                // TODO replace key
+                list[(counter * size_of_everything)..((counter * size_of_everything) + size_of_everything)]
+                    .copy_from_slice(
+                        encrypt_payload_pub(
+                            &mut group,
+                            &secrets::GROUP_KEYS[0].pk_inter.0).unwrap());
+        
+                counter += 1;
+                break;
             }
         }
     }
-    
-    // iterate through files and if match put information into a variable
-    // - encI1 (pk-inter(file name, slot id, group id), pk-inter(file name, slot id, group id))
-    // encrypt variable string/whatever (I1)
-    // send everything back
+    list[0..1].copy_from_slice(&[counter as u8]);
+    let no_files_er = encrypt_payload_pub(&mut *"No files found.".as_bytes(), &secrets::GROUP_KEYS[0].pk_inter.0).unwrap();
+    let mut body = if list.iter().all(|&byte| byte == 0) {
+        list[0..no_files_er.len()].copy_from_slice(no_files_er);
+        list
+    } else {list};
+    // TODO replace key
+    // use S1 key for symmetric enc
+    let payload = encrypt_payload_symmetric(&mut body, &secrets::GROUP_KEYS[0].s1.0, "INTERROGATE".as_bytes()).unwrap();
+
+    // TODO do i need to send back the result
+    // yipee send everything back
+    let request= Message::send_data(Opcode::Interrogate_Retrieve, &payload).unwrap();
 
 }
 
