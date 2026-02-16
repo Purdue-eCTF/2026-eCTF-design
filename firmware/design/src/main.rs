@@ -21,7 +21,7 @@ use mspm0l222x_hal::{
     uart::{Uart, println},
 };
 
-use crate::message::{Message, Opcode};
+use crate::{crypto::{encrypt_payload_pub, encrypt_payload_symmetric}, message::{Message, Opcode}, secrets::SymmetricKey};
 
 unsafe extern "C" {
     static _stack_start: u8;
@@ -146,12 +146,11 @@ fn handle_list(ctx: &mut Context) {
     let mut counter: [u8; 1] = [0];
 
     for i in 0..8 {
+        // name | groupid | uuid | data
         // if not in use, continue
-        if ctx.files[i].contents[FILE_USED_SIZE + MAX_GUID_SIZE..FILE_USED_SIZE + MAX_GUID_SIZE + NAME_SIZE].is_empty() {
-            continue;
-        }
+        if ctx.files[i].contents[0..NAME_SIZE].is_empty() { continue; }
         counter[0] += 1;
-            
+
         // index * info + newline + file slot
         let size_of_everything = NAME_SIZE + GID_SIZE + 2usize;
 
@@ -165,12 +164,12 @@ fn handle_list(ctx: &mut Context) {
         // read guid
         // TODO is try_into needed if we know that u8 is fine?
         let name: [u8; NAME_SIZE] = ctx.files[i]
-            .contents[FILE_USED_SIZE + MAX_GUID_SIZE..FILE_USED_SIZE + MAX_GUID_SIZE + NAME_SIZE]
+            .contents[0..NAME_SIZE]
             .try_into().unwrap();
         list[(4usize + (i * size_of_everything) + 1usize)..(4usize + (i * size_of_everything) + 1usize + NAME_SIZE)].copy_from_slice(&name);
 
         let gid: [u8; MAX_GUID_SIZE] = ctx.files[i]
-            .contents[FILE_USED_SIZE..FILE_USED_SIZE + MAX_GUID_SIZE]
+            .contents[NAME_SIZE..NAME_SIZE + MAX_GUID_SIZE]
             .try_into().unwrap();
         list[(4usize + (i * size_of_everything) + 1usize + NAME_SIZE)..(4usize + (i * size_of_everything) + 1usize + NAME_SIZE + GID_SIZE)].copy_from_slice(&gid);
 
@@ -236,14 +235,19 @@ fn handle_interrogate(ctx: &mut Context) {
     let mut groups: [u8; secrets::GROUP_KEYS.len() * GID_SIZE] = [0u8; secrets::GROUP_KEYS.len() * GID_SIZE];
     let mut group_count = 0;
     // TODO retrieve perms. if group's key is loaded into flash, add group?
+    // concatenate all groups that have perms (GID_SIZE = 2, or 16 bits)
     for group in secrets::GROUP_KEYS.iter().enumerate() {
         if group.1.pk_inter.0.is_empty() { continue };
         group_count += 1;
         groups[group_count * GID_SIZE..(group_count * GID_SIZE + GID_SIZE)].copy_from_slice(&group.1.group.to_ne_bytes());
     }
+    // TODO symmetric key to be replaced
+    let payload = encrypt_payload_symmetric(&mut groups, secrets::GROUP_KEYS[0].s0.0, "INTERROGATE".as_bytes().unwrap());
 
     // TODO replace with uart1 io. pretend Interrogate_retrieve exists pls
-//    Message::from_data(Opcode::Interrogate_Retrieve, "");
+    let request= Message::from_data(Opcode::Interrogate_Retrieve, &payload).unwrap().write();
+
+    let info = Message::read().unwrap();
 
     // send interrogate request alongside permissions
     // - (group id 1, group id 2 ... associated data = interrogate)
@@ -263,8 +267,21 @@ fn handle_interrogate(ctx: &mut Context) {
 // should only be able to be called by handle_interrogate's request
 // should be similar to handle_list
 // TODO
-fn receive_interrogate() {
+fn receive_interrogate(ctx: &mut Context) {
     // check sent permissions
+    let msg = Message::read().unwrap();
+    // TODO
+    if msg.opcode != Opcode::Interrogate {
+    } else {
+        let groups = msg.body;
+        for i in 0..8 {
+            if ctx.files[i].contents[0..NAME_SIZE].is_empty() { continue; }
+            for j in (0..secrets::GROUP_KEYS.len()).step_by(GID_SIZE) {
+                
+            }
+        }
+    }
+    
     // iterate through files and if match put information into a variable
     // - encI1 (pk-inter(file name, slot id, group id), pk-inter(file name, slot id, group id))
     // encrypt variable string/whatever (I1)
