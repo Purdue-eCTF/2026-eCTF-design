@@ -1,12 +1,17 @@
 pub const NAME_SIZE: usize = 32;
+pub const GID_SIZE: usize = 2;
 pub const UUID_SIZE: usize = 16;
 pub const MAX_FILE_SIZE: usize = 8192;
 pub const SIGNATURE_SIZE: usize = 64;
+pub const MAX_CONTENT_SIZE: usize = MAX_FILE_SIZE - SIGNATURE_SIZE - NAME_SIZE - GID_SIZE - UUID_SIZE - 1;
 
 // TODO: Unsure if MAX_FILE_SIZE is actually the max because file is stored as
 // GN || ct which is why I'm adding 128 to be safe
 
-pub const MAX_VIEW_SIZE: usize = NAME_SIZE + 2 + 2 + MAX_FILE_SIZE + SIGNATURE_SIZE + 128;
+// pub const MAX_VIEW_SIZE: usize = NAME_SIZE + GID_SIZE + 2 + MAX_FILE_SIZE + SIGNATURE_SIZE + 128;
+
+pub const NAME_OFFSET: usize = SIGNATURE_SIZE;
+pub const DATA_OFFSET: usize = NAME_OFFSET + NAME_SIZE + GID_SIZE + UUID_SIZE;
 
 #[derive(Debug)]
 pub enum ConcatError {
@@ -14,48 +19,26 @@ pub enum ConcatError {
     BufferTooSmall,
 }
 
-pub struct ConcatView<'a> {
+pub struct MutFileView<'a> {
     pub signature: &'a mut [u8; SIGNATURE_SIZE],
-    pub name: &'a mut [u8],
+    pub name: &'a mut [u8; NAME_SIZE],
     pub group: &'a mut [u8; 2],
     pub uuid: &'a mut [u8; UUID_SIZE],
     pub data: &'a mut [u8],
 }
 
-impl<'a> ConcatView<'a> {
-    pub fn new(offsets: &ConcatOffsets, underlying: &'a mut [u8]) -> Result<Self, ConcatError> {
-        let sig_l = offsets.name - offsets.signature;
-        let name_l = offsets.group - offsets.name;
-        let group_l = offsets.uuid - offsets.group;
-        let uuid_l = offsets.data - offsets.uuid;
-        let data_l = offsets.end - offsets.data;
-        let total = sig_l + name_l + group_l + uuid_l + data_l;
-
-        if (sig_l != SIGNATURE_SIZE)
-            || (name_l <= 0)
-            || (group_l != 2)
-            || (uuid_l != 16)
-            || (data_l <= 0)
-            || (offsets.end - offsets.signature != total)
-        {
-            return Err(ConcatError::BadOffsets);
-        }
-
-        if total > underlying.len() {
-            return Err(ConcatError::BufferTooSmall);
-        }
-
-        let (signature, rest) = underlying.split_at_mut(sig_l);
-        let (name, rest) = rest.split_at_mut(name_l);
-        let (group, rest) = rest.split_at_mut(2);
-        let (uuid, rest) = rest.split_at_mut(16);
-        let (data, _) = rest.split_at_mut(data_l);
+impl<'a> MutFileView<'a> {
+    pub fn new(underlying: &'a mut [u8]) -> Result<Self, ConcatError> {
+        let (signature, rest) = underlying.split_at_mut(SIGNATURE_SIZE);
+        let (name, rest) = rest.split_at_mut(NAME_SIZE);
+        let (group, rest) = rest.split_at_mut(GID_SIZE);
+        let (uuid, rest) = rest.split_at_mut(UUID_SIZE);
         Ok(Self {
             signature: signature.try_into().unwrap(),
-            name,
+            name: name.try_into().unwrap(),
             group: group.try_into().unwrap(),
             uuid: uuid.try_into().unwrap(),
-            data,
+            data: rest,
         })
     }
 
@@ -65,16 +48,7 @@ impl<'a> ConcatView<'a> {
     }
 }
 
-#[derive(Default)]
-pub struct ConcatOffsets {
-    pub signature: usize,
-    pub name: usize,
-    pub group: usize,
-    pub uuid: usize,
-    pub data: usize,
-    pub end: usize,
-}
-
+#[repr(C)]
 pub struct FileView<'a> {
     pub signature: &'a [u8; SIGNATURE_SIZE],
     pub name: &'a [u8; NAME_SIZE],
@@ -91,18 +65,17 @@ pub struct FileView<'a> {
 // maximum filesize padded by null bytes we could just use a struct instead of using
 // a bunch of slices
 
-pub struct Concat<'a> {
-    offsets: ConcatOffsets,
+pub struct MutFile<'a> {
     buf: &'a mut [u8],
 }
 
-impl<'a> Concat<'a> {
-    pub fn as_view<'b>(&'b mut self) -> Result<ConcatView<'b>, ConcatError> {
-        Ok(ConcatView::new(&self.offsets, self.buf)?)
+impl<'a> MutFile<'a> {
+    pub fn as_view<'b>(&'b mut self) -> Result<MutFileView<'b>, ConcatError> {
+        Ok(MutFileView::new(self.buf)?)
     }
 
     pub fn get_buf(&mut self) -> &mut [u8] {
-        &mut self.buf[self.offsets.name..self.offsets.end]
+        &mut self.buf[NAME_OFFSET..DATA_OFFSET]
     }
 
     pub fn validate(&mut self) -> Result<(), ConcatError> {
@@ -111,8 +84,8 @@ impl<'a> Concat<'a> {
         Ok(())
     }
 
-    pub fn new(offsets: ConcatOffsets, data: &'a mut [u8]) -> Result<Self, ConcatError> {
-        let mut s = Self { offsets, buf: data };
+    pub fn new(data: &'a mut [u8]) -> Result<Self, ConcatError> {
+        let mut s = Self { buf: data };
         s.validate()?;
         Ok(s)
     }
@@ -140,7 +113,7 @@ impl<'a> FileView<'a> {
     pub fn from_file(file: &'a [u8; MAX_FILE_SIZE], data_size: usize) -> Self {
         let (signature, rest) = file.split_at(SIGNATURE_SIZE);
         let (name, rest) = rest.split_at(NAME_SIZE);
-        let (group_bytes, rest) = rest.split_at(2);
+        let (group_bytes, rest) = rest.split_at(GID_SIZE);
         let (uuid, rest) = rest.split_at(UUID_SIZE);
         let (data, exists_byte) = rest.split_at(rest.len() - 1);
 
@@ -159,40 +132,30 @@ impl<'a> FileView<'a> {
         )
     }
 
-    pub fn concat_bytes<'b>(&self, buf: &'b mut [u8]) -> Result<Concat<'b>, ConcatError> {
-        let capacity = self.calculate_concat_size();
-        if buf.len() < capacity {
+    pub fn copy_to_buf<'b>(&self, buf: &'b mut [u8]) -> Result<MutFile<'b>, ConcatError> {
+        if buf.len() < MAX_FILE_SIZE {
             return Err(ConcatError::BufferTooSmall);
         }
         let mut i = 0;
-        let mut o = ConcatOffsets::default();
+
+        // TODO: bytemuck this
 
         buf[i..i + SIGNATURE_SIZE].copy_from_slice(self.signature);
-        o.signature = i;
         i += SIGNATURE_SIZE;
 
         buf[i..i + NAME_SIZE].copy_from_slice(self.name);
-        o.name = i;
         i += NAME_SIZE;
 
-        buf[i..i + 2].copy_from_slice(&self.group.to_le_bytes());
-        o.group = i;
-        i += 2;
+        buf[i..i + GID_SIZE].copy_from_slice(&self.group.to_le_bytes());
+        i += GID_SIZE;
 
         buf[i..i + UUID_SIZE].copy_from_slice(self.uuid);
-        o.uuid = i;
         i += UUID_SIZE;
 
-        o.data = i;
-        buf[i..i + self.data.len()].copy_from_slice(self.data);
-        i += self.data.len();
-        o.end = i;
-        let r = Concat::new(o, buf)?;
+        buf[i..MAX_FILE_SIZE - 1].copy_from_slice(self.data);
 
-        Ok(r)
-    }
+        buf[MAX_FILE_SIZE - 1] = self.exists as u8;
 
-    fn calculate_concat_size(&self) -> usize {
-        SIGNATURE_SIZE + NAME_SIZE + 2 + UUID_SIZE + self.data.len()
+        Ok(MutFile::new(buf)?)
     }
 }
