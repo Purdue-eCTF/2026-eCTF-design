@@ -17,6 +17,7 @@ enum ListenError {
 
 pub(crate) enum ListenOpcode {
     Interrogate,
+    InterrogateRetrieve,
     Receive
 }
 impl TryFrom<u8> for ListenOpcode {
@@ -34,6 +35,7 @@ impl From<ListenOpcode> for u8 {
     fn from(opcode: ListenOpcode) -> u8 {
         match opcode {
             ListenOpcode::Interrogate => b'I',
+            ListenOpcode::InterrogateRetrieve => b'i',
             ListenOpcode::Receive => b'C'
         }
     }
@@ -47,7 +49,7 @@ struct InterrogateFile {
     slot: u8,
     _pad: u8,
 }
-
+// size: 32 + 2 + 1 + 1
 
 pub fn recv(ctx: &mut Context, opcode: ListenOpcode, body: &mut [u8]) {
     match opcode {
