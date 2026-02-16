@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable, bytes_of_mut};
 
-use crate::{Context, crypto::{decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}};
+use crate::{Context, crypto::{decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, view::FileView};
 use mspm0l222x_hal::uart::uart;
 use thiserror::Error;
 
@@ -70,8 +70,10 @@ fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
         let group = u16::from_le_bytes(*bytes);
 
         for i in 0..8 {
-            if ctx.files[i].exists && ctx.files[i].group == group {
-                body[count] = InterrogateFile { name: ctx.files[i].name, group: ctx.files[i].group, slot: i as u8, _pad: 0 };
+            let data_len = ctx.fat[i].length as usize;
+            let file = FileView::from_file(&ctx.files[i].contents, data_len);
+            if file.exists && file.group == group {
+                body[count] = InterrogateFile { name: *file.name, group: file.group, slot: i as u8, _pad: 0 };
 
                 // TODO: get_pk_inter(group)
                 let pk_inter = get_pk_inter(group);
@@ -86,6 +88,7 @@ fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
     
     let res = encrypt_payload_symmetric(bytes_of_mut(&mut body), &i1, &opcode).unwrap();
     
+    // TODO: uart1
     let uart = uart();
     let length: [u8; 2] = (count as u16).to_le_bytes();
     uart.write_bytes(&length[..]);
@@ -109,24 +112,21 @@ fn handle_transfer<'a>(ctx: &mut Context, body: &'a mut [u8]) -> Result<(), List
         return Err(ListenError::InvalidSlot);
     }
 
-    if !ctx.files[slot].exists || ctx.files[slot].group != group {
+    let data_len = ctx.fat[slot].length as usize;
+
+    let file = FileView::from_file(&ctx.files[slot].contents, data_len);
+    if !file.exists || file.group != group {
         return Err(ListenError::InvalidGroup);
     }
 
     // should we check signature here?
 
-    let file = &ctx.files[slot as usize];
-
     let mut buf = [0; 8191];
 
-    buf[..64].copy_from_slice(&file.signature);
-    buf[64..96].copy_from_slice(&file.name);
-    buf[96..112].copy_from_slice(&file.uuid);
-    buf[112..114].copy_from_slice(&file.group.to_le_bytes());
-    buf[114..].copy_from_slice(&file.contents);
+    buf.copy_from_slice(&ctx.files[slot].contents[..8191]);
 
     // TODO: get pk_transfer
-    let pk_transfer = get_pk_transfer(group);
+    let pk_transfer = get_pk_transfer(file.group);
     encrypt_payload_pub(&mut buf, &pk_transfer).unwrap();
 
     // TODO: t1
