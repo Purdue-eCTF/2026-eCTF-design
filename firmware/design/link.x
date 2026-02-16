@@ -104,9 +104,10 @@ SECTIONS {
 
     __sidata = LOADADDR(.data);
 
-    .files (NOLOAD) : {
+    .files : {
         _files = .;
-        . += __file_size;
+        /* store default contents so that flash isn't empty on boot */
+        KEEP(*(.files.default));
         _efiles = .;
     } > FILES
 

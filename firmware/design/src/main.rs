@@ -2,6 +2,7 @@
 #![no_main]
 #![feature(breakpoint)]
 
+mod file;
 mod message;
 mod secrets;
 mod util;
@@ -11,7 +12,10 @@ use cortex_m_rt::entry;
 use mspm0l222x_hal::Peripherals;
 use util::*;
 
-use crate::message::{Message, Opcode};
+use crate::{
+    file::File,
+    message::{Message, Opcode},
+};
 
 #[panic_handler]
 fn handle_panics(info: &PanicInfo) -> ! {
@@ -27,6 +31,10 @@ fn handle_panics(info: &PanicInfo) -> ! {
 #[entry]
 fn main() -> ! {
     let mut ctx = Context::new(Peripherals::take().unwrap());
+    for file in &ctx.files {
+        // TODO: gracefully handle this failure
+        assert!(file.as_ref().state == File::EMPTY || file.as_ref().state == File::FULL);
+    }
 
     loop {
         let msg = Message::read().unwrap();
@@ -48,7 +56,16 @@ fn main() -> ! {
 }
 
 fn handle_list(ctx: &mut Context) {
-    Message::send_data(Opcode::List, b"\x00\x12\x23test\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00").unwrap();
+    let mut num_files = 0;
+    let mut meta: [Option<(u8, u16, &[u8; 32])>; 8] = [None; 8];
+    for (i, file) in ctx.files.iter().enumerate() {
+        if file.is_set() {
+            meta[num_files] = Some((i as u8, 1234, &[0; 32])); // TODO: actual GID and name
+            num_files += 1;
+        }
+    }
+
+    // TODO: write to buffer and send
 }
 
 fn handle_read(ctx: &mut Context) {

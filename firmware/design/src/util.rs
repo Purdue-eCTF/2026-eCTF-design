@@ -2,7 +2,7 @@ use bytemuck::{NoUninit, bytes_of};
 use core::{
     fmt::{self, Write},
     marker::PhantomData,
-    ops::Index,
+    mem::size_of,
 };
 
 use mspm0l222x_hal::{
@@ -12,7 +12,10 @@ use mspm0l222x_hal::{
     uart::Uart0,
 };
 
-use crate::message::{MAX_BODY_SIZE, Message, Opcode};
+use crate::{
+    file::{FatTable, File},
+    message::{MAX_BODY_SIZE, Message, Opcode},
+};
 
 // TODO: glitching prevention or similar
 // TODO: how badly will this hit flash? Can we rotate slots or something?
@@ -40,72 +43,17 @@ macro_rules! println {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct File {
-    pub contents: [u8; 8192],
-    pub padding: [u8; 1024],
-}
-
-unsafe impl NoUninit for File {} // Generic arrays not supported by derive macro
-
-impl File {
-    pub(crate) fn addr(&self) -> u32 {
-        (&self.contents as *const u8) as u32
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct FatEntry {
-    pub uuid: [u8; 16],
-    pub length: u16,
-    pub padding: u16,
-    pub addr: u32,
-}
-
-impl core::fmt::Debug for FatEntry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FatEntry")
-            .field("uuid", &self.uuid)
-            .field("length", &self.length)
-            .field("addr", &self.addr)
-            .finish()
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct FatTable {
-    pub entries: [FatEntry; 8],
-    _padding: [u8; FLASH_PAGE_SIZE - 8 * size_of::<FatEntry>()],
-}
-impl FatTable {
-    pub(crate) fn new(entries: [FatEntry; 8]) -> Self {
-        Self {
-            entries,
-            _padding: [0; _],
-        }
-    }
-}
-impl Index<usize> for FatTable {
-    type Output = FatEntry;
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.entries[index]
-    }
-}
-unsafe impl NoUninit for FatTable {}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
 pub struct Salt {
     pub salt: [u8; 32],
-    pub padding: [u8; 1024 - 32],
 }
 
 unsafe impl NoUninit for Salt {}
 
-
 // TODO: automatically handle partial page writes
+pub const FLASH_MAGIC: u64 = 0x7c79b307cf99d0d6;
 pub struct FlashEntry<T: NoUninit> {
     location: u32,
+    pages: u32,
     _marker: PhantomData<T>,
 }
 
@@ -117,37 +65,69 @@ impl<T: NoUninit> FlashEntry<T> {
             "location {} is not page-aligned",
             location
         );
-        assert!(
-            core::mem::size_of::<T>() % FLASH_PAGE_SIZE == 0,
-            "type {:?} is not page-aligned (got {})",
-            core::any::type_name::<T>(),
-            core::mem::size_of::<T>()
-        );
+        // Type must be 8-byte aligned
+        const {
+            assert!(size_of::<T>() % 8 == 0);
+        }
 
         Self {
             location,
+            pages: (size_of::<T>() + size_of_val(&FLASH_MAGIC)).div_ceil(FLASH_PAGE_SIZE) as u32,
             _marker: PhantomData,
         }
     }
 
-    #[inline(never)]
     pub(crate) unsafe fn set(&self, data: &T) -> Result<(), mspm0l222x_hal::HalError> {
+        let flash = flash::flash();
+        let res = self.set_inner(data);
+
+        if res.is_err() {
+            // prevent partial writes
+            let mut err = Ok(());
+            for page in 0..self.pages {
+                unsafe {
+                    let erased = flash.erase_page(self.location + page * FLASH_PAGE_SIZE as u32);
+                    err = err.and(erased);
+                }
+            }
+
+            err
+        } else {
+            res
+        }
+    }
+
+    pub(crate) fn is_set(&self) -> bool {
+        (unsafe { *((self.location + size_of::<T>() as u32) as *const u64) }) == FLASH_MAGIC
+    }
+
+    #[inline]
+    fn set_inner(&self, data: &T) -> Result<(), mspm0l222x_hal::HalError> {
         let flash = flash::flash();
 
         let data = bytes_of(data);
-        let (pages, []): (&[[u8; 1024]], _) = data.as_chunks() else {
+        let (words, []): (&[[u8; 8]], _) = data.as_chunks() else {
             unreachable!()
         };
 
-        unsafe {
-            for (i, page) in pages.iter().enumerate() {
-                let loc = self.location + (i * FLASH_PAGE_SIZE) as u32;
-                flash.rewrite_page(loc, page)?;
-                flash.write_protect(loc, core::mem::size_of_val(page) as u32);
+        flash.write_unprotect(self.location, self.pages * FLASH_PAGE_SIZE as u32);
+        for page in 0..self.pages {
+            unsafe {
+                flash.erase_page(self.location + page * FLASH_PAGE_SIZE as u32)?;
             }
         }
 
+        flash.write_unprotect(self.location, self.pages * FLASH_PAGE_SIZE as u32);
+
+        for (i, word) in words.iter().enumerate() {
+            unsafe { flash.write_word(self.location + i as u32 * 8, word)? };
+        }
+
         Ok(())
+    }
+
+    fn addr(&self) -> u32 {
+        self.location
     }
 }
 
@@ -180,6 +160,8 @@ impl Context {
         println!("starting!");
         // Uart1::init(&iomux, peripherals.uart1);
         FlashController::init(peripherals.flashctl);
+        // TODO: set appropriate memory protection
+
         // Trng::init(peripherals.trng);
 
         let file_size = core::mem::size_of::<File>();
