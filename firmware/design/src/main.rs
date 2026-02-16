@@ -138,6 +138,8 @@ fn main() -> ! {
     }
 }
 
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)] 
+#[repr(C, packed)]
 struct ListEntry {
     slot: [u8; 1],
     name: [u8; NAME_SIZE],
@@ -148,17 +150,11 @@ struct ListEntry {
 
 // TODO
 fn handle_list(ctx: &mut Context) {
-    // do i need to do this
-    // check pin
-
-    // - if not right pin, panic w message
-    const FILE_USED_SIZE: usize = 1;
-
     // 4 bytes at start for total number of files; file slot, name of file, group id, padding, for 8 files
     let mut list: [u8; 4 + 1 + NAME_SIZE + 2 + 1] = [0u8; 4 + 1 + NAME_SIZE + 2 + 1]; 
     let mut counter: usize = 0;
     // index * info + newline + file slot
-    const size_of_everything: usize = 1 + NAME_SIZE + 2 + 1;
+    const METADATA_SIZE: usize = 1 + NAME_SIZE + 2 + 1;
 
     // - slot, file name, group ids, newline
     for i in 0..8 {
@@ -168,17 +164,13 @@ fn handle_list(ctx: &mut Context) {
         if !file.exists { continue; }
 
         // file slot
-        list[(counter * size_of_everything)..((counter * size_of_everything) + 1usize)].copy_from_slice(&[i as u8]);
+        list[(counter * METADATA_SIZE)..((counter * METADATA_SIZE) + 1usize)].copy_from_slice(&[i as u8]);
+        // if it looks like a struct and it quacks like a struct then surely it's a struct
+        let metadata: ListEntry = ListEntry { slot: [i as u8], name: *file.name, group: [file.group], _pad: [10u8] };
 
         // read guid
-        // TODO is try_into needed if we know that u8 is fine?
-        let newline: [u8; 1] = [10];
-        list[(4usize + (counter * size_of_everything) + 1usize)..
-            (4usize + (counter * size_of_everything) + 1usize + NAME_SIZE)].copy_from_slice(file.name);
-        list[(4usize + (counter * size_of_everything) + 1usize + NAME_SIZE)..
-            (4usize + (counter * size_of_everything) + 1usize + NAME_SIZE + GID_SIZE)].copy_from_slice(&file.group.to_be_bytes());
-        list[(4usize + (counter * size_of_everything) + 1usize + NAME_SIZE + GID_SIZE)..
-            (4usize + (counter * size_of_everything) + 2usize + NAME_SIZE + GID_SIZE)].copy_from_slice(&newline);
+        // is this fine
+        list[4usize + (counter * METADATA_SIZE).. 4usize + (counter * METADATA_SIZE) + METADATA_SIZE].copy_from_slice(bytemuck::bytes_of(&metadata));
 
         counter += 1;
         // guid + \t + name
@@ -347,19 +339,21 @@ fn handle_interrogate(ctx: &mut Context) {
         groups[group_count * GID_SIZE..(group_count * GID_SIZE + GID_SIZE)].copy_from_slice(&group.1.group.to_ne_bytes());
     }
     // TODO symmetric key to be replaced
-    let payload = encrypt_payload_symmetric(&mut groups, &secrets::GROUP_KEYS[0].s0.0, "INTERROGATE".as_bytes()).unwrap();
+    // couldn't figure out how to get 
+    let payload = encrypt_payload_symmetric(&mut groups, &secrets::GROUP_KEYS[0].s0.0, &[Opcode::Interrogate as u8]).unwrap();
 
     // TODO replace with uart1 io. pretend Interrogate_retrieve exists pls
-    let request= Message::send_data(ListenOpcode::InterrogateRetrieve, &payload).unwrap();
+    let request= Message::send_data(Opcode::Interrogate, &payload).unwrap();
 
     let info = Message::read().unwrap();
 
-    if info.opcode != ListenOpcode::InterrogateRetrieve {
+    if info.opcode != Opcode::Interrogate {
         panic!("Incorrect Opcode for Retrieve Interrogate");
     }
 
-    let body = decrypt_payload_symmetric(&mut info.body, &secrets::GROUP_KEYS[0].s1.0, "INTERROGATE".as_bytes()).unwrap();
+    let body = decrypt_payload_symmetric(&mut info.body, &secrets::GROUP_KEYS[0].s1.0, &[Opcode::Interrogate as u8]).unwrap();
     let size_of_metadata: usize = 32 + 2 + 1 + 1;
+    // lol hardcoded
 
     // same as list
     let mut list: [u8; 4 + 1 + NAME_SIZE + 2 + 1] = [0u8; 4 + 1 + NAME_SIZE + 2 + 1]; 
