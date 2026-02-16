@@ -2,6 +2,7 @@
 #![no_main]
 
 mod crypto;
+mod listen;
 mod message;
 mod secrets;
 
@@ -9,7 +10,7 @@ use core::panic::PanicInfo;
 use cortex_m_rt::entry;
 use mspm0l222x_hal::{
     flash::FlashController,
-    uart::{println, Uart},
+    uart::{println, Uart, uart},
     Peripherals,
     trng::Trng,
     iomux::Iomux,
@@ -40,8 +41,15 @@ macro_rules! sensitive {
         $context.move_salt_to_flash();
     };
 }
+
+#[repr(C)]
 struct File {
-    contents: [u8; 8192],
+    signature: [u8; 64],
+    name: [u8; 32],
+    uuid: [u8; 16],
+    group: u16,
+    contents: [u8; 8077],
+    exists: bool,
 }
 
 #[repr(C)]
@@ -128,5 +136,10 @@ fn handle_interrogate(ctx: &mut Context) {
 }
 
 fn handle_listen(ctx: &mut Context) {
-    todo!()
+    // TODO: uart1
+    let uart = uart();
+    let opcode = uart.read_byte().unwrap();
+    let mut body = [0; 8];
+    let _ = uart.read_bytes(&mut body).unwrap();
+    listen::recv(ctx, opcode.try_into().unwrap(), &mut body);
 }
