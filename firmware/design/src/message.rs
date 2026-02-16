@@ -1,5 +1,5 @@
 use bytemuck::bytes_of_mut;
-use mspm0l222x_hal::uart::uart;
+use mspm0l222x_hal::uart::uart0;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -68,7 +68,7 @@ pub const MAGIC: u8 = b'%';
 
 // TODO: how to chunk files for sending? 8kb is like 1/4 of RAM
 /// Maximum body size for a message: 4.5 KiB
-pub const MAX_BODY_SIZE: usize = 4608;
+pub const MAX_BODY_SIZE: usize = 1024; // TODO: this seems far too large
 /// Messages get sent in 256-byte chunks, with an ack for each chunk
 const CHUNK_SIZE: usize = 256;
 
@@ -117,7 +117,7 @@ impl Message {
         // TODO: once uart0/uart1 support is merged:
         // - replace uart with uart0
         // - replace read_bytes(1) with read_byte
-        let reader = uart();
+        let reader = uart0();
 
         let mut magic = 0u8;
         reader.read_bytes(bytes_of_mut(&mut magic)).unwrap();
@@ -143,7 +143,7 @@ impl Message {
 
     /// Reads a complete message from UART.
     pub fn read() -> Result<Self, MessageError> {
-        let reader = uart();
+        let reader = uart0();
         let mut message = Self::read_header()?;
 
         Self::send_ack();
@@ -161,7 +161,7 @@ impl Message {
     /// Reads up to CHUNK_SIZE bytes from UART, skipping the header.
     pub fn read_block() -> Result<[u8; CHUNK_SIZE], MessageError> {
         let mut content: [u8; CHUNK_SIZE] = [0; CHUNK_SIZE];
-        let reader = uart();
+        let reader = uart0();
         reader.read_bytes(&mut content).unwrap();
         Self::send_ack();
 
@@ -187,7 +187,7 @@ impl Message {
 
     /// Writes this message's header to UART.
     pub fn write_header(&self) {
-        let writer = uart();
+        let writer = uart0();
 
         writer.write_bytes(&[MAGIC, self.opcode.into()]);
         writer.write_bytes(&self.length.to_le_bytes());
@@ -199,7 +199,7 @@ impl Message {
         if !NACKS.contains(&self.opcode) {
             Self::read_ack()?;
         }
-        let writer = uart();
+        let writer = uart0();
 
         if self.length != 0 {
             for chunk in self.body[..self.length.into()].chunks(CHUNK_SIZE) {
@@ -218,7 +218,7 @@ impl Message {
             return Err(MessageError::BodyLengthError);
         }
 
-        let writer = uart();
+        let writer = uart0();
         writer.write_bytes(data);
         Self::read_ack()?;
         Ok(())
@@ -227,11 +227,28 @@ impl Message {
     /// Convenience method to immediately create and send a message from the given
     /// opcode and byte slice.
     pub fn send_data(opcode: Opcode, data: &[u8]) -> Result<(), MessageError> {
+        let writer = uart0();
         if data.len() > MAX_BODY_SIZE {
             return Err(MessageError::BodyLengthError);
         }
-        let msg = Message::from_data(opcode, data)?;
-        msg.write()
+
+        writer.write_bytes(&[MAGIC, opcode.into()]);
+        writer.write_bytes(&(data.len() as u16).to_le_bytes());
+
+        if !NACKS.contains(&opcode) {
+            Self::read_ack()?;
+        }
+
+        if data.len() != 0 {
+            for chunk in data.chunks(CHUNK_SIZE) {
+                writer.write_bytes(chunk);
+                if !NACKS.contains(&opcode) {
+                    Self::read_ack()?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Static method to generate an ack message.
@@ -243,6 +260,5 @@ impl Message {
         }
     }
 }
-
 
 // TODO: inter-device messaging over UART1

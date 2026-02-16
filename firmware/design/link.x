@@ -7,14 +7,17 @@ Offset  | Size    | Name                  | Description
 0x3A400 | 0x5c00  | APP2                  | Flash region that may be used by your design however you see fit.
 */
 
-/* TODO: NOLOAD on bootloader? */
+__file_size = 8*(9 * 1024);
+
 MEMORY {
     BOOTLOADER(r) : ORIGIN = 0x0, LENGTH = 0x6000
-    APP1(rx) : ORIGIN = 0x6000, LENGTH = 0x34000
-    FILES(rw) : ORIGIN = 0x3A000 - (8*8192), LENGTH = 8*8192
+    APP1(rx) : ORIGIN = 0x6000, LENGTH = 0x34000 - __file_size
+    FILES(rw) : ORIGIN = (0x3A000 - __file_size), LENGTH = __file_size
     FILETABLE(rw) : ORIGIN = 0x3A000, LENGTH = 0x400
-    APP2(r) : ORIGIN = 0x3A400, LENGTH = 0x5c00
+    APP2(rw) : ORIGIN = 0x3A400, LENGTH = 0x5c00
 }
+
+ASSERT(ORIGIN(APP1) + LENGTH(APP1) <= ORIGIN(FILES), "APP1 overlaps with FILES")
 
 INCLUDE memory.x
 INCLUDE device.x
@@ -54,7 +57,9 @@ SECTIONS {
     PROVIDE(_ram_end = ORIGIN(RAM) + LENGTH(RAM));
     PROVIDE(_stack_start = _ram_end);
 
-    .vector_table : {
+    .vector_table ORIGIN(APP1) : {
+        LONG(_stack_start & 0xFFFFFFF8);
+
         __vector_table = .;
         KEEP(*(.vector_table.reset_vector));
         __exceptions = .;
@@ -63,7 +68,14 @@ SECTIONS {
         KEEP(*(.vector_table.interrupts));
     } > APP1
 
-    .text : {
+    ASSERT(SIZEOF(.vector_table) == 192, "Got wrong size for vector table")
+
+    PROVIDE(_stext = ADDR(.vector_table) + SIZEOF(.vector_table));
+    .text _stext : {
+        __stext = .;
+
+        *(.Reset);
+
         *(.text .text.*);
 
         /* The HardFaultTrampoline uses the `b` instruction to enter `HardFault`,
@@ -71,21 +83,22 @@ SECTIONS {
         *(.HardFaultTrampoline);
         *(.HardFault.*);
 
-        . = ALIGN(4); /* Pad .text to the alignment to workaround overlapping load section bug in old lld */
+        . = ALIGN(8); /* Pad .text to the alignment to workaround overlapping load section bug in old lld */
+        __etext = .;
     } > APP1
 
-    .rodata : ALIGN(4) {
-        . = ALIGN(4);
+    .rodata : ALIGN(8) {
+        . = ALIGN(8);
         *(.rodata .rodata.*);
 
-        . = ALIGN(4);
+        . = ALIGN(8);
     } > APP1
     
     .data : {
-        . = ALIGN(4);
+        . = ALIGN(8);
         __sdata = .;
         *(.data .data.*);
-        . = ALIGN(4); /* 4-byte align the end (VMA) of this section */
+        . = ALIGN(8); /* 4-byte align the end (VMA) of this section */
         __edata = .;
     } > RAM AT>APP1
 
@@ -93,29 +106,30 @@ SECTIONS {
 
     .files (NOLOAD) : {
         _files = .;
-        . += 8 * 8192;
+        . += __file_size;
+        _efiles = .;
     } > FILES
 
     /* ### .bss */
-    .bss (NOLOAD) : ALIGN(4)
+    .bss (NOLOAD) : ALIGN(8)
     {
-        . = ALIGN(4);
+        . = ALIGN(8);
         __sbss = .;
         *(.bss .bss.*);
         *(COMMON); /* Uninitialized C statics */
-        . = ALIGN(4); /* 4-byte align the end (VMA) of this section */
+        . = ALIGN(8); /* 4-byte align the end (VMA) of this section */
     } > RAM
 
-    . = ALIGN(4);
+    . = ALIGN(8);
     __ebss = .;
 
 
     /* ### .uninit */
-    .uninit (NOLOAD) : ALIGN(4)
+    .uninit (NOLOAD) : ALIGN(8)
     {
-        . = ALIGN(4);
+        . = ALIGN(8);
         *(.uninit .uninit.*);
-        . = ALIGN(4);
+        . = ALIGN(8);
     } > RAM
 
     .got (NOLOAD) :
@@ -127,6 +141,11 @@ SECTIONS {
         _filetable = .;
         . += 0x400;
     } > FILETABLE
+
+    .salt : {
+        _salt = .;
+        . += 1024;
+    } > APP2
 
     /* ## Discarded sections */
     /DISCARD/ :
