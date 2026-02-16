@@ -70,7 +70,7 @@ pub const MAGIC: u8 = b'%';
 /// Maximum body size for a message: 4.5 KiB
 pub const MAX_BODY_SIZE: usize = 4608;
 /// Messages get sent in 256-byte chunks, with an ack for each chunk
-const CHUNK_SIZE: usize = 256;
+pub const CHUNK_SIZE: usize = 256;
 
 /// Opcodes that don't require an ack response.
 const NACKS: [Opcode; 2] = [Opcode::Debug, Opcode::Ack];
