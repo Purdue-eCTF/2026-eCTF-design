@@ -14,12 +14,7 @@ use ed25519_dalek::{Signature, SigningKey, Verifier, VerifyingKey, Signer};
 use view::{ConcatView, ConcatOffsets, FileView};
 
 use mspm0l222x_hal::{
-    Peripherals,
-    flash::FlashController,
-    uart::{println, Uart, uart},
-    iomux::Iomux,
-    led::Led,
-    trng::Trng,
+    Peripherals, flash::FlashController, iomux::Iomux, led::Led, trng::Trng, uart::{Uart0, println, uart1}
 };
 
 use crate::{crypto::{decrypt_payload_pub, decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, listen::ListenOpcode, message::{Message, Opcode}, secrets::SymmetricKey};
@@ -84,7 +79,8 @@ impl Context {
         // TODO: PIN salt generation + penalty enforcement
         // TODO: check for flash write failure
         let iomux = Iomux::new(&peripherals.iomux);
-        Uart::init(&iomux, peripherals.uart0);
+        Uart0::init(&iomux, peripherals.uart0);
+        // init Uart1?
         Led::init(&iomux, peripherals.gpioa, peripherals.gpiob);
         Trng::init(peripherals.trng);
         let files = unsafe { core::mem::transmute(&_files) };
@@ -193,12 +189,9 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
 
     let mut pin = [0u8; 6];
     pin.copy_from_slice(&msg.body[0..6]);
-    
 
     let pin = pin;
     let slot = msg.body[6] as usize;
-
-    // TODO, this should be associated with a file
 
     let file_length = ctx.fat[slot].length as usize;
     let fv = FileView::from_file(&ctx.files[slot].contents, file_length);
@@ -210,14 +203,10 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     let group_key = get_group_key(group, &pin).unwrap();
     let pk_sign = VerifyingKey::from_bytes(&group_key.pk_sign.0).unwrap();
 
-    
-
     let mut buf: [u8; view::MAX_VIEW_SIZE] = [0u8; _];
     let mut concat = fv.concat_bytes(&mut buf).unwrap();
 
-    // TODO, where is this
-    let expected_signature = Signature::from_bytes(&[0u8; 64]);
-
+    let expected_signature = Signature::from_bytes(concat.as_view().unwrap().signature);
     let _ = pk_sign
         .verify(&concat.get_buf(), &expected_signature)
         .unwrap();
@@ -226,21 +215,33 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     crypto::decrypt_payload_pub_combined(concat_view.data, &group_key.sk_read.0).unwrap();
 
     let data = concat_view.data;
-    // If the file is too big this won't work
+
+    let total_length = view::NAME_SIZE + data.len();
     let mut body = [0u8; message::MAX_BODY_SIZE];
-    let (body_name, body_data) = body.split_at_mut(view::NAME_SIZE);
-
-    //TODO: Some files are too big
-    if data.len() + view::NAME_SIZE > message::MAX_BODY_SIZE {
-        todo!()
-    }
-
-    body[0..view::NAME_SIZE].copy_from_slice(fv.name);
-    body[view::NAME_SIZE..view::NAME_SIZE+data.len()].copy_from_slice(data);
-
-    let total_length = view::NAME_SIZE+data.len();
+    // don't use write here because the file not fit in the message body
+    // write a chunk at a time instead
     let response = Message::new(Opcode::Read, total_length.try_into().unwrap(), body);
-    response.write().unwrap();
+    response.write_header();
+    let eat = if total_length <= message::CHUNK_SIZE {
+        data.len()
+    } else {
+        message::CHUNK_SIZE - view::NAME_SIZE
+    };
+
+    let (initial, rest) = data.split_at(eat);
+    body[..view::NAME_SIZE].copy_from_slice(concat_view.name);
+    body[view::NAME_SIZE..view::NAME_SIZE + eat].copy_from_slice(initial);
+    message::Message::write_block(&body[..message::CHUNK_SIZE]).unwrap();
+
+    for chunk in rest.chunks(message::CHUNK_SIZE) {
+        //TODO: not sure if this is possible but just in case
+        let cl = chunk.len();
+        if cl == 0 {
+            break;
+        }
+        body[..cl].copy_from_slice(chunk);
+        message::Message::write_block(&body[..cl]).unwrap();
+    }
 }
 
 fn handle_write(ctx: &mut Context, msg: &Message) {
@@ -385,8 +386,7 @@ fn handle_interrogate(ctx: &mut Context) {
 }
 
 fn handle_listen(ctx: &mut Context) {
-    // TODO: uart1
-    let uart = uart();
+    let uart = uart1();
     let opcode = uart.read_byte().unwrap();
     let mut body = [0; 8];
     let _ = uart.read_bytes(&mut body).unwrap();
