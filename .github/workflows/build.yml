@@ -26,6 +26,7 @@ jobs:
 
       - name: Run
         env:
+          PYTHONUNBUFFERED: 1
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
           IP: ${{ secrets.IP }}
           BUILD_PORT: ${{ secrets.BUILD_PORT }}
