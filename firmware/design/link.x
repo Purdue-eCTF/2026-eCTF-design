@@ -103,8 +103,8 @@ SECTIONS {
     } > RAM AT>APP1
 
     __sidata = LOADADDR(.data);
+
     .files (NOLOAD) : {
-        . = ALIGN(8); /* flash word size is 8 bytes, so files should be aligned to this */
         _files = .;
         . += __file_size;
         _efiles = .;
