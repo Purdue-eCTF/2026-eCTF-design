@@ -17,7 +17,7 @@ use mspm0l222x_hal::{
     Peripherals, flash::FlashController, iomux::Iomux, led::Led, trng::Trng, uart::{Uart0, println, uart1}
 };
 
-use crate::{crypto::{decrypt_payload_pub, decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, listen::ListenOpcode, message::{Message, Opcode}, secrets::SymmetricKey};
+use crate::{crypto::{decrypt_payload_pub, decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, message::{Message, Opcode}, secrets::SymmetricKey};
 
 unsafe extern "C" {
     static _stack_start: u8;
@@ -341,18 +341,18 @@ fn handle_interrogate(ctx: &mut Context) {
     }
     // TODO symmetric key to be replaced
     // couldn't figure out how to get 
-    let payload = encrypt_payload_symmetric(&mut groups, &secrets::GROUP_KEYS[0].s0.0, &[Opcode::Interrogate as u8]).unwrap();
+    let payload = encrypt_payload_symmetric(&mut groups, &secrets::INTERROGATE_KEYS[0].0, &[Opcode::Interrogate as u8]).unwrap();
 
     // TODO replace with uart1 io. pretend Interrogate_retrieve exists pls
     let request= Message::send_data(Opcode::Interrogate, &payload).unwrap();
 
-    let info = Message::read().unwrap();
+    let mut info = Message::read().unwrap();
 
     if info.opcode != Opcode::Interrogate {
         panic!("Incorrect Opcode for Retrieve Interrogate");
     }
 
-    let body = decrypt_payload_symmetric(&mut info.body, &secrets::GROUP_KEYS[0].s1.0, &[Opcode::Interrogate as u8]).unwrap();
+    let body = decrypt_payload_symmetric(&mut info.body, &secrets::INTERROGATE_KEYS[1].0, &[Opcode::Interrogate as u8]).unwrap();
     let size_of_metadata: usize = 32 + 2 + 1 + 1;
     // lol hardcoded
 
@@ -362,7 +362,8 @@ fn handle_interrogate(ctx: &mut Context) {
 
     for i in (0..body.len()).step_by(size_of_metadata) {
         // TODO where find salt?
-        let entry = decrypt_payload_pub(&mut body[(i * size_of_metadata)..((i * size_of_metadata) + size_of_metadata)], &secrets::GROUP_KEYS[0].pk_inter.0, salt).unwrap();
+        let salt = [0u8; 32];
+        let entry = decrypt_payload_pub(&mut body[(i * size_of_metadata)..((i * size_of_metadata) + size_of_metadata)], &secrets::GROUP_KEYS[0].pk_inter.0, &salt).unwrap();
         list[4 + (i * size_of_metadata)..4 + size_of_metadata + (i * size_of_metadata)].copy_from_slice(entry);
         counter += 1;
     }

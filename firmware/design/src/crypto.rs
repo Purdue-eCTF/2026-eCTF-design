@@ -55,6 +55,7 @@ pub fn encrypt_payload_pub<'a>(
     payload: &'a mut [u8],
     key: &[u8; 32],
 ) -> Result<&'a mut [u8], CryptoError> {
+    //let n = &trng::trng().word().to_be_bytes(); // u32 -> 4 bytes
     todo!()
 }
 
