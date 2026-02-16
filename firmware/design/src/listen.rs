@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable, bytes_of_mut};
 
-use crate::{Context, crypto::{decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, view::FileView};
+use crate::{Context, crypto::{decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, secrets::{GROUP_KEYS, INTERROGATE_KEYS, TRANSFER_KEYS}, view::FileView};
 use mspm0l222x_hal::uart::uart;
 use thiserror::Error;
 
@@ -58,7 +58,7 @@ pub fn recv(ctx: &mut Context, opcode: ListenOpcode, body: &mut [u8]) {
 
 fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
     // TODO: i0
-    let i0: [u8; 32] = [0; 32];
+    let i0 = INTERROGATE_KEYS[0].0;
 
     let opcode = [ListenOpcode::Interrogate.into()];
     let msg = decrypt_payload_symmetric(body, &i0, &opcode).unwrap();
@@ -75,8 +75,8 @@ fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
             if file.exists && file.group == group {
                 body[count] = InterrogateFile { name: *file.name, group: file.group, slot: i as u8, _pad: 0 };
 
-                // TODO: get_pk_inter(group)
-                let pk_inter = get_pk_inter(group);
+                // surely
+                let pk_inter = GROUP_KEYS[group as usize].pk_inter.0;
                 let _ = encrypt_payload_pub(bytes_of_mut(&mut body[count]), &pk_inter).unwrap();
                 count += 1;
             }
@@ -84,7 +84,7 @@ fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
     }
 
     // TODO: i1
-    let i1: [u8; 32] = [0; 32];
+    let i1 = INTERROGATE_KEYS[1].0;
     
     let res = encrypt_payload_symmetric(bytes_of_mut(&mut body), &i1, &opcode).unwrap();
     
@@ -96,7 +96,7 @@ fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
 }
 
 fn handle_transfer<'a>(ctx: &mut Context, body: &'a mut [u8]) -> Result<(), ListenError> {
-    let t0 = [0; 32];
+    let t0 = TRANSFER_KEYS[0].0;
     let opcode = [ListenOpcode::Receive.into()];
     let msg = decrypt_payload_symmetric(body, &t0, &opcode).unwrap();
 
@@ -125,12 +125,11 @@ fn handle_transfer<'a>(ctx: &mut Context, body: &'a mut [u8]) -> Result<(), List
 
     buf.copy_from_slice(&ctx.files[slot].contents[..8191]);
 
-    // TODO: get pk_transfer
-    let pk_transfer = get_pk_transfer(file.group);
+    // surely
+    let pk_transfer = GROUP_KEYS[group as usize].pk_trans.0;
     encrypt_payload_pub(&mut buf, &pk_transfer).unwrap();
 
-    // TODO: t1
-    let t1 = [0; 32];
+    let t1 = TRANSFER_KEYS[1].0;
 
     let res = encrypt_payload_symmetric(&mut buf, &t1, &opcode).unwrap();
     let uart = uart();
@@ -140,16 +139,4 @@ fn handle_transfer<'a>(ctx: &mut Context, body: &'a mut [u8]) -> Result<(), List
     uart.write_bytes(res);
 
     Ok(())
-}
-
-fn get_pk_inter(group: u16) -> [u8; 32] {
-    // TODO: get_pk_inter(group)
-    let pk_inter = [0; 32];
-    pk_inter
-}
-
-fn get_pk_transfer(group: u16) -> [u8; 32] {
-    // TODO: get_pk_transfer(group)
-    let pk_transfer = [0; 32];
-    pk_transfer
 }
