@@ -102,6 +102,17 @@ impl Context {
     pub(crate) fn move_salt_to_flash(&self) {}
 }
 
+// TODO: Placeholder function until using the pin to decrypt keys is implemented
+fn get_group_key(group: u16, pin: &[u8; 6]) -> Result<&'static secrets::GroupKey, ()> {
+    let mut r = Err(());
+    for key in secrets::GROUP_KEYS.iter() {
+        if key.group == group {
+            r = Ok(key);
+        }
+    }
+    r
+}
+
 #[entry]
 fn main() -> ! {
     let mut ctx = Context::new(Peripherals::take().unwrap());
@@ -120,7 +131,7 @@ fn main() -> ! {
         sensitive!(ctx, {
             match msg.opcode {
                 Opcode::List => handle_list(&mut ctx),
-                Opcode::Read => handle_read(&mut ctx),
+                Opcode::Read => handle_read(&mut ctx, &msg),
                 Opcode::Write => handle_write(&mut ctx),
                 Opcode::Receive => handle_receive(&mut ctx),
                 Opcode::Interrogate => handle_interrogate(&mut ctx),
@@ -189,34 +200,62 @@ fn handle_list(ctx: &mut Context) {
 
 // read file on given slot
 
-fn handle_read(ctx: &mut Context) {
-    //TODO: discover correct values
-    let slot: usize = 0;
-    let pk_sign: &[u8; 32] = &[0; _];
-    let pk_sign = VerifyingKey::from_bytes(pk_sign).unwrap();
+fn handle_read(ctx: &mut Context, msg: &Message) {
+    if msg.length != 7 {
+        panic!()
+    }
 
+    let mut pin = [0u8; 6];
+    pin.copy_from_slice(&msg.body[0..6]);
+    
+
+    let pin = pin;
+    let slot = msg.body[6] as usize;
+
+    // TODO, this should be associated with a file
     let group = 0u16;
     let uuid = &ctx.fat[slot].uuid;
 
-    //TODO: Hardcoded name length
-    let name: &[u8; 32] = &[0; _];
+    let group_key = get_group_key(group, &pin).unwrap();
+    let pk_sign = VerifyingKey::from_bytes(&group_key.pk_sign.0).unwrap();
+    //TODO, where is this
+    let name: &[u8; view::NAME_SIZE] = &[0; _];
     let file_length = ctx.fat[slot].length as usize;
 
+    if file_length > view::MAX_FILE_SIZE {
+        panic!()
+    }
 
     let fv = FileView::new(name, group, uuid, &ctx.files[slot].contents[..file_length]);
-    let mut concat: [u8; 32 + 2 + 2 + 8192] = [0u8; _];
-    let offsets = fv.concat_bytes(&mut concat).unwrap();
+    let mut buf: [u8; view::MAX_VIEW_SIZE] = [0u8; _];
+    let mut concat = fv.concat_bytes(&mut buf).unwrap();
+
+    // TODO, where is this
     let expected_signature = Signature::from_bytes(&[0u8; 64]);
 
     let _ = pk_sign
-        .verify(&concat[offsets.name..offsets.end], &expected_signature)
+        .verify(&concat.get_buf(), &expected_signature)
         .unwrap();
 
-    //TODO: Where does this come from
-    let sk_read: &[u8; 32] = &[0; _];
-    let concat_view = ConcatView::new(&offsets, &mut concat).unwrap();
-    crypto::decrypt_payload_pub_combined(concat_view.data, sk_read).unwrap();
-    todo!()
+    let concat_view = concat.as_view().unwrap();
+    crypto::decrypt_payload_pub_combined(concat_view.data, &group_key.sk_read.0).unwrap();
+
+    let data = concat_view.data;
+    // If the file is too big this won't work
+    let mut body = [0u8; message::MAX_BODY_SIZE];
+    let (body_name, body_data) = body.split_at_mut(view::NAME_SIZE);
+
+    //TODO: Some files are too big
+    if data.len() + view::NAME_SIZE > message::MAX_BODY_SIZE {
+        todo!()
+    }
+
+    body[0..view::NAME_SIZE].copy_from_slice(name);
+    body[view::NAME_SIZE..view::NAME_SIZE+data.len()].copy_from_slice(data);
+
+    let total_length = view::NAME_SIZE+data.len();
+    let response = Message::new(Opcode::Read, total_length.try_into().unwrap(), body);
+    response.write().unwrap();
 }
 
 fn handle_write(ctx: &mut Context) {

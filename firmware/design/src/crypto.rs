@@ -9,6 +9,7 @@ const NONCE_SIZE: usize = 24;
 const TAG_SIZE: usize = 16;
 const GN_SIZE: usize = 32;
 
+// TODO: Tests
 #[derive(Debug, Error)]
 pub enum CryptoError {
     #[error("Invalid decrypt payload")]
