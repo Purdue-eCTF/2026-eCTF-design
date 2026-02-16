@@ -84,7 +84,13 @@ pub struct FileView<'a> {
     pub exists: bool,
 }
 
-//represents concatenated date
+// represents concatenated date
+// Signature || N || G || U || data
+//
+// TODO: If we fix name at 32 bytes padded by null and have data always occupy some
+// maximum filesize padded by null bytes we could just use a struct instead of using
+// a bunch of slices
+
 pub struct Concat<'a> {
     offsets: ConcatOffsets,
     buf: &'a mut [u8],
@@ -95,9 +101,8 @@ impl<'a> Concat<'a> {
         Ok(ConcatView::new(&self.offsets, self.buf)?)
     }
 
-    // TODO this should only include name..end
     pub fn get_buf(&mut self) -> &mut [u8] {
-        self.buf
+        &mut self.buf[self.offsets.name..self.offsets.end]
     }
 
     pub fn validate(&mut self) -> Result<(), ConcatError> {
@@ -183,7 +188,7 @@ impl<'a> FileView<'a> {
         i += self.data.len();
         o.end = i;
         let r = Concat::new(o, buf)?;
-        
+
         Ok(r)
     }
 
