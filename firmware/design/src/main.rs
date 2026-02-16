@@ -7,6 +7,7 @@ mod message;
 mod secrets;
 mod view;
 
+use bytemuck::{Pod, Zeroable};
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
 use ed25519_dalek::{Signature, SigningKey, Verifier, VerifyingKey, Signer};
@@ -48,6 +49,7 @@ pub struct File {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 struct FatEntry {
     uuid: [u8; 16],
     length: u16,
@@ -108,10 +110,12 @@ fn get_group_key(group: u16, pin: &[u8; 6]) -> Result<&'static secrets::GroupKey
 fn main() -> ! {
     let mut ctx = Context::new(Peripherals::take().unwrap());
 
-    for i in 0..8 * 1024 {
-        ctx.flash
-            .write_data((&ctx.files[0] as *const File) as u32 + i, &0u64)
-            .unwrap();
+    for i in (0..8 * 1024).step_by(1024) {
+        unsafe {
+            ctx.flash
+                .write_page((&ctx.files[0] as *const File) as u32 + i, &[0u8; 1024])
+                .unwrap();
+        }
     }
 
     println!("{:?}", &ctx.files[0].contents[0..10]);
@@ -319,14 +323,34 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
     buf[MAX_FILE_SIZE - 1] = 1;
     encrypt_payload_pub(&mut buf[offsets.data..offsets.data + written], &pk_read).unwrap();
     
-    // TODO: actually write FAT and file
-    // ctx.fat[slot].length = data_len as u16;
-    // ctx.fat[slot].uuid.copy_from_slice(uuid);
+    let new_fat = FatEntry {
+        uuid: uuid.try_into().unwrap(),
+        length: data_len as u16,
+        padding: ctx.fat[slot].padding, // what is this?
+        addr: ctx.fat[slot].addr,
+    };
 
-    // // padding?
+    const PAGE_SIZE: usize = 1024;
+    for page_idx in 0..(MAX_FILE_SIZE / PAGE_SIZE) {
+        let offset = page_idx * PAGE_SIZE;
+        let page: &[u8; PAGE_SIZE] = buf[offset..offset + PAGE_SIZE].try_into().unwrap();
+        unsafe {
+            ctx.flash
+                .write_page((&ctx.files[slot] as *const File) as u32 + offset as u32, page)
+                .unwrap();
+        }
+    }
 
-    // ctx.files[slot].contents.copy_from_slice(&buf);
-    todo!()
+    let fat_slice = bytemuck::bytes_of(&new_fat);
+    for i in 0..(size_of::<FatEntry>() / 8) {
+        let offset = i * 8;
+        unsafe {
+            ctx.flash.write_word(
+                &ctx.fat[slot] as *const FatEntry as u32 + offset as u32,
+                &fat_slice[offset..offset + 8].try_into().unwrap()
+            ).unwrap();
+        }
+    }
 }
 
 fn handle_receive(ctx: &mut Context) {
