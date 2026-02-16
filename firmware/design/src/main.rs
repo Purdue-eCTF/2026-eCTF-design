@@ -14,12 +14,7 @@ use ed25519_dalek::{Signature, SigningKey, Verifier, VerifyingKey, Signer};
 use view::{ConcatView, ConcatOffsets, FileView};
 
 use mspm0l222x_hal::{
-    Peripherals,
-    flash::FlashController,
-    uart::{println, Uart, uart},
-    iomux::Iomux,
-    led::Led,
-    trng::Trng,
+    Peripherals, flash::FlashController, iomux::Iomux, led::Led, trng::Trng, uart::{Uart0, println, uart1}
 };
 
 use crate::{crypto::{decrypt_payload_pub, decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, listen::ListenOpcode, message::{Message, Opcode}, secrets::SymmetricKey};
@@ -84,7 +79,8 @@ impl Context {
         // TODO: PIN salt generation + penalty enforcement
         // TODO: check for flash write failure
         let iomux = Iomux::new(&peripherals.iomux);
-        Uart::init(&iomux, peripherals.uart0);
+        Uart0::init(&iomux, peripherals.uart0);
+        // init Uart1?
         Led::init(&iomux, peripherals.gpioa, peripherals.gpiob);
         Trng::init(peripherals.trng);
         let files = unsafe { core::mem::transmute(&_files) };
@@ -396,8 +392,7 @@ fn handle_interrogate(ctx: &mut Context) {
 }
 
 fn handle_listen(ctx: &mut Context) {
-    // TODO: uart1
-    let uart = uart();
+    let uart = uart1();
     let opcode = uart.read_byte().unwrap();
     let mut body = [0; 8];
     let _ = uart.read_bytes(&mut body).unwrap();

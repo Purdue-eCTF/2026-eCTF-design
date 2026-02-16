@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable, bytes_of_mut};
 
 use crate::{Context, crypto::{decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, secrets::{GROUP_KEYS, INTERROGATE_KEYS, TRANSFER_KEYS}, view::FileView};
-use mspm0l222x_hal::uart::uart;
+use mspm0l222x_hal::uart::uart1;
 use thiserror::Error;
 
 
@@ -90,8 +90,7 @@ fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
     
     let res = encrypt_payload_symmetric(bytes_of_mut(&mut body), &i1, &opcode).unwrap();
     
-    // TODO: uart1
-    let uart = uart();
+    let uart = uart1();
     let length: [u8; 2] = (count as u16).to_le_bytes();
     uart.write_bytes(&length[..]);
     uart.write_bytes(res);
@@ -134,7 +133,7 @@ fn handle_transfer<'a>(ctx: &mut Context, body: &'a mut [u8]) -> Result<(), List
     let t1 = TRANSFER_KEYS[1].0;
 
     let res = encrypt_payload_symmetric(&mut buf, &t1, &opcode).unwrap();
-    let uart = uart();
+    let uart = uart1();
 
     let length: [u8; 2] = (res.len() as u16).to_le_bytes();
     uart.write_bytes(&length[..]);
