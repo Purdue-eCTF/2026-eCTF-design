@@ -38,3 +38,15 @@ pub const GROUP_KEYS: [GroupKey; 1] = [GroupKey {
     s0: SymmetricKey([0; _]),
     s1: SymmetricKey([0; _]),
 }];
+
+// todo
+
+pub const TRANSFER_KEYS: [SymmetricKey; 2] = [
+    SymmetricKey([0; _]),
+    SymmetricKey([0; _]),
+];
+
+pub const INTERROGATE_KEYS: [SymmetricKey; 2] = [
+    SymmetricKey([0; _]),
+    SymmetricKey([0; _]),
+];

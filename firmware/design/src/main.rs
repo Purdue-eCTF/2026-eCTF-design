@@ -2,26 +2,27 @@
 #![no_main]
 
 mod crypto;
+mod listen;
 mod message;
 mod secrets;
 mod view;
 
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, SigningKey, Verifier, VerifyingKey, Signer};
 
-use view::{FileView, ConcatView};
+use view::{ConcatView, ConcatOffsets, FileView};
 
 use mspm0l222x_hal::{
     Peripherals,
     flash::FlashController,
+    uart::{println, Uart, uart},
     iomux::Iomux,
     led::Led,
     trng::Trng,
-    uart::{Uart, println},
 };
 
-use crate::message::{Message, Opcode};
+use crate::{crypto::encrypt_payload_pub, message::{Message, Opcode}};
 
 unsafe extern "C" {
     static _stack_start: u8;
@@ -45,7 +46,9 @@ macro_rules! sensitive {
         $context.move_salt_to_flash();
     };
 }
-struct File {
+
+#[repr(C)]
+pub struct File {
     contents: [u8; 8192],
 }
 
@@ -61,20 +64,12 @@ const NAME_SIZE: usize = 32;
 const GID_SIZE: usize = 2;
 const UUID_SIZE: usize = 16;
 const MAX_FILE_SIZE: usize = 8192;
-const SIGNATURE_SIZE: usize = 32;
+const SIGNATURE_SIZE: usize = 64;
+const MAX_CONTENT_SIZE: usize = MAX_FILE_SIZE - SIGNATURE_SIZE - NAME_SIZE - GID_SIZE - UUID_SIZE - 1;
 
 #[derive(Debug)]
 pub enum FileViewError {
     BufferTooSmall,
-}
-
-#[derive(Default)]
-pub struct ConcatOffsets {
-    pub name: usize,
-    pub group: usize,
-    pub uuid: usize,
-    pub data: usize,
-    pub end: usize,
 }
 
 // TODO: move File/FatEntry to FlashEntry abstraction
@@ -132,7 +127,7 @@ fn main() -> ! {
             match msg.opcode {
                 Opcode::List => handle_list(&mut ctx),
                 Opcode::Read => handle_read(&mut ctx, &msg),
-                Opcode::Write => handle_write(&mut ctx),
+                Opcode::Write => handle_write(&mut ctx, &msg),
                 Opcode::Receive => handle_receive(&mut ctx),
                 Opcode::Interrogate => handle_interrogate(&mut ctx),
                 Opcode::Listen => handle_listen(&mut ctx),
@@ -214,20 +209,19 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     let slot = msg.body[6] as usize;
 
     // TODO, this should be associated with a file
-    let group = 0u16;
-    let uuid = &ctx.fat[slot].uuid;
 
-    let group_key = get_group_key(group, &pin).unwrap();
-    let pk_sign = VerifyingKey::from_bytes(&group_key.pk_sign.0).unwrap();
-    //TODO, where is this
-    let name: &[u8; view::NAME_SIZE] = &[0; _];
     let file_length = ctx.fat[slot].length as usize;
-
-    if file_length > view::MAX_FILE_SIZE {
+    let fv = FileView::from_file(&ctx.files[slot].contents, file_length);
+    if !fv.exists {
         panic!()
     }
 
-    let fv = FileView::new(name, group, uuid, &ctx.files[slot].contents[..file_length]);
+    let group = fv.group;
+    let group_key = get_group_key(group, &pin).unwrap();
+    let pk_sign = VerifyingKey::from_bytes(&group_key.pk_sign.0).unwrap();
+
+    
+
     let mut buf: [u8; view::MAX_VIEW_SIZE] = [0u8; _];
     let mut concat = fv.concat_bytes(&mut buf).unwrap();
 
@@ -251,7 +245,7 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
         todo!()
     }
 
-    body[0..view::NAME_SIZE].copy_from_slice(name);
+    body[0..view::NAME_SIZE].copy_from_slice(fv.name);
     body[view::NAME_SIZE..view::NAME_SIZE+data.len()].copy_from_slice(data);
 
     let total_length = view::NAME_SIZE+data.len();
@@ -259,7 +253,80 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     response.write().unwrap();
 }
 
-fn handle_write(ctx: &mut Context) {
+fn handle_write(ctx: &mut Context, msg: &Message) {
+    if msg.length < 59 {
+        panic!()
+    }
+
+    let (pin, rest) = msg.body.split_at(6);
+    let (slot, rest) = rest.split_at(1);
+    let (group_id, rest) = rest.split_at(2);
+    let (name, rest) = rest.split_at(NAME_SIZE);
+    let (uuid, rest) = rest.split_at(UUID_SIZE);
+    let (length, data) = rest.split_at(2);
+
+
+    let data_len = u16::from_le_bytes(length.try_into().unwrap()) as usize;
+    if data_len > MAX_CONTENT_SIZE {
+        panic!()
+    }
+
+    let slot = usize::from_le_bytes(slot.try_into().unwrap());
+    let group = u16::from_le_bytes(group_id.try_into().unwrap());
+
+    // TODO: check number of file slot requirements
+    if slot > 7 {
+        panic!()
+    }
+
+    let group_key = get_group_key(group, &pin.try_into().unwrap()).unwrap();
+    let sk_sign = SigningKey::from_bytes(&group_key.sk_sign.0);
+    let pk_read = group_key.pk_read.0;
+
+    let data_len = u16::from_le_bytes(length.try_into().unwrap()) as usize;
+
+    let mut buf: [u8; MAX_FILE_SIZE] = [0u8; MAX_FILE_SIZE];
+    let offsets = ConcatOffsets {
+        signature: 0,
+        name: SIGNATURE_SIZE,
+        group: SIGNATURE_SIZE + NAME_SIZE,
+        uuid: SIGNATURE_SIZE + NAME_SIZE + GID_SIZE,
+        data: SIGNATURE_SIZE + NAME_SIZE + GID_SIZE + UUID_SIZE,
+        end: SIGNATURE_SIZE + NAME_SIZE + GID_SIZE + UUID_SIZE + data_len,
+    };
+    {
+        let cv = ConcatView::new(&offsets, &mut buf).unwrap();
+        cv.name.copy_from_slice(name);
+        cv.group.copy_from_slice(&group.to_le_bytes());
+        cv.uuid.copy_from_slice(uuid);
+    }
+
+    let sig: Signature = sk_sign.sign(&buf[offsets.name..offsets.data]);
+    buf[..SIGNATURE_SIZE].copy_from_slice(&sig.to_bytes());
+
+    let mut written: usize = 0;
+    let first = core::cmp::min(data_len, data.len());
+    buf[offsets.data..offsets.data + first].copy_from_slice(&data[..first]);
+    written += first;
+
+    while written < data_len {
+        let block = Message::read_block().unwrap();
+        let take = core::cmp::min(data_len - written, block.len());
+        buf[offsets.data + written..offsets.data + written + take].copy_from_slice(&block[..take]);
+        written += take;
+    }
+
+    buf[offsets.data + written..MAX_FILE_SIZE - 1].fill(0);
+    buf[MAX_FILE_SIZE - 1] = 1;
+    encrypt_payload_pub(&mut buf[offsets.data..offsets.data + written], &pk_read).unwrap();
+    
+    // TODO: actually write FAT and file
+    // ctx.fat[slot].length = data_len as u16;
+    // ctx.fat[slot].uuid.copy_from_slice(uuid);
+
+    // // padding?
+
+    // ctx.files[slot].contents.copy_from_slice(&buf);
     todo!()
 }
 
@@ -312,5 +379,10 @@ fn receive_interrogate() {
 }
 
 fn handle_listen(ctx: &mut Context) {
-    todo!()
+    // TODO: uart1
+    let uart = uart();
+    let opcode = uart.read_byte().unwrap();
+    let mut body = [0; 8];
+    let _ = uart.read_bytes(&mut body).unwrap();
+    listen::recv(ctx, opcode.try_into().unwrap(), &mut body);
 }
