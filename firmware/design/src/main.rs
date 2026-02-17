@@ -278,11 +278,13 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
         cv.uuid.copy_from_slice(uuid);
     }
 
-    let sig: Signature = sk_sign.sign(&buf[NAME_OFFSET..DATA_OFFSET]);
-    buf[..SIGNATURE_SIZE].copy_from_slice(&sig.to_bytes());
+    // DATA_OFFSET wasnt able ot be refactored along with mutfileview 
+    // because other functions use too
+    let sig: Signature = sk_sign.sign(&buf[NONCE_SIZE + NAME_OFFSET..NONCE_SIZE + DATA_OFFSET]);
+    buf[NONCE_SIZE..NONCE_SIZE + SIGNATURE_SIZE].copy_from_slice(&sig.to_bytes());
 
     let first = core::cmp::min(data_len, data.len());
-    let mut offset = DATA_OFFSET;
+    let mut offset = NONCE_SIZE + DATA_OFFSET;
     buf[offset..offset + first].copy_from_slice(&data[..first]);
     offset += first;
 
@@ -296,7 +298,9 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
     buf[offset..MAX_FILE_SIZE - 1].fill(0);
     buf[MAX_FILE_SIZE - 1] = 1;
     // TODO
-    encrypt_payload_pub(&mut buf[DATA_OFFSET..DATA_OFFSET + data_len], &mut buf[0..DATA_OFFSET], &mut , &pk_read).unwrap();
+    let (nonce , rest) = buf.split_at_mut(NONCE_SIZE);
+    let (payload, tag) = buf.split_at_mut(DATA_OFFSET);
+    encrypt_payload_pub(payload, nonce, tag, &pk_read).unwrap();
     
     let new_fat = FatEntry {
         uuid: uuid.try_into().unwrap(),
