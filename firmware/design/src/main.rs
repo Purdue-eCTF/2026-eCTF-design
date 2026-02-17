@@ -211,12 +211,12 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
     metadata.group = group;
     metadata.uuid.copy_from_slice(uuid); 
 
-    let sig: Signature = sk_sign.sign(bytemuck::bytes_of(metadata));
+    let sig: Signature = sk_sign.sign(metadata);
     file.signature = sig.to_bytes();
 
     let first = core::cmp::min(data_len, data.len());
-    let mut offset = 0;
     file.contents[..first].copy_from_slice(&data[..first]);
+    let mut offset = first;
 
     while offset < data_len {
         let block = Message::read_block(MessagePort::UART0).unwrap();
@@ -225,7 +225,7 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
         offset += take;
     }
     // TODO
-    encrypt_payload_pub(&mut file.contents[..data_len], &mut file.nonce, &mut file.tag, &pk_read).unwrap();
+    encrypt_payload_pub(&mut file.contents[..data_len], &mut file.gn, &mut file.nonce, &mut file.tag, &pk_read).unwrap();
     
     let new_fat = FatEntry {
         uuid: uuid.try_into().unwrap(),
