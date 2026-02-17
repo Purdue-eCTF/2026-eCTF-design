@@ -7,6 +7,7 @@ mod message;
 mod secrets;
 mod util;
 
+use argon2::{Argon2, Params};
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
 use mspm0l222x_hal::Peripherals;
@@ -19,7 +20,7 @@ use crate::{
 
 #[panic_handler]
 fn handle_panics(info: &PanicInfo) -> ! {
-    #[cfg(debug_assertions)]
+    // #[cfg(debug_assertions)]
     {
         println!("panic with info: {info}");
     }
@@ -30,7 +31,37 @@ fn handle_panics(info: &PanicInfo) -> ! {
 
 #[entry]
 fn main() -> ! {
+    // 8kb of memory
+    // 8 passes
+    const M: usize = 8;
+    const SALT_SIZE: usize = 32;
+    let passes = 1;
+    const SALT: [u8; 32] = [
+        0x9a, 0xf6, 0x17, 0xef, 0xb5, 0x51, 0xd9, 0x4b, 0xb, 0x85, 0x2e, 0x70, 0x8b, 0x56, 0x1d,
+        0xc6, 0x1c, 0x92, 0xe, 0xc, 0xe0, 0x77, 0x85, 0x20, 0x6d, 0x87, 0x21, 0x33, 0x19, 0xe3,
+        0x60, 0x24,
+    ];
+    const PWD: [u8; 32] = [
+        0x9a, 0xf6, 0x17, 0xef, 0xb5, 0x51, 0xd9, 0x4b, 0xb, 0x85, 0x2e, 0x70, 0x8b, 0x56, 0x1d,
+        0xc6, 0x1c, 0x92, 0xe, 0xc, 0xe0, 0x77, 0x85, 0x20, 0x6d, 0x87, 0x21, 0x33, 0x19, 0xe3,
+        0x60, 0x24,
+    ];
+    let mut out = [0; SALT_SIZE];
+    let mut blocks = [argon2::Block::new(); M];
+
     let mut ctx = Context::new(Peripherals::take().unwrap());
+    
+    print!("init");
+    let argon = Argon2::new(
+        argon2::Algorithm::Argon2id,
+        argon2::Version::V0x13,
+        argon2::Params::new(M as u32, passes, 1, Some(SALT_SIZE)).unwrap(),
+    );
+    argon
+        .hash_password_into_with_memory(&PWD, &SALT, &mut out, &mut blocks)
+        .unwrap();
+    println!("hashed to salt {out:?}");
+
     for file in &ctx.files {
         // TODO: gracefully handle this failure
         assert!(file.as_ref().state == File::EMPTY || file.as_ref().state == File::FULL);

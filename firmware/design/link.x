@@ -143,7 +143,7 @@ SECTIONS {
         . += 0x400;
     } > FILETABLE
 
-    .salt : {
+    .salt : ALIGN(1024) {
         _salt = .;
         . += 1024;
     } > APP2

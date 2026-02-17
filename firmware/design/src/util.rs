@@ -62,8 +62,9 @@ impl<T: NoUninit> FlashEntry<T> {
         // Flash entry must be sector-aligned
         assert!(
             location % (FLASH_PAGE_SIZE as u32) == 0,
-            "location {} is not page-aligned",
-            location
+            "location {} is not page-aligned (type {})",
+            location,
+            core::any::type_name::<T>()
         );
         // Type must be 8-byte aligned
         const {
@@ -164,7 +165,7 @@ impl Context {
 
         // Trng::init(peripherals.trng);
 
-        let file_size = core::mem::size_of::<File>();
+        let file_size = core::mem::size_of::<File>().div_ceil(1024) * 1024;
         let files = unsafe {
             [
                 FlashEntry::new(((&_files as *const u8).add(0 * file_size)) as u32),

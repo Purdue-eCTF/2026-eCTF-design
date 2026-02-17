@@ -24,4 +24,5 @@ x25519-dalek = { version = "2.0.1", default-features = false }
 
 [profile.release]
 lto = "fat"
+opt-level = 3
 debug = true
