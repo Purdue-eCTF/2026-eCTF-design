@@ -205,14 +205,10 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     let group = fv.group;
     let group_key = get_group_key(group, &pin).unwrap();
     let pk_sign = VerifyingKey::from_bytes(&group_key.pk_sign.0).unwrap();
+    fv.verify_signature(&pk_sign).unwrap();
 
     let mut buf: [u8; view::MAX_FILE_SIZE] = [0u8; _];
     let _ = fv.copy_to_buf(&mut buf).unwrap();
-
-    let expected_signature = Signature::from_bytes(fv.signature);
-    let _ = pk_sign
-        .verify(&buf[NAME_OFFSET..DATA_OFFSET], &expected_signature)
-        .unwrap();
 
     crypto::decrypt_payload_pub_combined(&mut buf[view::DATA_OFFSET..MAX_FILE_SIZE - 1], &group_key.sk_read.0).unwrap();
 
