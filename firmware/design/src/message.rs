@@ -152,7 +152,7 @@ impl Message {
         // TODO: once uart0/uart1 support is merged:
         // - replace uart with uart0
         // - replace read_bytes(1) with read_byte
-        let reader = uart0();
+        let reader = MessageUart::new(port);
 
         let mut magic = 0u8;
         reader.read_bytes(bytes_of_mut(&mut magic)).unwrap();
@@ -179,7 +179,7 @@ impl Message {
 
     /// Reads a complete message from UART.
     pub fn read(port: MessagePort) -> Result<Self, MessageError> {
-        let reader = uart0();
+        let reader = MessageUart::new(port);
         let mut message = Self::read_header(port)?;
 
         Self::send_ack(port);
@@ -197,7 +197,7 @@ impl Message {
     /// Reads up to CHUNK_SIZE bytes from UART, skipping the header.
     pub fn read_block(port: MessagePort) -> Result<[u8; CHUNK_SIZE], MessageError> {
         let mut content: [u8; CHUNK_SIZE] = [0; CHUNK_SIZE];
-        let reader = uart0();
+        let reader = MessageUart::new(port);
         reader.read_bytes(&mut content).unwrap();
         Self::send_ack(port);
 
@@ -223,14 +223,14 @@ impl Message {
 
     /// Writes this message's header to UART.
     pub fn write_header(&self) {
-        let writer = uart0();
+        let writer =  MessageUart::new(self.port);
 
         writer.write_bytes(&[MAGIC, self.opcode.into()]);
         writer.write_bytes(&self.length.to_le_bytes());
     }
 
-    pub fn write_header_helper(opcode: Opcode, length: u16) {
-        let writer = uart0();
+    pub fn write_header_helper(opcode: Opcode, length: u16, port : MessagePort) {
+        let writer = MessageUart::new(port);
         writer.write_bytes(&[MAGIC, opcode.into()]);
         writer.write_bytes(&length.to_le_bytes());
     }
@@ -241,7 +241,7 @@ impl Message {
         if !NACKS.contains(&self.opcode) {
             Self::read_ack(self.port)?;
         }
-        let writer = uart0();
+        let writer = MessageUart::new(self.port);
 
         if self.length != 0 {
             for chunk in self.body[..self.length.into()].chunks(CHUNK_SIZE) {
@@ -260,7 +260,7 @@ impl Message {
             return Err(MessageError::BodyLengthError);
         }
 
-        let writer = uart0();
+        let writer = MessageUart::new(port);
         writer.write_bytes(data);
         Self::read_ack(port)?;
         Ok(())
