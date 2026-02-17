@@ -28,6 +28,15 @@ pub struct SymmetricMetadata {
     pub tag: [u8; TAG_SIZE],
 }
 
+impl SymmetricMetadata {
+    pub fn empty() -> Self {
+        Self {
+            nonce: [0u8; _],
+            tag: [0u8; _],
+        }
+    }
+}
+
 // TODO: Tests
 #[derive(Debug, Error)]
 pub enum CryptoError {
@@ -38,6 +47,7 @@ pub enum CryptoError {
     #[error("Failed to derive key")]
     KDFFailure,
 }
+
 
 pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> {
     let pk_sign = VerifyingKey::from_bytes(key).unwrap();
