@@ -1,5 +1,5 @@
 use bytemuck::bytes_of_mut;
-use mspm0l222x_hal::uart::uart0;
+use mspm0l222x_hal::{HalError, uart::{uart0, uart1}};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -28,6 +28,38 @@ pub enum Opcode {
     Error,       // E
     Debug,       // D
 }
+
+pub enum MessagePort {
+    UART0,
+    UART1,
+}
+
+pub struct MessageUart {
+    port: MessagePort,
+}
+
+// Ideally uart0 and uart1 share some trait so both can be used in the same
+// struct, but this is a workaround
+impl MessageUart {
+    pub fn new(port: MessagePort) -> Self {
+        Self { port }
+    }
+
+    pub fn write_bytes(&self, bytes: &[u8]) {
+        match self.port {
+            MessagePort::UART0 => uart0().write_bytes(bytes),
+            MessagePort::UART1 => uart1().write_bytes(bytes),
+        }
+    }
+
+    pub fn read_bytes(&self, bytes: &mut [u8]) -> Result<(), HalError> {
+        match self.port {
+            MessagePort::UART0 => uart0().read_bytes(bytes),
+            MessagePort::UART1 => uart1().read_bytes(bytes),
+        }
+    }
+}
+
 
 impl TryFrom<u8> for Opcode {
     type Error = ();
