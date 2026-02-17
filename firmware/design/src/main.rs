@@ -147,16 +147,18 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     message::Message::write_header_helper(Opcode::Read, total_length.try_into().unwrap(), MessagePort::UART0);
 
     // write body back in chunks (esp if too big for uart)
-    let eat = if total_length <= message::CHUNK_SIZE {
+    let eat = if total_length <= message::CHUNK_SIZE - file::NAME_SIZE {
         file_length
     } else {
         message::CHUNK_SIZE - file::NAME_SIZE
     };
 
-    let (initial, rest) = buf.split_at(eat);
+    let (rest, _) = buf.split_at(file_length);
+    let (initial, rest) = rest.split_at(eat);
+
     body[..file::NAME_SIZE].copy_from_slice(&file.metadata.name);
     body[file::NAME_SIZE..file::NAME_SIZE + eat].copy_from_slice(initial);
-    message::Message::write_block(&body, MessagePort::UART0).unwrap();
+    message::Message::write_block(&body[..file::NAME_SIZE + eat], MessagePort::UART0).unwrap();
 
     for chunk in rest.chunks(message::CHUNK_SIZE) {
         //TODO: not sure if this is possible but just in case
