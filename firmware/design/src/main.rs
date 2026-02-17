@@ -143,7 +143,6 @@ struct ListEntry {
     slot: u8
 }
 
-// TODO
 fn handle_list(ctx: &mut Context) {
     // 4 bytes at start for total number of files; file slot, name of file, group id, padding, for 8 files
     const METADATA_SIZE: usize = 1 + NAME_SIZE + 2 + 1;
@@ -170,8 +169,9 @@ fn handle_list(ctx: &mut Context) {
     }
     body[0..4].copy_from_slice(&(counter as u32).to_le_bytes());
 
-    // PRAYING THIS WORKS (TODO does result need to be used)
-    Message::send_data(Opcode::List, &body, MessagePort::UART0).unwrap();
+    let actual_body = &body[..4 + counter * METADATA_SIZE];
+    Message::write_header_helper(Opcode::List, actual_body.len() as u16, MessagePort::UART0);
+    Message::send_data(Opcode::List, actual_body, MessagePort::UART0).unwrap();
     
     // (does metadata need to be formatted??)
 }
@@ -326,6 +326,8 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
             ).unwrap();
         }
     }
+
+    Message::write_header_helper(Opcode::Write, 0, MessagePort::UART0);
 }
 
 fn handle_receive(ctx: &mut Context) {
@@ -337,21 +339,17 @@ fn handle_interrogate(ctx: &mut Context) {
     // check for right pin from host
     // - if not right pin, panic w message
 
-    let mut groups: [u8; secrets::GROUP_KEYS.len() * GID_SIZE] = [0u8; secrets::GROUP_KEYS.len() * GID_SIZE];
+
+    let mut groups: [u16; secrets::GROUP_KEYS.len()] = [0u16; secrets::GROUP_KEYS.len()];
     let mut group_count = 0;
-    // TODO retrieve perms. if group's key is loaded into flash, add group?
-    // concatenate all groups that have perms (GID_SIZE = 2, or 16 bits)
-    for group in secrets::GROUP_KEYS.iter().enumerate() {
-        if group.1.pk_inter.0.is_empty() { continue };
+    for (i, group) in secrets::GROUP_KEYS.iter().enumerate() {
+        if group.pk_inter.0.is_empty() { continue };
+        groups[group_count] = group.group;
         group_count += 1;
-        groups[group_count * GID_SIZE..(group_count * GID_SIZE + GID_SIZE)].copy_from_slice(&group.1.group.to_ne_bytes());
     }
-    // TODO symmetric key to be replaced
-    // couldn't figure out how to get 
+
     let payload = encrypt_payload_symmetric(&mut groups, &secrets::INTERROGATE_KEYS[0].0, &[Opcode::Interrogate as u8]).unwrap();
 
-    // TODO replace with uart1 io. pretend Interrogate_retrieve exists pls
-    // TODO, does this solve the above todo
     let request= Message::send_data(Opcode::Interrogate, &payload, MessagePort::UART1).unwrap();
 
     let mut info = Message::read(MessagePort::UART1).unwrap();
@@ -377,6 +375,8 @@ fn handle_interrogate(ctx: &mut Context) {
 
     list[0] = counter as u8;
     //TODO: is this the correct port
+
+    Message::write_header_helper(Opcode::Interrogate, list.len() as u16, MessagePort::UART0);
     Message::send_data(Opcode::Interrogate, &list, MessagePort::UART0);
 
     // send interrogate request alongside permissions
@@ -395,6 +395,8 @@ fn handle_interrogate(ctx: &mut Context) {
 }
 
 fn handle_listen(ctx: &mut Context) {
+    Message::write_header_helper(Opcode::Listen, 0, MessagePort::UART0);
+
     let uart = uart1();
     let opcode = uart.read_byte().unwrap();
     let mut body = [0; 8];
