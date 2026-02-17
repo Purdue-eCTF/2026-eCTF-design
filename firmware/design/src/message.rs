@@ -29,11 +29,13 @@ pub enum Opcode {
     Debug,       // D
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum MessagePort {
     UART0,
     UART1,
 }
 
+#[derive(Debug)]
 pub struct MessageUart {
     port: MessagePort,
 }
@@ -59,7 +61,6 @@ impl MessageUart {
         }
     }
 }
-
 
 impl TryFrom<u8> for Opcode {
     type Error = ();
@@ -112,21 +113,23 @@ pub struct Message {
     pub opcode: Opcode,
     pub length: u16,
     pub body: [u8; MAX_BODY_SIZE],
+    pub port: MessagePort,
 }
 
 impl Message {
     /// Creates a new message from the given opcode, length, and body.
-    pub fn new(opcode: Opcode, length: u16, body: [u8; MAX_BODY_SIZE]) -> Self {
+    pub fn new(opcode: Opcode, length: u16, body: [u8; MAX_BODY_SIZE], port : MessagePort) -> Self {
         Self {
             opcode,
             length,
             body,
+            port,
         }
     }
 
     /// Creates a new message from the given opcode and byte slice.
     #[inline]
-    pub fn from_data(opcode: Opcode, data: &[u8]) -> Result<Self, MessageError> {
+    pub fn from_data(opcode: Opcode, data: &[u8], port: MessagePort) -> Result<Self, MessageError> {
         if data.len() > MAX_BODY_SIZE {
             return Err(MessageError::BodyLengthError);
         }
@@ -134,7 +137,7 @@ impl Message {
         let mut body = [0; MAX_BODY_SIZE];
         body[..data.len()].copy_from_slice(data);
 
-        Ok(Self::new(opcode, data.len() as u16, body))
+        Ok(Self::new(opcode, data.len() as u16, body, port))
     }
 
     /// Gets the message body as a mutable byte slice.
@@ -145,7 +148,7 @@ impl Message {
 
     /// Reads a message header from UART without reading the body.
     #[inline]
-    pub fn read_header() -> Result<Self, MessageError> {
+    pub fn read_header(port: MessagePort) -> Result<Self, MessageError> {
         // TODO: once uart0/uart1 support is merged:
         // - replace uart with uart0
         // - replace read_bytes(1) with read_byte
@@ -170,20 +173,21 @@ impl Message {
             opcode,
             length,
             body: [0; MAX_BODY_SIZE],
+            port,
         })
     }
 
     /// Reads a complete message from UART.
-    pub fn read() -> Result<Self, MessageError> {
+    pub fn read(port: MessagePort) -> Result<Self, MessageError> {
         let reader = uart0();
-        let mut message = Self::read_header()?;
+        let mut message = Self::read_header(port)?;
 
-        Self::send_ack();
+        Self::send_ack(port);
 
         if message.length != 0 {
             for chunk in message.body[..message.length.into()].chunks_mut(CHUNK_SIZE) {
                 reader.read_bytes(chunk).unwrap();
-                Self::send_ack();
+                Self::send_ack(port);
             }
         }
 
@@ -191,24 +195,24 @@ impl Message {
     }
 
     /// Reads up to CHUNK_SIZE bytes from UART, skipping the header.
-    pub fn read_block() -> Result<[u8; CHUNK_SIZE], MessageError> {
+    pub fn read_block(port: MessagePort) -> Result<[u8; CHUNK_SIZE], MessageError> {
         let mut content: [u8; CHUNK_SIZE] = [0; CHUNK_SIZE];
         let reader = uart0();
         reader.read_bytes(&mut content).unwrap();
-        Self::send_ack();
+        Self::send_ack(port);
 
         Ok(content)
     }
 
     /// Writes an ack to UART.
-    pub fn send_ack() {
-        let ack = Self::ack();
+    pub fn send_ack(port: MessagePort) {
+        let ack = Self::ack(port);
         ack.write_header();
     }
 
     /// Reads an ack from UART.
-    pub fn read_ack() -> Result<(), MessageError> {
-        let message = Self::read_header()?;
+    pub fn read_ack(port: MessagePort) -> Result<(), MessageError> {
+        let message = Self::read_header(port)?;
 
         if message.length != 0 {
             Err(MessageError::AckError)
@@ -235,7 +239,7 @@ impl Message {
     pub fn write(&self) -> Result<(), MessageError> {
         self.write_header();
         if !NACKS.contains(&self.opcode) {
-            Self::read_ack()?;
+            Self::read_ack(self.port)?;
         }
         let writer = uart0();
 
@@ -243,7 +247,7 @@ impl Message {
             for chunk in self.body[..self.length.into()].chunks(CHUNK_SIZE) {
                 writer.write_bytes(chunk);
                 if !NACKS.contains(&self.opcode) {
-                    Self::read_ack()?;
+                    Self::read_ack(self.port)?;
                 }
             }
         }
@@ -251,33 +255,34 @@ impl Message {
     }
 
     /// Writes up to CHUNK_SIZE bytes to UART without sending a header.
-    pub fn write_block(data: &[u8]) -> Result<(), MessageError> {
+    pub fn write_block(data: &[u8], port: MessagePort) -> Result<(), MessageError> {
         if data.len() > CHUNK_SIZE {
             return Err(MessageError::BodyLengthError);
         }
 
         let writer = uart0();
         writer.write_bytes(data);
-        Self::read_ack()?;
+        Self::read_ack(port)?;
         Ok(())
     }
 
     /// Convenience method to immediately create and send a message from the given
     /// opcode and byte slice.
-    pub fn send_data(opcode: Opcode, data: &[u8]) -> Result<(), MessageError> {
+    pub fn send_data(opcode: Opcode, data: &[u8], port: MessagePort) -> Result<(), MessageError> {
         if data.len() > MAX_BODY_SIZE {
             return Err(MessageError::BodyLengthError);
         }
-        let msg = Message::from_data(opcode, data)?;
+        let msg = Message::from_data(opcode, data, port)?;
         msg.write()
     }
 
     /// Static method to generate an ack message.
-    pub const fn ack() -> Self {
+    pub const fn ack(port: MessagePort) -> Self {
         Self {
             opcode: Opcode::Ack,
             length: 0,
             body: [0; MAX_BODY_SIZE],
+            port,
         }
     }
 }

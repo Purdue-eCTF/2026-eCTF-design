@@ -20,6 +20,8 @@ use mspm0l222x_hal::{
 
 use crate::{crypto::{decrypt_payload_pub, decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, message::{Message, Opcode}, secrets::SymmetricKey, view::{DATA_OFFSET, MutFile, NAME_OFFSET}};
 
+use message::MessagePort;
+
 unsafe extern "C" {
     static _stack_start: u8;
     static _boot_salt: u8;
@@ -116,7 +118,7 @@ fn main() -> ! {
     println!("{:?}", &ctx.files[0].contents[0..10]);
 
     loop {
-        let msg = Message::read().unwrap();
+        let msg = Message::read(MessagePort::UART0).unwrap();
 
         sensitive!(ctx, {
             match msg.opcode {
@@ -174,7 +176,7 @@ fn handle_list(ctx: &mut Context) {
     let body = if list.iter().all(|&byte| byte == 0) {"No files found.".as_bytes()} else {&list};
 
     // PRAYING THIS WORKS (TODO does result need to be used)
-    Message::send_data(Opcode::List, body).unwrap();
+    Message::send_data(Opcode::List, body, MessagePort::UART0).unwrap();
     
     // (does metadata need to be formatted??)
 }
@@ -228,7 +230,7 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     let (initial, rest) = data.split_at(eat);
     body[..view::NAME_SIZE].copy_from_slice(fv.name);
     body[view::NAME_SIZE..view::NAME_SIZE + eat].copy_from_slice(initial);
-    message::Message::write_block(&body[..message::CHUNK_SIZE]).unwrap();
+    message::Message::write_block(&body[..message::CHUNK_SIZE], MessagePort::UART0).unwrap();
 
     for chunk in rest.chunks(message::CHUNK_SIZE) {
         //TODO: not sure if this is possible but just in case
@@ -237,7 +239,7 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
             break;
         }
         body[..cl].copy_from_slice(chunk);
-        message::Message::write_block(&body[..cl]).unwrap();
+        message::Message::write_block(&body[..cl], MessagePort::UART0).unwrap();
     }
 }
 
@@ -290,7 +292,7 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
     offset += first;
 
     while offset < data_len {
-        let block = Message::read_block().unwrap();
+        let block = Message::read_block(MessagePort::UART0).unwrap();
         let take = core::cmp::min(data_len - offset, block.len());
         buf[offset..offset + take].copy_from_slice(&block[..take]);
         offset += take;
@@ -353,9 +355,10 @@ fn handle_interrogate(ctx: &mut Context) {
     let payload = encrypt_payload_symmetric(&mut groups, &secrets::INTERROGATE_KEYS[0].0, &[Opcode::Interrogate as u8]).unwrap();
 
     // TODO replace with uart1 io. pretend Interrogate_retrieve exists pls
-    let request= Message::send_data(Opcode::Interrogate, &payload).unwrap();
+    // TODO, does this solve the above todo
+    let request= Message::send_data(Opcode::Interrogate, &payload, MessagePort::UART1).unwrap();
 
-    let mut info = Message::read().unwrap();
+    let mut info = Message::read(MessagePort::UART1).unwrap();
 
     if info.opcode != Opcode::Interrogate {
         panic!("Incorrect Opcode for Retrieve Interrogate");
@@ -376,7 +379,8 @@ fn handle_interrogate(ctx: &mut Context) {
     }
 
     list[0] = counter as u8;
-    Message::send_data(Opcode::Interrogate, &list);
+    //TODO: is this the correct port
+    Message::send_data(Opcode::Interrogate, &list, MessagePort::UART0);
 
     // send interrogate request alongside permissions
     // - (group id 1, group id 2 ... associated data = interrogate)
