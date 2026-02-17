@@ -361,10 +361,8 @@ fn handle_interrogate(ctx: &mut Context) {
     let mut counter: usize = 0;
 
     for i in (0..body.len()).step_by(size_of_metadata) {
-        // TODO where find salt?
-        let salt = [0u8; 32];
-        let entry = decrypt_payload_pub(&mut body[(i * size_of_metadata)..((i * size_of_metadata) + size_of_metadata)], &secrets::GROUP_KEYS[0].pk_inter.0, &salt).unwrap();
-        list[4 + (i * size_of_metadata)..4 + size_of_metadata + (i * size_of_metadata)].copy_from_slice(entry);
+        crypto::decrypt_payload_pub_combined(&mut body[(i * size_of_metadata)..((i * size_of_metadata) + size_of_metadata)], &secrets::GROUP_KEYS[0].pk_inter.0);
+        list[4 + (i * size_of_metadata)..4 + size_of_metadata + (i * size_of_metadata)].copy_from_slice(&body[(i * size_of_metadata)..((i * size_of_metadata) + size_of_metadata)]);
         counter += 1;
     }
 
