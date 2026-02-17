@@ -252,12 +252,9 @@ fn handle_receive(_ctx: &mut Context, msg: &Message) {
 
     todo!()
 }
-
 // TODO
 fn handle_interrogate(_ctx: &mut Context, msg: &Message) {
-    // check for right pin from host
-    // - if not right pin, panic w message
-
+    // Command contains just the PIN
     if msg.length != 6 {
         panic!()
     }
@@ -267,50 +264,100 @@ fn handle_interrogate(_ctx: &mut Context, msg: &Message) {
 
     let mut sm = crypto::SymmetricMetadata { nonce: [0; crypto::NONCE_SIZE], tag: [0; crypto::TAG_SIZE] };
     let mut group_count = 0;
+
+    // Get groups for which the HSM has receive permission 
     for group in secrets::GROUP_KEYS.iter() {
-        if group.pk_inter.0.is_empty() { continue };
+        let group_key = secrets::get_group_keys_from_pin(group.group, pin).unwrap();
+        if group_key.sk_inter.0.is_empty() { continue };
         groups[group_count] = group.group;
         group_count += 1;
     }
 
-    let _ = crypto::encrypt_payload_symmetric(bytemuck::bytes_of_mut(&mut groups), &mut sm.nonce, &mut sm.tag,&secrets::INTERROGATE_KEYS[0].0, &[Opcode::Interrogate as u8]).unwrap();
+    let groups_size = group_count * 2;
 
+    // encrypt the groups and write nonce, tag to sm
+    let _ = crypto::encrypt_payload_symmetric(&mut bytemuck::bytes_of_mut(&mut groups)[..groups_size], &mut sm.nonce, &mut sm.tag,&secrets::INTERROGATE_KEYS[0].0, &[Opcode::Interrogate as u8]).unwrap();
+
+    // copy the encrypted groups, nonce, and tag to another buffer
     let mut payload = [0; 2 * secrets::GROUP_KEYS.len() + size_of::<crypto::SymmetricMetadata>()];
+    
+    // actual payload may be smaller than the maximum size the buffer was defined with
     let actual_payload_size = group_count * 2 + size_of::<crypto::SymmetricMetadata>();
-    payload[..group_count * 2].copy_from_slice(bytemuck::bytes_of(&groups));
-    payload[group_count * 2..].copy_from_slice(bytemuck::bytes_of(&sm));
-    Message::send_data(Opcode::Interrogate, &payload[..actual_payload_size], MessagePort::UART1).unwrap();
 
+    // copy encrypted groups to the start
+    payload[..group_count * 2].copy_from_slice(bytemuck::bytes_of(&groups));
+
+    // copy nonce and tag to the end
+    payload[group_count * 2..].copy_from_slice(bytemuck::bytes_of(&sm));
+
+    // interrogate the other HSM and receive response
+    Message::send_data(Opcode::Interrogate, &payload[..actual_payload_size], MessagePort::UART1).unwrap();
     let mut info = Message::read(MessagePort::UART1).unwrap();
 
     if info.opcode != Opcode::Interrogate {
         panic!("Incorrect Opcode for Retrieve Interrogate");
     }
 
+    // PKM: PubKeyMetadata struct
+    // SM: SymmetricMetadata struct
+
+    // Expect info.body = Enc_I1(
+    //    (EncFile1 || PKM1) ||
+    //    (EncFile2 || PKM2) ||
+    // ... ||
+    //    (EncFileN || PKMN) ||
+    //    SM
+    // )
+    // EncFilei = group || Enc_pk_inter(slot || name)
+
     let offset = info.body.len() - size_of::<crypto::SymmetricMetadata>();
+
+    // data: concatenated, encrypted, InterrogateFile structs
     let (data, rest) = info.body.split_at_mut(offset);
+
+    // sm: struct containing nonce and tag from encrypion with I1
     let sm: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(rest);
 
     let _ = crypto::decrypt_payload_symmetric(data, &sm.nonce, &sm.tag,  &secrets::INTERROGATE_KEYS[1].0, &[Opcode::Interrogate as u8]).unwrap();
+    // data = (EncFile1 || PKM1) || 
+    //        (EncFile2 || PKM2) ||
+    //        ... || 
+    //        (EncFileN || PKMN)
 
     const ENTRY_SIZE: usize = size_of::<listen::InterrogateFile>() + size_of::<crypto::PubKeyMetadata>();
     let count = data.len() / ENTRY_SIZE;
 
+    // HSM response: num files || 
+    //        (slot_1 || group_1 || name_1) ||
+    //        (slot_2 || group_2 || name_2) ||
+    //        ... ||
+    //        (slot_N || group_N || name_N)
+
+    // allocate response buffer of the maximum size
     let mut response = [0; 4 + 8 * size_of::<listen::InterrogateFile>()];
-    let (num_files, rest) = response.split_at_mut(4);
+
+    // split num_files off from the list and set it
+    let (num_files, list) = response.split_at_mut(4);
     num_files.copy_from_slice(&(count as u32).to_le_bytes());
 
-    let mut list: [u8; 8 * size_of::<listen::InterrogateFile>()] = rest.try_into().unwrap();
     for i in 0..count {
+        // current offset in ctxt
         let offset = i * ENTRY_SIZE;
         let entry = &mut data[offset..offset + ENTRY_SIZE];
-        let (file_bytes, rest) = entry.split_at_mut(size_of::<listen::InterrogateFile>());
 
+        // split file from pubkey metadata
+        let (file_bytes, pkm_bytes) = entry.split_at_mut(size_of::<listen::InterrogateFile>());
+
+        // convert to InterrogateFile and PKM
         let ifile: &mut listen::InterrogateFile = bytemuck::from_bytes_mut(file_bytes);
+        let pkm: &crypto::PubKeyMetadata = bytemuck::from_bytes(pkm_bytes);
 
-        let pkm: &crypto::PubKeyMetadata = bytemuck::from_bytes(rest);
         let key = secrets::get_group_keys_from_pin(ifile.group, pin).unwrap().sk_inter.0;
+
+        // decrypt the slot and filename
         let _ = crypto::decrypt_payload_pub(bytemuck::bytes_of_mut(&mut ifile.protected), &pkm.gn, &pkm.nonce, &pkm.tag, &key).unwrap();
+
+        // copy to the correct offset in list
         let list_offset = i * size_of::<listen::InterrogateFile>();
         let list_entry = &mut list[list_offset..list_offset + size_of::<listen::InterrogateFile>()];
         list_entry[0] = ifile.protected.slot;
@@ -320,20 +367,6 @@ fn handle_interrogate(_ctx: &mut Context, msg: &Message) {
 
     let actual_message_size = 4 + count * size_of::<listen::InterrogateFile>();
     Message::send_data(Opcode::Interrogate, &response[..actual_message_size], MessagePort::UART0).unwrap();
-
-    // send interrogate request alongside permissions
-    // - (group id 1, group id 2 ... associated data = interrogate)
-    // wait for response
-    // - response can time out (<1000ms?)
-    // receive response
-    // read response
-    // - check if header is for interrogate
-    // - on failure (if somehow), panic w message
-    // - on success:
-    //   - decrypt data (I1)
-    //   - un-concatenate data
-    //   - verify that all files are associated with the right perms
-    //   - print to host failure, no files, or the files
 }
 
 fn handle_listen(ctx: &mut Context) {

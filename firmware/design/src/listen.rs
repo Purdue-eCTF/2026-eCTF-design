@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::{
-    Context, crypto, file::File, message::{Message, MessagePort, Opcode}, secrets::{INTERROGATE_KEYS, TRANSFER_KEYS, get_group_keys}
+    Context, crypto, file::File, message::{self, Message, MessagePort, Opcode}, secrets::{INTERROGATE_KEYS, TRANSFER_KEYS, get_group_keys}
 };
 use thiserror::Error;
 
@@ -39,17 +39,34 @@ pub fn recv(ctx: &mut Context, opcode: Opcode, body: &mut [u8]) -> Result<(), Li
 }
 
 fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
+    // Expect body = Enc_I0(Group1 || Group2 || ... || GroupN) || SM
     let i0 = INTERROGATE_KEYS[0].0;
 
-    let (ct, rest) = body.split_at_mut(body.len() - size_of::<crypto::SymmetricMetadata>());
-    let sm_recv: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(rest);
+    // split them
+    let (ct, sm_recv_bytes) = body.split_at_mut(body.len() - size_of::<crypto::SymmetricMetadata>());
+    let sm_recv: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(sm_recv_bytes);
     let msg = crypto::decrypt_payload_symmetric(ct, &sm_recv.nonce, &sm_recv.tag, &i0, &[Opcode::Interrogate.into()]).unwrap();
 
+    // msg = Group1 || Group2 || ... || GroupN
 
+    // next we will create M1 = Enc_I1(
+    //    (EncFile1 || PKM1) ||
+    //    (EncFile2 || PKM2) ||
+    // ... ||
+    //    (EncFileN || PKMN) ||
+    //    SM
+    // )
+    // EncFilei = group || Enc_pk_inter(slot || name)
+
+    // size of EncFilei || PKMi
     const ENTRY_SIZE: usize = size_of::<InterrogateFile>() + size_of::<crypto::PubKeyMetadata>();
+
+    // allocate a payload buffer of the maximum size and write the ciphertext into it
     let mut payload = [0; 8 * ENTRY_SIZE + size_of::<crypto::SymmetricMetadata>()];
-    let (body, rest) = payload.split_at_mut(8 * ENTRY_SIZE);
-    let sm: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(rest);
+
+    // list: the encrypted InterrogateFiles
+    // sm_bytes: contains SM
+    let (list, _) = payload.split_at_mut(8 * ENTRY_SIZE);
     let mut count = 0;
     for chunk in msg.chunks_exact(2) {
         let bytes: &[u8; 2] = chunk.try_into().unwrap();
@@ -57,10 +74,20 @@ fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
 
         for i in 0..8 {
             let file = ctx.files[i].as_ref();
+            // check if the slot is full and the group id matches
             let metadata = &file.metadata;
+            // if a valid file matches the group, add it to the list
             if file.is_full() && metadata.group == group {
-                let entry = &mut body[count * ENTRY_SIZE..(count + 1) * ENTRY_SIZE];
+                let group_keys = get_group_keys(group).unwrap();
+                if !crypto::verify_signature(&file, &group_keys.pk_sign.0).is_ok() {
+                    continue;
+                }
+
+                // get location of the next entry in list
+                let entry = &mut list[count * ENTRY_SIZE..(count + 1) * ENTRY_SIZE];
                 let (content, pkm) = entry.split_at_mut(size_of::<InterrogateFile>());
+
+                // copy the InterrogateFile to the start of the entry
                 let ifile: &mut InterrogateFile = bytemuck::from_bytes_mut(content);
                 *ifile = InterrogateFile {
                     group: metadata.group,
@@ -70,7 +97,11 @@ fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
                     },
                 };
                 let pkm: &mut crypto::PubKeyMetadata = bytemuck::from_bytes_mut(pkm);
-                let key = get_group_keys(group).unwrap().pk_inter.0;
+                let key = group_keys.pk_inter.0;
+
+                // encrypt just the slot and filename
+                // write G^n, nonce, tag to PKM at the end of entry
+                // HSM1 needs to read group in order to get the correct key
                 let _ = crypto::encrypt_payload_pub(bytemuck::bytes_of_mut(&mut ifile.protected), &mut pkm.gn, &mut pkm.nonce, &mut pkm.tag, &key).unwrap();
                 count += 1;
             }
@@ -80,6 +111,11 @@ fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
     let i1 = INTERROGATE_KEYS[1].0;
     
     let body_size = count * ENTRY_SIZE;
+
+    let (_, sm_bytes) = payload.split_at_mut(body_size);
+    let sm: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(sm_bytes);
+
+    // encrypt the part of buffer that was used
     let _ = crypto::encrypt_payload_symmetric(&mut body[..body_size],  &mut sm.nonce, &mut sm.tag, &i1, &[Opcode::Interrogate.into()]).unwrap();
     
     let payload_size = body_size + size_of::<crypto::SymmetricMetadata>();
@@ -89,6 +125,7 @@ fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
 fn handle_transfer<'a>(ctx: &mut Context, body: &'a mut [u8]) -> Result<(), ListenError> {
     let t0 = TRANSFER_KEYS[0].0;
 
+    // Expect body = Enc_T0(slot || group) || SM
     let (ct, rest) =  body.split_at_mut(body.len() - size_of::<crypto::SymmetricMetadata>());
     let sm_recv: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(rest);
     let msg = crypto::decrypt_payload_symmetric(ct, &sm_recv.nonce, &sm_recv.tag, &t0, &[Opcode::Receive.into()]).unwrap();
@@ -115,6 +152,9 @@ fn handle_transfer<'a>(ctx: &mut Context, body: &'a mut [u8]) -> Result<(), List
     }
 
     let file_size = ctx.fat.as_ref().entries[slot].length as usize;
+
+    // we will create M1 = Enc_T1(Enc_pk_trans(file) || PKM) || SM
+    // create a payload buffer of the maximum size
     let mut payload = [0; size_of::<File>() + size_of::<crypto::PubKeyMetadata>() + size_of::<crypto::SymmetricMetadata>()];
 
     let mut payload_end = file_size;
@@ -123,22 +163,31 @@ fn handle_transfer<'a>(ctx: &mut Context, body: &'a mut [u8]) -> Result<(), List
         let (pkm_bytes, _) = rest.split_at_mut(size_of::<crypto::PubKeyMetadata>());
         let pkm: &mut crypto::PubKeyMetadata = bytemuck::from_bytes_mut(pkm_bytes);
 
+        // copy the file to payload
         file.copy_from_slice(&bytemuck::bytes_of(ctx.files[slot].as_ref())[..file_size]);
+
+        // encrypt and write G^n, nonce, tag to PKM after the file
         let pk_transfer = get_group_keys(group).unwrap().pk_trans.0;
         let _ = crypto::encrypt_payload_pub(file, &mut pkm.gn, &mut pkm.nonce, &mut pkm.tag, &pk_transfer).unwrap();
 
         payload_end += size_of::<crypto::PubKeyMetadata>();
     }
 
+    // encrypt again with T1
     let (content, rest) = payload.split_at_mut(payload_end);
     let (sm_bytes, _) = rest.split_at_mut(size_of::<crypto::SymmetricMetadata>());
     let sm: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(sm_bytes);
 
+    // encrypt the content and write nonce, tag to SM
     let t1 = TRANSFER_KEYS[1].0;
     let _ = crypto::encrypt_payload_symmetric(content, &mut sm.nonce, &mut sm.tag, &t1, &[Opcode::Receive.into()]).unwrap();
 
     payload_end += size_of::<crypto::SymmetricMetadata>();
-    Message::send_data(Opcode::Receive, &payload[..payload_end], MessagePort::UART1).unwrap();
+
+    Message::write_header_helper(Opcode::Receive, payload_end.try_into().unwrap(), MessagePort::UART1);
+    for chunk in payload[..payload_end].chunks(message::CHUNK_SIZE) {
+        message::Message::write_block(chunk, MessagePort::UART1).unwrap();
+    }
 
     Ok(())
 }
