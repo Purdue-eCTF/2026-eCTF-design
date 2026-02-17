@@ -74,7 +74,7 @@ fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
             let data_len = ctx.fat[i].length as usize;
             let file = FileView::from_file(&ctx.files[i].contents, data_len);
             if file.exists && file.group == group {
-                if !file.verify_signature(&VerifyingKey::from_bytes(&GROUP_KEYS[group as usize].pk_sign.0).unwrap()).is_ok() {
+                if !file.verify_signature(&GROUP_KEYS[group as usize].pk_sign.0).is_ok() {
                     continue;
                 }
                 body[count] = InterrogateFile { name: *file.name, group: file.group, slot: i as u8, _pad: 0 };

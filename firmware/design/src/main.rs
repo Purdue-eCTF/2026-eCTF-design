@@ -136,45 +136,39 @@ fn main() -> ! {
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)] 
 #[repr(C, packed)]
 struct ListEntry {
-    slot: [u8; 1],
     name: [u8; NAME_SIZE],
-    group: [u16; 1],
-    _pad: [u8; 1]
-
+    group: u16,
+    slot: u8
 }
 
 // TODO
 fn handle_list(ctx: &mut Context) {
     // 4 bytes at start for total number of files; file slot, name of file, group id, padding, for 8 files
-    let mut list: [u8; 4 + 1 + NAME_SIZE + 2 + 1] = [0u8; 4 + 1 + NAME_SIZE + 2 + 1]; 
+    const METADATA_SIZE: usize = 1 + NAME_SIZE + 2 + 1;
+    let mut body = [0u8; 4 + 8 * METADATA_SIZE];
+    let file_list = &mut body[4..];
+    let list_entries: &mut [ListEntry; 8] = bytemuck::from_bytes_mut(file_list);
     let mut counter: usize = 0;
     // index * info + newline + file slot
-    const METADATA_SIZE: usize = 1 + NAME_SIZE + 2 + 1;
 
     // - slot, file name, group ids, newline
     for i in 0..8 {
         // name | groupid | uuid | data
         // if not in use, continue
         let file = FileView::from_file(&ctx.files[i].contents, ctx.fat[i].length as usize);
-        if !file.exists { continue; }
+        let key = secrets::GROUP_KEYS[file.group as usize].pk_sign.0;
+        if !file.exists || !file.verify_signature(&key).is_ok() {
+            continue;
+        }
 
-        // file slot
-        list[(counter * METADATA_SIZE)..((counter * METADATA_SIZE) + 1usize)].copy_from_slice(&[i as u8]);
-        // if it looks like a struct and it quacks like a struct then surely it's a struct
-        let metadata: ListEntry = ListEntry { slot: [i as u8], name: *file.name, group: [file.group], _pad: [10u8] };
-
-        // read guid
-        // is this fine
-        list[4usize + (counter * METADATA_SIZE).. 4usize + (counter * METADATA_SIZE) + METADATA_SIZE].copy_from_slice(bytemuck::bytes_of(&metadata));
+        let metadata: ListEntry = ListEntry { name: *file.name, group: file.group, slot: i as u8 };
+        list_entries[counter] = metadata;
 
         counter += 1;
-        // guid + \t + name
     }
-    list[0..1].copy_from_slice(&[counter as u8]);
-    let body = if list.iter().all(|&byte| byte == 0) {"No files found.".as_bytes()} else {&list};
+    body[0..4].copy_from_slice(&(counter as u32).to_le_bytes());
 
-    // PRAYING THIS WORKS (TODO does result need to be used)
-    Message::send_data(Opcode::List, body).unwrap();
+    Message::send_data(Opcode::List, &body).unwrap();
     
     // (does metadata need to be formatted??)
 }
@@ -204,11 +198,11 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
 
     let group = fv.group;
     let group_key = get_group_key(group, &pin).unwrap();
-    let pk_sign = VerifyingKey::from_bytes(&group_key.pk_sign.0).unwrap();
-    fv.verify_signature(&pk_sign).unwrap();
+    let key = secrets::GROUP_KEYS[group as usize].pk_sign.0;
+    fv.verify_signature(&key).unwrap();
 
     let mut buf: [u8; view::MAX_FILE_SIZE] = [0u8; _];
-    let _ = fv.copy_to_buf(&mut buf).unwrap();
+    fv.copy_to_buf(&mut buf).unwrap();
 
     crypto::decrypt_payload_pub_combined(&mut buf[view::DATA_OFFSET..MAX_FILE_SIZE - 1], &group_key.sk_read.0).unwrap();
 

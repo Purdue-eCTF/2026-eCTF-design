@@ -118,7 +118,8 @@ impl<'a> FileView<'a> {
         }
     }
 
-    pub fn verify_signature(&self, pk_sign: &VerifyingKey) -> Result<(), ConcatError> {
+    pub fn verify_signature(&self, pk_sign: &[u8; 32]) -> Result<(), ConcatError> {
+        let pk_sign = VerifyingKey::from_bytes(pk_sign).unwrap();
         let expected_signature = Signature::from_bytes(self.signature);
         let _ = pk_sign
             .verify(&self.buf[NAME_OFFSET..DATA_OFFSET], &expected_signature)
