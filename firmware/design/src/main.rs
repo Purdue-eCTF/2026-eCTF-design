@@ -104,9 +104,10 @@ fn handle_list(ctx: &mut Context) {
     // (does metadata need to be formatted??)
 }
 
-/// Read file on given slot, returning to the host the file; requires pin on
-/// usage. Since the file is stored on flash encrypted, this function uses the
-/// pin to decrypt the file before returning it to the host.
+// Read file on given slot, returning to the host the file; requires pin on
+// usage. Since the file is stored on flash encrypted, this function uses the
+// pin to decrypt the file before returning it to the host.
+
 fn handle_read(ctx: &mut Context, msg: &Message) {
     if msg.length != 7 {
         panic!()
@@ -162,17 +163,10 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
 
     body[..file::NAME_SIZE].copy_from_slice(&file.metadata.name);
     body[file::NAME_SIZE..file::NAME_SIZE + eat].copy_from_slice(initial);
-    message::Message::write_block(&body[..file::NAME_SIZE + eat], MessagePort::UART0).unwrap();
 
-    for chunk in rest.chunks(message::CHUNK_SIZE) {
-        //TODO: not sure if this is possible but just in case
-        let cl = chunk.len();
-        if cl == 0 {
-            break;
-        }
-        body[..cl].copy_from_slice(chunk);
-        message::Message::write_block(&body[..cl], MessagePort::UART0).unwrap();
-    }
+    message::Message::write_block(&body[..file::NAME_SIZE + eat], MessagePort::UART0).unwrap();
+    //if rest is empty write_slice will ignore
+    Message::write_slice(rest, MessagePort::UART0, &Opcode::Read).unwrap();
 }
 
 /// Write a file received from host into flash. The file should be encrypted

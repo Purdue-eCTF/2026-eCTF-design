@@ -239,12 +239,17 @@ impl Message {
             Self::read_ack(self.port)?;
         }
         let writer = MessageUart::new(self.port);
+        Self::write_slice(&self.body[..self.length.into()], self.port, &self.opcode)?;
+        Ok(())
+    }
 
-        if self.length != 0 {
-            for chunk in self.body[..self.length.into()].chunks(CHUNK_SIZE) {
+    pub fn write_slice(data: &[u8], port: MessagePort, opcode: &Opcode) -> Result<(), MessageError> {
+        let writer = MessageUart::new(port);
+        if data.len() != 0 {
+            for chunk in data.chunks(CHUNK_SIZE) {
                 writer.write_bytes(chunk);
-                if !NACKS.contains(&self.opcode) {
-                    Self::read_ack(self.port)?;
+                if !NACKS.contains(opcode) {
+                    Self::read_ack(port)?;
                 }
             }
         }

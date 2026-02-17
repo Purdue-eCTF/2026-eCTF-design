@@ -1,10 +1,12 @@
+use crate::file::File;
 use crate::message::{self, Message, MessageError, MessagePort, Opcode};
 use crate::secrets::TRANSFER_KEYS;
 use bytemuck::{Pod, Zeroable, bytes_of};
 use thiserror::Error;
 
 use crate::crypto::{
-    CryptoError, SymmetricMetadata, decrypt_payload_symmetric, encrypt_payload_symmetric,
+    CryptoError, PubKeyMetadata, SymmetricMetadata, decrypt_payload_symmetric,
+    encrypt_payload_symmetric,
 };
 
 #[derive(Debug, Error)]
@@ -96,5 +98,12 @@ pub fn initiate_transfer(slot: u8, group: u16) -> Result<(), ProtocolError> {
     Message::write_header_helper(Opcode::Receive, body_len, MessagePort::UART1);
     Message::write_block(body, MessagePort::UART1).map_err(|e| ProtocolError::Message(e))?;
 
+    Ok(())
+}
+
+pub const TRANSFER_RECEIVE_MAX_LENGTH: usize =
+    size_of::<File>() + size_of::<PubKeyMetadata>() + size_of::<SymmetricMetadata>();
+
+pub fn read_transfer(buf: &mut [u8; TRANSFER_RECEIVE_MAX_LENGTH]) -> Result<(), ProtocolError> {
     Ok(())
 }
