@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::{
-    Context, crypto, file::File, message::{self, Message, MessagePort, Opcode}, secrets::{INTERROGATE_KEYS, TRANSFER_KEYS, get_group_keys}
+    Context, crypto, file::File, message::{self, Message, MessagePort, Opcode}, protocol::TransferM0Encrypted, secrets::{INTERROGATE_KEYS, TRANSFER_KEYS, get_group_keys}
 };
 use thiserror::Error;
 
@@ -123,19 +123,15 @@ fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
 }
 
 fn handle_transfer<'a>(ctx: &mut Context, body: &'a mut [u8]) -> Result<(), ListenError> {
-    let t0 = TRANSFER_KEYS[0].0;
 
-    // Expect body = Enc_T0(slot || group) || SM
-    let (ct, rest) =  body.split_at_mut(body.len() - size_of::<crypto::SymmetricMetadata>());
-    let sm_recv: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(rest);
-    let msg = crypto::decrypt_payload_symmetric(ct, &sm_recv.nonce, &sm_recv.tag, &t0, &[Opcode::Receive.into()]).unwrap();
-
-    if msg.len() != 3 {
+    if body.len() != size_of::<TransferM0Encrypted>() {
         return Err(ListenError::InvalidMessageLength);
     }
+    let enc : &TransferM0Encrypted =  bytemuck::from_bytes(body);
+    let m0 = enc.decrypt().unwrap();
 
-    let slot: usize = msg[0] as usize;
-    let group = u16::from_le_bytes(msg[1..3].try_into().unwrap());
+    let slot: usize = m0.slot as usize;
+    let group = m0.group;
 
     if slot > 7 {
         return Err(ListenError::InvalidFile);
