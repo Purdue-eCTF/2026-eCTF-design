@@ -370,8 +370,9 @@ fn handle_interrogate(ctx: &mut Context) {
     let mut list: [u8; 4 + 1 + NAME_SIZE + 2 + 1] = [0u8; 4 + 1 + NAME_SIZE + 2 + 1]; 
     let mut counter: usize = 0;
 
+    // TODO
     for i in (0..body.len()).step_by(size_of_metadata) {
-        crypto::decrypt_payload_pub_combined(&mut body[(i * size_of_metadata)..((i * size_of_metadata) + size_of_metadata)], &secrets::GROUP_KEYS[0].pk_inter.0);
+        crypto::decrypt_payload_pub_combined(&mut body[(i * size_of_metadata)..((i * size_of_metadata) + size_of_metadata)], &secrets::GROUP_KEYS[0].pk_inter.0).unwrap();
         list[4 + (i * size_of_metadata)..4 + size_of_metadata + (i * size_of_metadata)].copy_from_slice(&body[(i * size_of_metadata)..((i * size_of_metadata) + size_of_metadata)]);
         counter += 1;
     }
