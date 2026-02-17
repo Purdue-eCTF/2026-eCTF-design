@@ -22,17 +22,23 @@ pub enum CryptoError {
 
 // expect gn || ct
 pub fn decrypt_payload_pub_combined(payload: &mut [u8], key: &[u8; 32]) -> Result<(), CryptoError> {
-    if (payload.len() < GN_SIZE) {
+    if payload.len() < GN_SIZE {
         return Err(CryptoError::InvalidDecryptionPayload);
     }
-    let (gn, ct) = payload.split_at_mut(GN_SIZE);
-    let gn = &gn[0..32];
-    decrypt_payload_pub(ct, key, gn.try_into().unwrap())?;
+    let (gn, body) = payload.split_at_mut(GN_SIZE);
+    let (nonce, rest) = body.split_at_mut(NONCE_SIZE);
+    let (ct, tag) = rest.split_at_mut(rest.len() - TAG_SIZE);
+    let gn: &[u8; GN_SIZE] = bytemuck::from_bytes(gn);
+    let nonce: &[u8; NONCE_SIZE] = bytemuck::from_bytes(nonce);
+    let tag: &[u8; TAG_SIZE] = bytemuck::from_bytes(tag);
+    decrypt_payload_pub(ct, nonce, tag, key, gn)?;
     Ok(())
 }
 
 pub fn decrypt_payload_pub<'a>(
     payload: &'a mut [u8],
+    nonce: &'a [u8; NONCE_SIZE],
+    tag: &'a [u8; TAG_SIZE],
     key: &[u8; 32],
     gn: &[u8; GN_SIZE],
 ) -> Result<&'a mut [u8], CryptoError> {
@@ -47,15 +53,15 @@ pub fn decrypt_payload_pub<'a>(
         .hash_password_into_with_memory(&shared, gn, &mut sym_key, [memory])
         .map_err(|_| CryptoError::KDFFailure)?;
 
-    decrypt_payload_symmetric(payload, &sym_key, &[])?;
+    decrypt_payload_symmetric(payload, nonce, tag, &sym_key, &[])?;
     Ok(payload)
 }
 
 //TODO, make gn slot requirement more explicit
 pub fn encrypt_payload_pub<'a>(
     payload: &'a mut [u8],
-    nonce_slot: &'a mut [u8],
-    tag_slot: &'a mut [u8],
+    nonce: &'a mut [u8; NONCE_SIZE],
+    tag: &'a mut [u8; TAG_SIZE],
     key: &[u8; 32],
 ) -> Result<&'a mut [u8], CryptoError> {
     if key.len() < GN_SIZE {
@@ -73,38 +79,33 @@ pub fn encrypt_payload_pub<'a>(
 
     gn_slot.copy_from_slice(&gn);
 
-    encrypt_payload_symmetric(pt, nonce_slot, tag_slot, &shared, &[])?;
+    encrypt_payload_symmetric(pt, nonce, tag, &shared, &[])?;
     Ok(payload)
 }
 
 pub fn decrypt_payload_symmetric<'a>(
     payload: &'a mut [u8],
+    nonce: &'a [u8; NONCE_SIZE],
+    tag: &'a [u8; TAG_SIZE],
     key: &[u8; 32],
     associated_data: &[u8],
-) -> Result<&'a mut [u8], CryptoError> {
+) -> Result<(), CryptoError> {
     let cipher = XChaCha20Poly1305::new_from_slice(key)
         .map_err(|_| CryptoError::InvalidDecryptionPayload)?;
 
-    let (nonce, rest) = payload.split_at_mut(NONCE_SIZE);
-    if rest.len() < TAG_SIZE {
-        return Err(CryptoError::InvalidDecryptionPayload);
-    }
-    let (ctxt, tag_bytes) = rest.split_at_mut(rest.len() - TAG_SIZE);
-
     let nonce_ga = GenericArray::from_slice(nonce);
-    let tag_ga = GenericArray::from_slice(tag_bytes);
+    let tag_ga = GenericArray::from_slice(tag);
     cipher
-        .decrypt_in_place_detached(nonce_ga, associated_data, ctxt, tag_ga)
+        .decrypt_in_place_detached(nonce_ga, associated_data, payload, tag_ga)
         .map_err(|_| CryptoError::InvalidDecryptionPayload)?;
 
-    Ok(ctxt)
+    Ok(())
 }
 
-// Expect payload to include space for nonce, tag
 pub fn encrypt_payload_symmetric<'a>(
     payload: &'a mut [u8],
-    nonce_slot: &'a mut [u8],
-    tag_slot: &'a mut [u8],
+    nonce_slot: &'a mut [u8; NONCE_SIZE],
+    tag_slot: &'a mut [u8; TAG_SIZE],
     key: &[u8; 32],
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
