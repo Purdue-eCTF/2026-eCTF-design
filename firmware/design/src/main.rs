@@ -18,6 +18,8 @@ use crate::{
     crypto::encrypt_payload_pub, file::{FatEntry, FatTable, File}, message::{Message, MessagePort, Opcode}
 };
 
+const METADATA_SIZE: usize = 1 + file::NAME_SIZE + 2 + 1;
+
 #[panic_handler]
 fn handle_panics(info: &PanicInfo) -> ! {
     #[cfg(debug_assertions)]
@@ -64,23 +66,22 @@ struct ListEntry {
     slot: u8
 }
 
+/// List files; requires pin on usage. Sends back a head with total number of
+/// files and length of the message body, and then the data, with the name,
+/// group, and slot of the file.
 fn handle_list(ctx: &mut Context) {
-    // 4 bytes at start for total number of files; file slot, name of file, group id, padding, for 8 files
-    const METADATA_SIZE: usize = 1 + file::NAME_SIZE + 2 + 1;
+    // 4 bytes at start for total number of files; file slot, name of file, group id, for 8 files
     let mut body = [0u8; 4 + 8 * METADATA_SIZE];
     let file_list = &mut body[4..];
     let list_entries: &mut [ListEntry; 8] = bytemuck::from_bytes_mut(file_list);
     let mut counter: usize = 0;
-    // index * info + newline + file slot
-
-    // - slot, file name, group ids, newline
     for i in 0..8 {
-        // name | groupid | uuid | data
-        // if not in use, continue
         let file = ctx.files[i].as_ref();
-        if !file.is_full() {
-            continue;
-        }
+
+        // if not in use, continue
+        if !file.is_full() { continue; }
+
+        // verify file signature before handling
         let key = secrets::GROUP_KEYS[file.metadata.group as usize].pk_sign.0;
         if !crypto::verify_signature(file, &key).is_ok() {
             continue;
@@ -91,6 +92,7 @@ fn handle_list(ctx: &mut Context) {
 
         counter += 1;
     }
+    // set number of files listed
     body[0..4].copy_from_slice(&(counter as u32).to_le_bytes());
 
     let actual_body = &body[..4 + counter * METADATA_SIZE];
@@ -100,8 +102,9 @@ fn handle_list(ctx: &mut Context) {
     // (does metadata need to be formatted??)
 }
 
-// read file on given slot
-
+/// Read file on given slot, returning to the host the file; requires pin on
+/// usage. Since the file is stored on flash encrypted, this function uses the
+/// pin to decrypt the file before returning it to the host.
 fn handle_read(ctx: &mut Context, msg: &Message) {
     if msg.length != 7 {
         panic!()
@@ -124,21 +127,25 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
         panic!()
     }
 
+    // get group key and verify file hasn't been tampered
     let group = file.metadata.group;
     let group_key = secrets::get_group_keys_from_pin(group, &pin).unwrap();
-    let key = group_key.pk_sign.0;
+    let key = secrets::GROUP_KEYS[file.metadata.group as usize].pk_sign.0;
     crypto::verify_signature(file, &key).unwrap();
 
     let mut buf = [0; file::CONTENT_SIZE];
     buf.copy_from_slice(&file.contents[..file_length]);
 
+    // decrypt the file
     crypto::decrypt_payload_pub(&mut buf[..file_length], &file.gn, &file.nonce, &file.tag, &group_key.sk_read.0).unwrap();
 
     let total_length = file::NAME_SIZE + file_length;
     let mut body = [0u8; message::CHUNK_SIZE];
 
+    // write header back to host
     message::Message::write_header_helper(Opcode::Read, total_length.try_into().unwrap(), MessagePort::UART0);
 
+    // write body back in chunks (esp if too big for uart)
     let eat = if total_length <= message::CHUNK_SIZE {
         file_length
     } else {
@@ -161,6 +168,8 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     }
 }
 
+/// Write a file received from host into flash. The file should be encrypted
+/// and signed.
 fn handle_write(ctx: &mut Context, msg: &Message) {
     if msg.length < 59 {
         panic!()
@@ -210,7 +219,6 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
         file.contents[offset..offset + take].copy_from_slice(&block[..take]);
         offset += take;
     }
-    // TODO
     encrypt_payload_pub(&mut file.contents[..data_len], &mut file.gn, &mut file.nonce, &mut file.tag, &pk_read).unwrap();
     
     let new_fat = FatEntry {
@@ -236,7 +244,10 @@ fn handle_receive(_ctx: &mut Context) {
     todo!()
 }
 
-// TODO
+/// Interrogate an adjacent board for a list of files that the current board
+/// has permissions for. Since the entire list of files is encrypted
+/// symmetrically and each file's metadata encrypted asymmetrically, all this
+/// will be decrypted before being sent back to host.
 fn handle_interrogate(_ctx: &mut Context, msg: &Message) {
     // check for right pin from host
     // - if not right pin, panic w message
@@ -246,6 +257,7 @@ fn handle_interrogate(_ctx: &mut Context, msg: &Message) {
     }
     let pin: &[u8; 6] = msg.body[..6].try_into().unwrap();
 
+    // encrypt groups being sent over to other board
     let mut groups: [u16; secrets::GROUP_KEYS.len()] = [0u16; secrets::GROUP_KEYS.len()];
 
     let mut sm = crypto::SymmetricMetadata { nonce: [0; crypto::NONCE_SIZE], tag: [0; crypto::TAG_SIZE] };
@@ -304,21 +316,10 @@ fn handle_interrogate(_ctx: &mut Context, msg: &Message) {
     let actual_message_size = 4 + count * size_of::<listen::InterrogateFile>();
     Message::send_data(Opcode::Interrogate, &response[..actual_message_size], MessagePort::UART0).unwrap();
 
-    // send interrogate request alongside permissions
-    // - (group id 1, group id 2 ... associated data = interrogate)
-    // wait for response
-    // - response can time out (<1000ms?)
-    // receive response
-    // read response
-    // - check if header is for interrogate
-    // - on failure (if somehow), panic w message
-    // - on success:
-    //   - decrypt data (I1)
-    //   - un-concatenate data
-    //   - verify that all files are associated with the right perms
-    //   - print to host failure, no files, or the files
 }
 
+/// Listens for any Receive or Interrogate command from an adjacent board to
+/// process before sending back the corresponding data.
 fn handle_listen(ctx: &mut Context) {
     Message::write_header_helper(Opcode::Listen, 0, MessagePort::UART0);
     let mut msg = Message::read(MessagePort::UART1).unwrap();
