@@ -54,6 +54,8 @@ pub fn decrypt_payload_pub<'a>(
 //TODO, make gn slot requirement more explicit
 pub fn encrypt_payload_pub<'a>(
     payload: &'a mut [u8],
+    nonce_slot: &'a mut [u8],
+    tag_slot: &'a mut [u8],
     key: &[u8; 32],
 ) -> Result<&'a mut [u8], CryptoError> {
     if key.len() < GN_SIZE {
@@ -71,7 +73,7 @@ pub fn encrypt_payload_pub<'a>(
 
     gn_slot.copy_from_slice(&gn);
 
-    encrypt_payload_symmetric(pt, &shared, &[])?;
+    encrypt_payload_symmetric(pt, nonce_slot, tag_slot, &shared, &[])?;
     Ok(payload)
 }
 
@@ -98,19 +100,17 @@ pub fn decrypt_payload_symmetric<'a>(
     Ok(ctxt)
 }
 
+// Expect payload to include space for nonce, tag
 pub fn encrypt_payload_symmetric<'a>(
     payload: &'a mut [u8],
+    nonce_slot: &'a mut [u8],
+    tag_slot: &'a mut [u8],
     key: &[u8; 32],
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
-    let (nonce_slot, rest) = payload.split_at_mut(NONCE_SIZE);
-    if rest.len() < TAG_SIZE {
-        return Err(CryptoError::InvalidEncryptionPayload);
-    }
-    let (ptxt, tag_slot) = rest.split_at_mut(rest.len() - TAG_SIZE);
-
+    let trng = trng::trng();
     for chunk in nonce_slot.chunks_exact_mut(4) {
-        chunk.copy_from_slice(&trng::trng().word().to_le_bytes());
+        chunk.copy_from_slice(&trng.word().to_le_bytes());
     }
 
     let cipher = XChaCha20Poly1305::new_from_slice(key)
@@ -118,7 +118,7 @@ pub fn encrypt_payload_symmetric<'a>(
 
     let nonce_ga = GenericArray::from_slice(nonce_slot);
     let tag = cipher
-        .encrypt_in_place_detached(nonce_ga, associated_data, ptxt)
+        .encrypt_in_place_detached(nonce_ga, associated_data, payload)
         .map_err(|_| CryptoError::InvalidEncryptionPayload)?;
 
     tag_slot.copy_from_slice(tag.as_slice());
