@@ -1,15 +1,32 @@
 use argon2::{self, Block};
+use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::aead::generic_array::GenericArray;
 use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
+use ed25519_dalek::{Signature, SigningKey, Signer, Verifier, VerifyingKey};
 use mspm0l222x_hal::trng;
 use thiserror::Error;
 use x25519_dalek::{PublicKey, StaticSecret};
+
+use crate::file::File;
 
 pub const NONCE_SIZE: usize = 24;
 pub const TAG_SIZE: usize = 16;
 pub const GN_SIZE: usize = 32;
 
-pub const METADATA_SIZE_PUB: usize = NONCE_SIZE + TAG_SIZE + GN_SIZE;
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct PubKeyMetadata {
+    pub gn: [u8; GN_SIZE],
+    pub nonce: [u8; NONCE_SIZE],
+    pub tag: [u8; TAG_SIZE],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct SymmetricMetadata {
+    pub nonce: [u8; NONCE_SIZE],
+    pub tag: [u8; TAG_SIZE],
+}
 
 // TODO: Tests
 #[derive(Debug, Error)]
@@ -22,9 +39,24 @@ pub enum CryptoError {
     KDFFailure,
 }
 
+pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> {
+    let pk_sign = VerifyingKey::from_bytes(key).unwrap();
+    let expected_signature = Signature::from_bytes(&file.signature);
+    let _ = pk_sign
+        .verify(bytemuck::bytes_of(&file.metadata), &expected_signature)
+        .unwrap();
+    Ok(())
+}
+
+pub fn sign_file(file: &mut File, key: &[u8; 32]) -> Result<(), CryptoError> {
+    let sk_sign = SigningKey::from_bytes(key);
+    let signature = sk_sign.sign(bytemuck::bytes_of(&file.metadata));
+    file.signature = signature.to_bytes();
+    Ok(())
+}
 // expect gn || ct
 pub fn decrypt_payload_pub_combined<'a>(payload: &'a mut [u8], key: &[u8; 32]) -> Result<&'a mut [u8], CryptoError> {
-    if (payload.len() < GN_SIZE) {
+    if payload.len() < GN_SIZE {
         return Err(CryptoError::InvalidDecryptionPayload);
     }
     let (gn, body) = payload.split_at_mut(GN_SIZE);
@@ -33,16 +65,16 @@ pub fn decrypt_payload_pub_combined<'a>(payload: &'a mut [u8], key: &[u8; 32]) -
     let gn: &[u8; GN_SIZE] = bytemuck::from_bytes(gn);
     let nonce: &[u8; NONCE_SIZE] = bytemuck::from_bytes(nonce);
     let tag: &[u8; TAG_SIZE] = bytemuck::from_bytes(tag);
-    decrypt_payload_pub(ct, nonce, tag, key, gn)?;
+    decrypt_payload_pub(ct, gn, nonce, tag, key)?;
     Ok(ct)
 }
 
 pub fn decrypt_payload_pub<'a>(
     payload: &'a mut [u8],
+    gn: &[u8; GN_SIZE],
     nonce: &'a [u8; NONCE_SIZE],
     tag: &'a [u8; TAG_SIZE],
     key: &[u8; 32],
-    gn: &[u8; GN_SIZE],
 ) -> Result<&'a mut [u8], CryptoError> {
     let sk = StaticSecret::from(key.clone());
     let pubkey = PublicKey::from(gn.clone());

@@ -6,14 +6,12 @@ mod crypto;
 mod listen;
 mod message;
 mod secrets;
-mod view;
 mod file;
 mod util;
 
-use ed25519_dalek::{Signature, SigningKey, Signer};
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
-use mspm0l222x_hal::{Peripherals, uart::uart1};
+use mspm0l222x_hal::Peripherals;
 use util::*;
 
 use crate::{
@@ -29,17 +27,6 @@ fn handle_panics(info: &PanicInfo) -> ! {
 
     loop {}
     // cortex_m::peripheral::SCB::sys_reset();
-}
-
-// TODO: Placeholder function until using the pin to decrypt keys is implemented
-fn get_group_key(group: u16, pin: &[u8; 6]) -> Result<&'static secrets::GroupKey, ()> {
-    let mut r = Err(());
-    for key in secrets::GROUP_KEYS.iter() {
-        if key.group == group {
-            r = Ok(key);
-        }
-    }
-    r
 }
 
 #[entry]
@@ -60,7 +47,7 @@ fn main() -> ! {
                 Opcode::Read => handle_read(&mut ctx, &msg),
                 Opcode::Write => handle_write(&mut ctx, &msg),
                 Opcode::Receive => handle_receive(&mut ctx),
-                Opcode::Interrogate => handle_interrogate(&mut ctx),
+                Opcode::Interrogate => handle_interrogate(&mut ctx, &msg),
                 Opcode::Listen => handle_listen(&mut ctx),
                 Opcode::Ack => panic!("Ack without sent message"),
                 e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
@@ -72,14 +59,14 @@ fn main() -> ! {
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)] 
 #[repr(C, packed)]
 struct ListEntry {
-    name: [u8; view::NAME_SIZE],
+    name: [u8; file::NAME_SIZE],
     group: u16,
     slot: u8
 }
 
 fn handle_list(ctx: &mut Context) {
     // 4 bytes at start for total number of files; file slot, name of file, group id, padding, for 8 files
-    const METADATA_SIZE: usize = 1 + view::NAME_SIZE + 2 + 1;
+    const METADATA_SIZE: usize = 1 + file::NAME_SIZE + 2 + 1;
     let mut body = [0u8; 4 + 8 * METADATA_SIZE];
     let file_list = &mut body[4..];
     let list_entries: &mut [ListEntry; 8] = bytemuck::from_bytes_mut(file_list);
@@ -95,7 +82,7 @@ fn handle_list(ctx: &mut Context) {
             continue;
         }
         let key = secrets::GROUP_KEYS[file.metadata.group as usize].pk_sign.0;
-        if !file.verify_signature(&key).is_ok() {
+        if !crypto::verify_signature(file, &key).is_ok() {
             continue;
         }
 
@@ -138,16 +125,16 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     }
 
     let group = file.metadata.group;
-    let group_key = get_group_key(group, &pin).unwrap();
-    let key = secrets::GROUP_KEYS[group as usize].pk_sign.0;
-    file.verify_signature(&key).unwrap();
+    let group_key = secrets::get_group_keys_from_pin(group, &pin).unwrap();
+    let key = group_key.pk_sign.0;
+    crypto::verify_signature(file, &key).unwrap();
 
     let mut buf = [0; file::CONTENT_SIZE];
     buf.copy_from_slice(&file.contents[..file_length]);
 
-    crypto::decrypt_payload_pub(&mut buf[..file_length], &file.nonce, &file.tag, &group_key.sk_read.0, &file.gn).unwrap();
+    crypto::decrypt_payload_pub(&mut buf[..file_length], &file.gn, &file.nonce, &file.tag, &group_key.sk_read.0).unwrap();
 
-    let total_length = view::NAME_SIZE + file_length;
+    let total_length = file::NAME_SIZE + file_length;
     let mut body = [0u8; message::CHUNK_SIZE];
 
     message::Message::write_header_helper(Opcode::Read, total_length.try_into().unwrap(), MessagePort::UART0);
@@ -155,12 +142,12 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     let eat = if total_length <= message::CHUNK_SIZE {
         file_length
     } else {
-        message::CHUNK_SIZE - view::NAME_SIZE
+        message::CHUNK_SIZE - file::NAME_SIZE
     };
 
     let (initial, rest) = buf.split_at(eat);
-    body[..view::NAME_SIZE].copy_from_slice(&file.metadata.name);
-    body[view::NAME_SIZE..view::NAME_SIZE + eat].copy_from_slice(initial);
+    body[..file::NAME_SIZE].copy_from_slice(&file.metadata.name);
+    body[file::NAME_SIZE..file::NAME_SIZE + eat].copy_from_slice(initial);
     message::Message::write_block(&body, MessagePort::UART0).unwrap();
 
     for chunk in rest.chunks(message::CHUNK_SIZE) {
@@ -179,7 +166,7 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
         panic!()
     }
 
-    let (pin, rest) = msg.body.split_at(6);
+    let (pin_bytes, rest) = msg.body.split_at(6);
     let (slot, rest) = rest.split_at(1);
     let (group_id, rest) = rest.split_at(file::GID_SIZE);
     let (name, rest) = rest.split_at(file::NAME_SIZE);
@@ -200,8 +187,8 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
         panic!()
     }
 
-    let group_key = get_group_key(group, &pin.try_into().unwrap()).unwrap();
-    let sk_sign = SigningKey::from_bytes(&group_key.sk_sign.0);
+    let pin = pin_bytes.try_into().unwrap();
+    let group_key = secrets::get_group_keys_from_pin(group, &pin).unwrap();
     let pk_read = group_key.pk_read.0;
 
     let mut buf: [u8; size_of::<File>()] = [0u8; size_of::<File>()];
@@ -211,8 +198,7 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
     metadata.group = group;
     metadata.uuid.copy_from_slice(uuid); 
 
-    let sig: Signature = sk_sign.sign(metadata);
-    file.signature = sig.to_bytes();
+    crypto::sign_file(file, &group_key.sk_sign.0).unwrap();
 
     let first = core::cmp::min(data_len, data.len());
     file.contents[..first].copy_from_slice(&data[..first]);
@@ -246,33 +232,37 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
     Message::write_header_helper(Opcode::Write, 0, MessagePort::UART0);
 }
 
-fn handle_receive(ctx: &mut Context) {
+fn handle_receive(_ctx: &mut Context) {
     todo!()
 }
 
 // TODO
-fn handle_interrogate(ctx: &mut Context) {
+fn handle_interrogate(_ctx: &mut Context, msg: &Message) {
     // check for right pin from host
     // - if not right pin, panic w message
 
+    if msg.length != 6 {
+        panic!()
+    }
+    let pin: &[u8; 6] = msg.body[..6].try_into().unwrap();
+
     let mut groups: [u16; secrets::GROUP_KEYS.len()] = [0u16; secrets::GROUP_KEYS.len()];
-    let mut nonce = [0u8; 24];
-    let mut tag = [0u8; 16];
+
+    let mut sm = crypto::SymmetricMetadata { nonce: [0; crypto::NONCE_SIZE], tag: [0; crypto::TAG_SIZE] };
     let mut group_count = 0;
-    for (i, group) in secrets::GROUP_KEYS.iter().enumerate() {
+    for group in secrets::GROUP_KEYS.iter() {
         if group.pk_inter.0.is_empty() { continue };
         groups[group_count] = group.group;
         group_count += 1;
     }
 
-    let _ = crypto::encrypt_payload_symmetric(bytemuck::bytes_of_mut(&mut groups), &mut nonce, &mut tag,&secrets::INTERROGATE_KEYS[0].0, &[Opcode::Interrogate as u8]).unwrap();
+    let _ = crypto::encrypt_payload_symmetric(bytemuck::bytes_of_mut(&mut groups), &mut sm.nonce, &mut sm.tag,&secrets::INTERROGATE_KEYS[0].0, &[Opcode::Interrogate as u8]).unwrap();
 
-    let mut payload = [0; crypto::NONCE_SIZE + secrets::GROUP_KEYS.len() * 2 + crypto::TAG_SIZE];
-    payload[..crypto::NONCE_SIZE].copy_from_slice(&nonce);
-    payload[crypto::NONCE_SIZE..crypto::NONCE_SIZE + secrets::GROUP_KEYS.len() * 2].copy_from_slice(bytemuck::bytes_of(&mut groups));
-    payload[crypto::NONCE_SIZE + secrets::GROUP_KEYS.len() * 2..].copy_from_slice(&tag);
-
-    Message::send_data(Opcode::Interrogate, &payload, MessagePort::UART1).unwrap();
+    let mut payload = [0; 2 * secrets::GROUP_KEYS.len() + size_of::<crypto::SymmetricMetadata>()];
+    let actual_payload_size = group_count * 2 + size_of::<crypto::SymmetricMetadata>();
+    payload[..group_count * 2].copy_from_slice(bytemuck::bytes_of(&groups));
+    payload[group_count * 2..].copy_from_slice(bytemuck::bytes_of(&sm));
+    Message::send_data(Opcode::Interrogate, &payload[..actual_payload_size], MessagePort::UART1).unwrap();
 
     let mut info = Message::read(MessagePort::UART1).unwrap();
 
@@ -280,23 +270,39 @@ fn handle_interrogate(ctx: &mut Context) {
         panic!("Incorrect Opcode for Retrieve Interrogate");
     }
 
-    let (nonce, rest) = info.body.split_at_mut(24);
-    let (data, tag) = rest.split_at_mut(rest.len() - 16);
+    let offset = info.body.len() - size_of::<crypto::SymmetricMetadata>();
+    let (data, rest) = info.body.split_at_mut(offset);
+    let sm: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(rest);
 
-    let _ = crypto::decrypt_payload_symmetric(data, nonce[..24].try_into().unwrap(), tag[..16].try_into().unwrap(),  &secrets::INTERROGATE_KEYS[1].0, &[Opcode::Interrogate as u8]).unwrap();
+    let _ = crypto::decrypt_payload_symmetric(data, &sm.nonce, &sm.tag,  &secrets::INTERROGATE_KEYS[1].0, &[Opcode::Interrogate as u8]).unwrap();
 
-    let count = data.len() / (size_of::<listen::InterrogateFile>() + crypto::METADATA_SIZE_PUB);
-    let mut list = [0; 8 * size_of::<listen::InterrogateFile>()];
-    let ctxt_size = size_of::<listen::InterrogateFile>() + crypto::METADATA_SIZE_PUB;
+    const ENTRY_SIZE: usize = size_of::<listen::InterrogateFile>() + size_of::<crypto::PubKeyMetadata>();
+    let count = data.len() / ENTRY_SIZE;
+
+    let mut response = [0; 4 + 8 * size_of::<listen::InterrogateFile>()];
+    let (num_files, rest) = response.split_at_mut(4);
+    num_files.copy_from_slice(&(count as u32).to_le_bytes());
+
+    let mut list: [u8; 8 * size_of::<listen::InterrogateFile>()] = rest.try_into().unwrap();
     for i in 0..count {
-        let ctxt_offset: usize = i * ctxt_size;
-        let ptxt = crypto::decrypt_payload_pub_combined(&mut data[ctxt_offset..ctxt_offset + ctxt_size], &secrets::GROUP_KEYS[0].pk_inter.0).unwrap();
-        
-        let file_data: &[u8; size_of::<listen::InterrogateFile>()] = ptxt[..size_of::<listen::InterrogateFile>()].try_into().unwrap();
+        let offset = i * ENTRY_SIZE;
+        let entry = &mut data[offset..offset + ENTRY_SIZE];
+        let (file_bytes, rest) = entry.split_at_mut(size_of::<listen::InterrogateFile>());
+
+        let ifile: &mut listen::InterrogateFile = bytemuck::from_bytes_mut(file_bytes);
+
+        let pkm: &crypto::PubKeyMetadata = bytemuck::from_bytes(rest);
+        let key = secrets::get_group_keys_from_pin(ifile.group, pin).unwrap().sk_inter.0;
+        let _ = crypto::decrypt_payload_pub(bytemuck::bytes_of_mut(&mut ifile.protected), &pkm.gn, &pkm.nonce, &pkm.tag, &key).unwrap();
         let list_offset = i * size_of::<listen::InterrogateFile>();
-        list[list_offset..list_offset + size_of::<listen::InterrogateFile>()].copy_from_slice(file_data);
+        let list_entry = &mut list[list_offset..list_offset + size_of::<listen::InterrogateFile>()];
+        list_entry[0] = ifile.protected.slot;
+        list_entry[1..3].copy_from_slice(&u16::to_le_bytes(ifile.group));
+        list_entry[3..].copy_from_slice(&ifile.protected.name);
     }
-    Message::send_data(Opcode::Interrogate, &list, MessagePort::UART0).unwrap();
+
+    let actual_message_size = 4 + count * size_of::<listen::InterrogateFile>();
+    Message::send_data(Opcode::Interrogate, &response[..actual_message_size], MessagePort::UART0).unwrap();
 
     // send interrogate request alongside permissions
     // - (group id 1, group id 2 ... associated data = interrogate)
@@ -315,8 +321,6 @@ fn handle_interrogate(ctx: &mut Context) {
 
 fn handle_listen(ctx: &mut Context) {
     Message::write_header_helper(Opcode::Listen, 0, MessagePort::UART0);
-
     let mut msg = Message::read(MessagePort::UART1).unwrap();
-
     listen::recv(ctx, msg.opcode, &mut msg.body).unwrap();
 }

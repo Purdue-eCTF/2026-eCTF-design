@@ -276,15 +276,6 @@ impl Message {
             Self::read_ack(port)?;
         }
 
-        if data.len() != 0 {
-            for chunk in data.chunks(CHUNK_SIZE) {
-                writer.write_bytes(chunk);
-                if !NACKS.contains(&opcode) {
-                    Self::read_ack(port)?;
-                }
-            }
-        }
-
         Ok(())
     }
 

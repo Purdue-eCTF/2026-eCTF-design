@@ -50,3 +50,24 @@ pub const INTERROGATE_KEYS: [SymmetricKey; 2] = [
     SymmetricKey([0; _]),
     SymmetricKey([0; _]),
 ];
+
+// TODO: Placeholder function until using the pin to decrypt keys is implemented
+pub fn get_group_keys_from_pin(group: u16, _pin: &[u8; 6]) -> Result<&'static GroupKey, ()> {
+    let mut r = Err(());
+    for key in GROUP_KEYS.iter() {
+        if key.group == group {
+            r = Ok(key);
+        }
+    }
+    r
+}
+
+pub fn get_group_keys(group: u16) -> Result<&'static GroupKey, ()> {
+    let mut r = Err(());
+    for key in GROUP_KEYS.iter() {
+        if key.group == group {
+            r = Ok(key);
+        }
+    }
+    r
+}
