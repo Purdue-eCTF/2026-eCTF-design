@@ -3,7 +3,9 @@ use crate::secrets::TRANSFER_KEYS;
 use bytemuck::{Pod, Zeroable, bytes_of};
 use thiserror::Error;
 
-use crate::crypto::{CryptoError, SymmetricMetadata, encrypt_payload_symmetric};
+use crate::crypto::{
+    CryptoError, SymmetricMetadata, decrypt_payload_symmetric, encrypt_payload_symmetric,
+};
 
 #[derive(Debug, Error)]
 pub enum ProtocolError {
@@ -28,6 +30,24 @@ impl TransferM0Encrypted {
             sm: SymmetricMetadata::empty(),
         }
     }
+
+    pub fn decrypt(&self) -> Result<TransferM0, CryptoError> {
+        let t0 = TRANSFER_KEYS[0].0;
+        let mut pt = [0u8, 3];
+        pt.clone_from_slice(&self.ct);
+        decrypt_payload_symmetric(
+            &mut pt,
+            &self.sm.nonce,
+            &self.sm.tag,
+            &t0,
+            &[Opcode::Receive.try_into().unwrap()],
+        )?;
+
+        let mut r = TransferM0::empty();
+        r.slot = pt[0];
+        r.group = u16::from_le_bytes(pt[1..3].try_into().unwrap());
+        Ok(r)
+    }
 }
 
 pub struct TransferM0 {
@@ -40,6 +60,9 @@ pub struct TransferM0 {
 // TODO: Should error if T0 doesn't exist
 
 impl TransferM0 {
+    pub fn empty() -> Self {
+        Self { slot: 0, group: 0 }
+    }
     pub fn encrypt(&self) -> Result<TransferM0Encrypted, CryptoError> {
         let mut r = TransferM0Encrypted::empty();
         r.ct[0] = self.slot;
