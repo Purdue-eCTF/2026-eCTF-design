@@ -5,6 +5,7 @@
 mod crypto;
 mod listen;
 mod message;
+mod protocol;
 mod secrets;
 mod file;
 mod util;
@@ -46,7 +47,7 @@ fn main() -> ! {
                 Opcode::List => handle_list(&mut ctx),
                 Opcode::Read => handle_read(&mut ctx, &msg),
                 Opcode::Write => handle_write(&mut ctx, &msg),
-                Opcode::Receive => handle_receive(&mut ctx),
+                Opcode::Receive => handle_receive(&mut ctx, &msg),
                 Opcode::Interrogate => handle_interrogate(&mut ctx, &msg),
                 Opcode::Listen => handle_listen(&mut ctx),
                 Opcode::Ack => panic!("Ack without sent message"),
@@ -130,7 +131,7 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     crypto::verify_signature(file, &key).unwrap();
 
     let mut buf = [0; file::CONTENT_SIZE];
-    buf.copy_from_slice(&file.contents[..file_length]);
+    buf[..file_length].copy_from_slice(&file.contents[..file_length]);
 
     crypto::decrypt_payload_pub(&mut buf[..file_length], &file.gn, &file.nonce, &file.tag, &group_key.sk_read.0).unwrap();
 
@@ -232,7 +233,23 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
     Message::write_header_helper(Opcode::Write, 0, MessagePort::UART0);
 }
 
-fn handle_receive(_ctx: &mut Context) {
+fn handle_receive(_ctx: &mut Context, msg: &Message) {
+    if msg.length != 8 {
+        panic!()
+    }
+
+    let mut pin = [0u8; 6];
+    pin.copy_from_slice(&msg.body[0..6]);
+
+    let pin = pin;
+    let read_slot = msg.body[6];
+    let write_slot = msg.body[7];
+
+    let group = 0u16;
+    let group_keys = secrets::get_group_keys_from_pin(group, &pin).unwrap();
+
+    protocol::initiate_transfer(read_slot, group).unwrap();
+
     todo!()
 }
 

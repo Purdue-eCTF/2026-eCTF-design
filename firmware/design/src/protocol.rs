@@ -14,7 +14,7 @@ pub enum ProtocolError {
 }
 
 //TODO: Have other methods use
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct TransferM0Encrypted {
     pub ct: [u8; 3],
