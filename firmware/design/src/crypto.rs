@@ -51,12 +51,28 @@ pub fn decrypt_payload_pub<'a>(
     Ok(payload)
 }
 
+//TODO, make gn slot requirement more explicit
 pub fn encrypt_payload_pub<'a>(
     payload: &'a mut [u8],
     key: &[u8; 32],
 ) -> Result<&'a mut [u8], CryptoError> {
-    //let n = &trng::trng().word().to_be_bytes(); // u32 -> 4 bytes
-    todo!()
+    if key.len() < GN_SIZE {
+        return Err(CryptoError::InvalidEncryptionPayload);
+    }
+    let mut gn = [0u8; GN_SIZE];
+    let (gn_slot, pt) = payload.split_at_mut(GN_SIZE);
+
+    for chunk in gn.chunks_exact_mut(4) {
+        chunk.copy_from_slice(&trng::trng().word().to_le_bytes());
+    }
+    let sk = StaticSecret::from(key.clone());
+    let pubkey = PublicKey::from(gn.clone());
+    let shared = sk.diffie_hellman(&pubkey).to_bytes();
+
+    gn_slot.copy_from_slice(&gn);
+
+    encrypt_payload_symmetric(pt, &shared, &[])?;
+    Ok(payload)
 }
 
 pub fn decrypt_payload_symmetric<'a>(
