@@ -219,7 +219,7 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     let total_length = view::NAME_SIZE + data.len();
     let mut body = [0u8; message::CHUNK_SIZE];
 
-    message::Message::write_header_helper(Opcode::Read, total_length.try_into().unwrap());
+    message::Message::write_header_helper(Opcode::Read, total_length.try_into().unwrap(), MessagePort::UART0);
 
     let eat = if total_length <= message::CHUNK_SIZE {
         data.len()
