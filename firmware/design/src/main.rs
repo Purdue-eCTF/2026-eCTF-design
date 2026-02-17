@@ -215,11 +215,10 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     let data = fv.data;
 
     let total_length = view::NAME_SIZE + data.len();
-    let mut body = [0u8; message::MAX_BODY_SIZE];
-    // don't use write here because the file not fit in the message body
-    // write a chunk at a time instead
-    let response = Message::new(Opcode::Read, total_length.try_into().unwrap(), body);
-    response.write_header();
+    let mut body = [0u8; message::CHUNK_SIZE];
+
+    message::Message::write_header_helper(Opcode::Read, total_length.try_into().unwrap());
+
     let eat = if total_length <= message::CHUNK_SIZE {
         data.len()
     } else {

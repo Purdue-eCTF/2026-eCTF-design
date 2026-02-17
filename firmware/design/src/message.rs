@@ -193,6 +193,12 @@ impl Message {
         writer.write_bytes(&self.length.to_le_bytes());
     }
 
+    pub fn write_header_helper(opcode: Opcode, length: u16) {
+        let writer = uart0();
+        writer.write_bytes(&[MAGIC, opcode.into()]);
+        writer.write_bytes(&length.to_le_bytes());
+    }
+
     /// Writes this message to UART.
     pub fn write(&self) -> Result<(), MessageError> {
         self.write_header();
