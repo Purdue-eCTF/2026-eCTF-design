@@ -7,17 +7,18 @@ mod message;
 mod secrets;
 mod view;
 
+use bytemuck::{Pod, Zeroable};
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
 use ed25519_dalek::{Signature, SigningKey, Verifier, VerifyingKey, Signer};
 
-use view::{ConcatView, ConcatOffsets, FileView};
+use view::{MutFileView, FileView};
 
 use mspm0l222x_hal::{
     Peripherals, flash::FlashController, iomux::Iomux, led::Led, trng::Trng, uart::{Uart0, println, uart1}
 };
 
-use crate::{crypto::{decrypt_payload_pub, decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, message::{Message, Opcode}, secrets::SymmetricKey};
+use crate::{crypto::{decrypt_payload_pub, decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, message::{Message, Opcode}, secrets::SymmetricKey, view::{DATA_OFFSET, MutFile, NAME_OFFSET}};
 
 unsafe extern "C" {
     static _stack_start: u8;
@@ -48,6 +49,7 @@ pub struct File {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 struct FatEntry {
     uuid: [u8; 16],
     length: u16,
@@ -55,12 +57,7 @@ struct FatEntry {
     addr: usize,
 }
 
-const NAME_SIZE: usize = 32;
-const GID_SIZE: usize = 2;
-const UUID_SIZE: usize = 16;
-const MAX_FILE_SIZE: usize = 8192;
-const SIGNATURE_SIZE: usize = 64;
-const MAX_CONTENT_SIZE: usize = MAX_FILE_SIZE - SIGNATURE_SIZE - NAME_SIZE - GID_SIZE - UUID_SIZE - 1;
+use view::{NAME_SIZE, GID_SIZE, UUID_SIZE, MAX_FILE_SIZE, SIGNATURE_SIZE, MAX_CONTENT_SIZE};
 
 #[derive(Debug)]
 pub enum FileViewError {
@@ -108,10 +105,12 @@ fn get_group_key(group: u16, pin: &[u8; 6]) -> Result<&'static secrets::GroupKey
 fn main() -> ! {
     let mut ctx = Context::new(Peripherals::take().unwrap());
 
-    for i in 0..8 * 1024 {
-        ctx.flash
-            .write_data((&ctx.files[0] as *const File) as u32 + i, &0u64)
-            .unwrap();
+    for i in (0..8 * 1024).step_by(1024) {
+        unsafe {
+            ctx.flash
+                .write_page((&ctx.files[0] as *const File) as u32 + i, &[0u8; 1024])
+                .unwrap();
+        }
     }
 
     println!("{:?}", &ctx.files[0].contents[0..10]);
@@ -193,6 +192,10 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     let pin = pin;
     let slot = msg.body[6] as usize;
 
+    if slot > 7 {
+        panic!()
+    }
+
     let file_length = ctx.fat[slot].length as usize;
     let fv = FileView::from_file(&ctx.files[slot].contents, file_length);
     if !fv.exists {
@@ -202,19 +205,14 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     let group = fv.group;
     let group_key = get_group_key(group, &pin).unwrap();
     let pk_sign = VerifyingKey::from_bytes(&group_key.pk_sign.0).unwrap();
+    fv.verify_signature(&pk_sign).unwrap();
 
-    let mut buf: [u8; view::MAX_VIEW_SIZE] = [0u8; _];
-    let mut concat = fv.concat_bytes(&mut buf).unwrap();
+    let mut buf: [u8; view::MAX_FILE_SIZE] = [0u8; _];
+    let _ = fv.copy_to_buf(&mut buf).unwrap();
 
-    let expected_signature = Signature::from_bytes(concat.as_view().unwrap().signature);
-    let _ = pk_sign
-        .verify(&concat.get_buf(), &expected_signature)
-        .unwrap();
+    crypto::decrypt_payload_pub_combined(&mut buf[view::DATA_OFFSET..MAX_FILE_SIZE - 1], &group_key.sk_read.0).unwrap();
 
-    let concat_view = concat.as_view().unwrap();
-    crypto::decrypt_payload_pub_combined(concat_view.data, &group_key.sk_read.0).unwrap();
-
-    let data = concat_view.data;
+    let data = fv.data;
 
     let total_length = view::NAME_SIZE + data.len();
     let mut body = [0u8; message::MAX_BODY_SIZE];
@@ -229,7 +227,7 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     };
 
     let (initial, rest) = data.split_at(eat);
-    body[..view::NAME_SIZE].copy_from_slice(concat_view.name);
+    body[..view::NAME_SIZE].copy_from_slice(fv.name);
     body[view::NAME_SIZE..view::NAME_SIZE + eat].copy_from_slice(initial);
     message::Message::write_block(&body[..message::CHUNK_SIZE]).unwrap();
 
@@ -251,7 +249,7 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
 
     let (pin, rest) = msg.body.split_at(6);
     let (slot, rest) = rest.split_at(1);
-    let (group_id, rest) = rest.split_at(2);
+    let (group_id, rest) = rest.split_at(GID_SIZE);
     let (name, rest) = rest.split_at(NAME_SIZE);
     let (uuid, rest) = rest.split_at(UUID_SIZE);
     let (length, data) = rest.split_at(2);
@@ -277,48 +275,60 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
     let data_len = u16::from_le_bytes(length.try_into().unwrap()) as usize;
 
     let mut buf: [u8; MAX_FILE_SIZE] = [0u8; MAX_FILE_SIZE];
-    let offsets = ConcatOffsets {
-        signature: 0,
-        name: SIGNATURE_SIZE,
-        group: SIGNATURE_SIZE + NAME_SIZE,
-        uuid: SIGNATURE_SIZE + NAME_SIZE + GID_SIZE,
-        data: SIGNATURE_SIZE + NAME_SIZE + GID_SIZE + UUID_SIZE,
-        end: SIGNATURE_SIZE + NAME_SIZE + GID_SIZE + UUID_SIZE + data_len,
-    };
     {
-        let cv = ConcatView::new(&offsets, &mut buf).unwrap();
+        let cv = MutFileView::new(&mut buf).unwrap();
         cv.name.copy_from_slice(name);
         cv.group.copy_from_slice(&group.to_le_bytes());
         cv.uuid.copy_from_slice(uuid);
     }
 
-    let sig: Signature = sk_sign.sign(&buf[offsets.name..offsets.data]);
+    let sig: Signature = sk_sign.sign(&buf[view::NAME_OFFSET..view::DATA_OFFSET]);
     buf[..SIGNATURE_SIZE].copy_from_slice(&sig.to_bytes());
 
-    let mut written: usize = 0;
     let first = core::cmp::min(data_len, data.len());
-    buf[offsets.data..offsets.data + first].copy_from_slice(&data[..first]);
-    written += first;
+    let mut offset = view::DATA_OFFSET;
+    buf[offset..offset + first].copy_from_slice(&data[..first]);
+    offset += first;
 
-    while written < data_len {
+    while offset < data_len {
         let block = Message::read_block().unwrap();
-        let take = core::cmp::min(data_len - written, block.len());
-        buf[offsets.data + written..offsets.data + written + take].copy_from_slice(&block[..take]);
-        written += take;
+        let take = core::cmp::min(data_len - offset, block.len());
+        buf[offset..offset + take].copy_from_slice(&block[..take]);
+        offset += take;
     }
 
-    buf[offsets.data + written..MAX_FILE_SIZE - 1].fill(0);
+    buf[offset..MAX_FILE_SIZE - 1].fill(0);
     buf[MAX_FILE_SIZE - 1] = 1;
-    encrypt_payload_pub(&mut buf[offsets.data..offsets.data + written], &pk_read).unwrap();
+    encrypt_payload_pub(&mut buf[view::DATA_OFFSET..view::DATA_OFFSET + data_len], &pk_read).unwrap();
     
-    // TODO: actually write FAT and file
-    // ctx.fat[slot].length = data_len as u16;
-    // ctx.fat[slot].uuid.copy_from_slice(uuid);
+    let new_fat = FatEntry {
+        uuid: uuid.try_into().unwrap(),
+        length: data_len as u16,
+        padding: ctx.fat[slot].padding, // what is this?
+        addr: ctx.fat[slot].addr,
+    };
 
-    // // padding?
+    const PAGE_SIZE: usize = 1024;
+    for page_idx in 0..(MAX_FILE_SIZE / PAGE_SIZE) {
+        let offset = page_idx * PAGE_SIZE;
+        let page: &[u8; PAGE_SIZE] = buf[offset..offset + PAGE_SIZE].try_into().unwrap();
+        unsafe {
+            ctx.flash
+                .write_page((&ctx.files[slot] as *const File) as u32 + offset as u32, page)
+                .unwrap();
+        }
+    }
 
-    // ctx.files[slot].contents.copy_from_slice(&buf);
-    todo!()
+    let fat_slice = bytemuck::bytes_of(&new_fat);
+    for i in 0..(size_of::<FatEntry>() / 8) {
+        let offset = i * 8;
+        unsafe {
+            ctx.flash.write_word(
+                &ctx.fat[slot] as *const FatEntry as u32 + offset as u32,
+                &fat_slice[offset..offset + 8].try_into().unwrap()
+            ).unwrap();
+        }
+    }
 }
 
 fn handle_receive(ctx: &mut Context) {
