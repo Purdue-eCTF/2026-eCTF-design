@@ -101,7 +101,7 @@ pub const MAGIC: u8 = b'%';
 
 // TODO: how to chunk files for sending? 8kb is like 1/4 of RAM
 /// Maximum body size for a message: 4.5 KiB
-pub const MAX_BODY_SIZE: usize = 4608;
+pub const MAX_BODY_SIZE: usize = 1024; // TODO: this seems far too large
 /// Messages get sent in 256-byte chunks, with an ack for each chunk
 pub const CHUNK_SIZE: usize = 256;
 
@@ -149,9 +149,6 @@ impl Message {
     /// Reads a message header from UART without reading the body.
     #[inline]
     pub fn read_header(port: MessagePort) -> Result<Self, MessageError> {
-        // TODO: once uart0/uart1 support is merged:
-        // - replace uart with uart0
-        // - replace read_bytes(1) with read_byte
         let reader = MessageUart::new(port);
 
         let mut magic = 0u8;
@@ -273,7 +270,22 @@ impl Message {
             return Err(MessageError::BodyLengthError);
         }
         let msg = Message::from_data(opcode, data, port)?;
-        msg.write()
+        msg.write()?;
+
+        if !NACKS.contains(&opcode) {
+            Self::read_ack(port)?;
+        }
+
+        if data.len() != 0 {
+            for chunk in data.chunks(CHUNK_SIZE) {
+                writer.write_bytes(chunk);
+                if !NACKS.contains(&opcode) {
+                    Self::read_ack(port)?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Static method to generate an ack message.
@@ -286,6 +298,5 @@ impl Message {
         }
     }
 }
-
 
 // TODO: inter-device messaging over UART1

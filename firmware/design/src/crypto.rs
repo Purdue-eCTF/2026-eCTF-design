@@ -7,7 +7,9 @@ use x25519_dalek::{PublicKey, StaticSecret};
 
 pub const NONCE_SIZE: usize = 24;
 pub const TAG_SIZE: usize = 16;
-const GN_SIZE: usize = 32;
+pub const GN_SIZE: usize = 32;
+
+pub const METADATA_SIZE_PUB: usize = NONCE_SIZE + TAG_SIZE + GN_SIZE;
 
 // TODO: Tests
 #[derive(Debug, Error)]
@@ -21,8 +23,8 @@ pub enum CryptoError {
 }
 
 // expect gn || ct
-pub fn decrypt_payload_pub_combined(payload: &mut [u8], key: &[u8; 32]) -> Result<(), CryptoError> {
-    if payload.len() < GN_SIZE {
+pub fn decrypt_payload_pub_combined<'a>(payload: &'a mut [u8], key: &[u8; 32]) -> Result<&'a mut [u8], CryptoError> {
+    if (payload.len() < GN_SIZE) {
         return Err(CryptoError::InvalidDecryptionPayload);
     }
     let (gn, body) = payload.split_at_mut(GN_SIZE);
@@ -32,7 +34,7 @@ pub fn decrypt_payload_pub_combined(payload: &mut [u8], key: &[u8; 32]) -> Resul
     let nonce: &[u8; NONCE_SIZE] = bytemuck::from_bytes(nonce);
     let tag: &[u8; TAG_SIZE] = bytemuck::from_bytes(tag);
     decrypt_payload_pub(ct, nonce, tag, key, gn)?;
-    Ok(())
+    Ok(ct)
 }
 
 pub fn decrypt_payload_pub<'a>(
@@ -60,15 +62,14 @@ pub fn decrypt_payload_pub<'a>(
 //TODO, make gn slot requirement more explicit
 pub fn encrypt_payload_pub<'a>(
     payload: &'a mut [u8],
-    nonce: &'a mut [u8; NONCE_SIZE],
-    tag: &'a mut [u8; TAG_SIZE],
+    gn: &'a mut [u8; GN_SIZE],
+    nonce: &'a mut [u8; 24],
+    tag: &'a mut [u8; 16],
     key: &[u8; 32],
 ) -> Result<&'a mut [u8], CryptoError> {
     if key.len() < GN_SIZE {
         return Err(CryptoError::InvalidEncryptionPayload);
     }
-    let mut gn = [0u8; GN_SIZE];
-    let (gn_slot, pt) = payload.split_at_mut(GN_SIZE);
 
     for chunk in gn.chunks_exact_mut(4) {
         chunk.copy_from_slice(&trng::trng().word().to_le_bytes());
@@ -77,19 +78,17 @@ pub fn encrypt_payload_pub<'a>(
     let pubkey = PublicKey::from(gn.clone());
     let shared = sk.diffie_hellman(&pubkey).to_bytes();
 
-    gn_slot.copy_from_slice(&gn);
-
-    encrypt_payload_symmetric(pt, nonce, tag, &shared, &[])?;
+    encrypt_payload_symmetric(payload, nonce, tag, &shared, &[])?;
     Ok(payload)
 }
 
 pub fn decrypt_payload_symmetric<'a>(
     payload: &'a mut [u8],
-    nonce: &'a [u8; NONCE_SIZE],
-    tag: &'a [u8; TAG_SIZE],
+    nonce: &'a [u8; 24],
+    tag: &'a [u8; 16],
     key: &[u8; 32],
     associated_data: &[u8],
-) -> Result<(), CryptoError> {
+) -> Result<&'a mut [u8], CryptoError> {
     let cipher = XChaCha20Poly1305::new_from_slice(key)
         .map_err(|_| CryptoError::InvalidDecryptionPayload)?;
 
@@ -99,7 +98,7 @@ pub fn decrypt_payload_symmetric<'a>(
         .decrypt_in_place_detached(nonce_ga, associated_data, payload, tag_ga)
         .map_err(|_| CryptoError::InvalidDecryptionPayload)?;
 
-    Ok(())
+    Ok(payload)
 }
 
 pub fn encrypt_payload_symmetric<'a>(

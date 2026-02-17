@@ -1,0 +1,240 @@
+use bytemuck::{NoUninit, bytes_of};
+use core::{
+    fmt::{self, Write},
+    marker::PhantomData,
+    mem::size_of,
+};
+
+use mspm0l222x_hal::{
+    Peripherals,
+    flash::{self, FLASH_PAGE_SIZE, FlashController},
+    iomux::Iomux,
+    uart::Uart0,
+};
+
+use crate::{
+    file::{FatTable, File},
+    message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
+};
+
+// TODO: glitching prevention or similar
+// TODO: how badly will this hit flash? Can we rotate slots or something?
+#[macro_export]
+macro_rules! sensitive {
+    ($context:ident, $($body:stmt)+) => {
+        $context.move_salt_to_ram();
+        $($body)+
+        $context.move_salt_to_flash();
+    };
+}
+
+/// Prints to the uart port
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => ($crate::util::write_debug_format(format_args!($($arg)*)));
+}
+
+/// Prints to the uart port
+#[macro_export]
+macro_rules! println {
+    () => ($crate::print!("\n"));
+    ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct Salt {
+    pub salt: [u8; 32],
+}
+
+unsafe impl NoUninit for Salt {}
+
+// TODO: automatically handle partial page writes
+pub const FLASH_MAGIC: u64 = 0x7c79b307cf99d0d6;
+pub struct FlashEntry<T: NoUninit> {
+    location: u32,
+    pages: u32,
+    _marker: PhantomData<T>,
+}
+
+impl<T: NoUninit> FlashEntry<T> {
+    pub(crate) unsafe fn new(location: u32) -> Self {
+        // Flash entry must be sector-aligned
+        assert!(
+            location % (FLASH_PAGE_SIZE as u32) == 0,
+            "location {} is not page-aligned",
+            location
+        );
+        // Type must be 8-byte aligned
+        const {
+            assert!(size_of::<T>() % 8 == 0);
+        }
+
+        Self {
+            location,
+            pages: (size_of::<T>() + size_of_val(&FLASH_MAGIC)).div_ceil(FLASH_PAGE_SIZE) as u32,
+            _marker: PhantomData,
+        }
+    }
+
+    pub(crate) unsafe fn set(&self, data: &T) -> Result<(), mspm0l222x_hal::HalError> {
+        let flash = flash::flash();
+        let res = self.set_inner(data);
+
+        if res.is_err() {
+            // prevent partial writes
+            let mut err = Ok(());
+            for page in 0..self.pages {
+                unsafe {
+                    let erased = flash.erase_page(self.location + page * FLASH_PAGE_SIZE as u32);
+                    err = err.and(erased);
+                }
+            }
+
+            err
+        } else {
+            res
+        }
+    }
+
+    pub(crate) fn is_set(&self) -> bool {
+        (unsafe { *((self.location + size_of::<T>() as u32) as *const u64) }) == FLASH_MAGIC
+    }
+
+    #[inline]
+    fn set_inner(&self, data: &T) -> Result<(), mspm0l222x_hal::HalError> {
+        let flash = flash::flash();
+
+        let data = bytes_of(data);
+        let (words, []): (&[[u8; 8]], _) = data.as_chunks() else {
+            unreachable!()
+        };
+
+        flash.write_unprotect(self.location, self.pages * FLASH_PAGE_SIZE as u32);
+        for page in 0..self.pages {
+            unsafe {
+                flash.erase_page(self.location + page * FLASH_PAGE_SIZE as u32)?;
+            }
+        }
+
+        flash.write_unprotect(self.location, self.pages * FLASH_PAGE_SIZE as u32);
+
+        for (i, word) in words.iter().enumerate() {
+            unsafe { flash.write_word(self.location + i as u32 * 8, word)? };
+        }
+
+        Ok(())
+    }
+
+    fn addr(&self) -> u32 {
+        self.location
+    }
+}
+
+impl<T: NoUninit> AsRef<T> for FlashEntry<T> {
+    fn as_ref(&self) -> &T {
+        unsafe { &*(self.location as *const T) }
+    }
+}
+
+// TODO: move File/FatEntry to FlashEntry abstraction
+pub(crate) struct Context {
+    pub files: [FlashEntry<File>; 8],
+    pub fat: FlashEntry<FatTable>,
+    pub salt: FlashEntry<Salt>,
+}
+
+unsafe extern "C" {
+    pub static _files: u8;
+    pub static _filetable: u8;
+    pub static _salt: u8;
+}
+
+impl Context {
+    pub(crate) fn new(peripherals: Peripherals) -> Self {
+        // TODO: PIN salt generation + penalty enforcement
+        // TODO: check for flash write failure
+        let iomux = Iomux::new(&peripherals.iomux);
+
+        Uart0::init(&iomux, peripherals.uart0);
+        println!("starting!");
+        // Uart1::init(&iomux, peripherals.uart1);
+        FlashController::init(peripherals.flashctl);
+        // TODO: set appropriate memory protection
+
+        // Trng::init(peripherals.trng);
+
+        let file_size = core::mem::size_of::<File>();
+        let files = unsafe {
+            [
+                FlashEntry::new(((&_files as *const u8).add(0 * file_size)) as u32),
+                FlashEntry::new(((&_files as *const u8).add(1 * file_size)) as u32),
+                FlashEntry::new(((&_files as *const u8).add(2 * file_size)) as u32),
+                FlashEntry::new(((&_files as *const u8).add(3 * file_size)) as u32),
+                FlashEntry::new(((&_files as *const u8).add(4 * file_size)) as u32),
+                FlashEntry::new(((&_files as *const u8).add(5 * file_size)) as u32),
+                FlashEntry::new(((&_files as *const u8).add(6 * file_size)) as u32),
+                FlashEntry::new(((&_files as *const u8).add(7 * file_size)) as u32),
+            ]
+        };
+
+        let fat = unsafe { FlashEntry::new(&_filetable as *const u8 as u32) };
+
+        let salt = unsafe { FlashEntry::new(&_salt as *const u8 as u32) };
+        Self { files, fat, salt }
+    }
+
+    pub(crate) fn move_salt_to_ram(&self) {}
+    pub(crate) fn move_salt_to_flash(&self) {}
+}
+
+struct UartWriter([u8; MAX_BODY_SIZE], usize);
+impl UartWriter {
+    fn new() -> Self {
+        Self([0; _], 0)
+    }
+}
+
+impl UartWriter {
+    fn flush(&mut self) {
+        if self.1 != 0 {
+            let _ = Message::send_data(Opcode::Debug, &self.0[..self.1], MessagePort::UART0);
+            self.1 = 0;
+        }
+    }
+}
+
+impl Write for UartWriter {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let slice = &mut self.0[self.1..];
+        let remaining = slice.len();
+
+        if remaining >= s.len() {
+            slice[..s.len()].copy_from_slice(s.as_bytes());
+            self.1 += s.len();
+        } else {
+            slice.copy_from_slice(&s.as_bytes()[..remaining]);
+            self.flush();
+
+            for chunk in s[remaining..].as_bytes().chunks(MAX_BODY_SIZE) {
+                if chunk.len() >= MAX_BODY_SIZE {
+                    let _ = Message::send_data(Opcode::Debug, &chunk, MessagePort::UART0);
+                } else {
+                    self.1 = chunk.len();
+                    self.0[..chunk.len()].copy_from_slice(chunk);
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Called internally by print and println macros.
+///
+/// Prints formatted info as debug messages.
+pub fn write_debug_format(args: fmt::Arguments) {
+    let mut writer = UartWriter::new();
+    let _ = writer.write_fmt(args);
+    writer.flush();
+}

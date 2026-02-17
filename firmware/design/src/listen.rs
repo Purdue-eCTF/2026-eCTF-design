@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable, bytes_of_mut};
 use ed25519_dalek::VerifyingKey;
 
-use crate::{Context, crypto::{decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, secrets::{GROUP_KEYS, INTERROGATE_KEYS, TRANSFER_KEYS}, view::FileView};
+use crate::{Context, crypto::{self, decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, message::Opcode, secrets::{GROUP_KEYS, INTERROGATE_KEYS, TRANSFER_KEYS}, view::FileView};
 use mspm0l222x_hal::uart::uart1;
 use thiserror::Error;
 
@@ -14,74 +14,55 @@ enum ListenError {
     InvalidSlot,
     #[error("Invalid group")]
     InvalidGroup,
+    #[error("Invalid opcode")]
+    InvalidOpcode,
 }
-
-pub(crate) enum ListenOpcode {
-    Interrogate,
-    Receive
-}
-impl TryFrom<u8> for ListenOpcode {
-    type Error = ();
-    fn try_from(value: u8) -> Result<Self, ()> {
-        match value {
-            b'I' => Ok(Self::Interrogate),
-            b'C' => Ok(Self::Receive),
-            _ => Err(()),
-        }
-    }
-}
-
-impl From<ListenOpcode> for u8 {
-    fn from(opcode: ListenOpcode) -> u8 {
-        match opcode {
-            ListenOpcode::Interrogate => b'I',
-            ListenOpcode::Receive => b'C'
-        }
-    }
-}
-
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Zeroable, Pod)]
-struct InterrogateFile {
-    name : [u8; 32],
-    group: u16,
-    slot: u8,
-    _pad: u8,
+pub struct InterrogateFile {
+    pub slot: u8,
+    pub group: u16,
+    pub name: [u8; 32]
 }
-// size: 32 + 2 + 1 + 1
 
-pub fn recv(ctx: &mut Context, opcode: ListenOpcode, body: &mut [u8]) {
+pub fn recv(ctx: &mut Context, opcode: Opcode, body: &mut [u8]) -> Result<(), ListenError> {
     match opcode {
-        ListenOpcode::Interrogate => handle_interrogate(ctx, body),
-        ListenOpcode::Receive => handle_transfer(ctx, body).unwrap()
+        Opcode::Interrogate => handle_interrogate(ctx, body),
+        Opcode::Receive => handle_transfer(ctx, body).unwrap(),
+        _ => return Err(ListenError::InvalidOpcode),
     };
+    Ok(())
 }
 
 fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
     // TODO: i0
     let i0 = INTERROGATE_KEYS[0].0;
 
-    let opcode = [ListenOpcode::Interrogate.into()];
-    let msg = decrypt_payload_symmetric(body, &i0, &opcode).unwrap();
+    let opcode = [Opcode::Interrogate.into()];
+    let (nonce, rest) = body.split_at_mut(crypto::NONCE_SIZE);
+    let (pt, tag) = rest.split_at_mut(rest.len() - crypto::TAG_SIZE);
+    let msg = decrypt_payload_symmetric(pt, nonce.try_into().unwrap(), tag.try_into().unwrap(), &i0, &opcode).unwrap();
 
-    let mut body = [const { InterrogateFile { name: [0; 32], group: 0, slot: 0, _pad: 0 } }; 8];
+    let mut body = [0u8; 8 * (size_of::<InterrogateFile>() + crypto::METADATA_SIZE_PUB)];
     let mut count = 0;
     for chunk in msg.chunks_exact(2) {
         let bytes: &[u8; 2] = chunk.try_into().unwrap();
         let group = u16::from_le_bytes(*bytes);
 
         for i in 0..8 {
-            let data_len = ctx.fat[i].length as usize;
-            let file = FileView::from_file(&ctx.files[i].contents, data_len);
-            if file.exists && file.group == group {
-                if !file.verify_signature(&GROUP_KEYS[group as usize].pk_sign.0).is_ok() {
-                    continue;
-                }
-                body[count] = InterrogateFile { name: *file.name, group: file.group, slot: i as u8, _pad: 0 };
-
+            let data_len = ctx.fat.as_ref().entries[i].length as usize;
+            let file = ctx.files[i].as_ref();
+            let metadata = &file.metadata;
+            if file.is_full() && metadata.group == group {
+                let offset = count * (size_of::<InterrogateFile>() + crypto::METADATA_SIZE_PUB);
+                let payload = &mut body[offset..offset + size_of::<InterrogateFile>() + crypto::METADATA_SIZE_PUB];
+                let (gn, rest) = payload.split_at_mut(crypto::GN_SIZE);
+                let (nonce, rest) = rest.split_at_mut(crypto::NONCE_SIZE);
+                let (content, tag) = rest.split_at_mut(crypto::TAG_SIZE);
+                content.copy_from_slice(bytemuck::bytes_of(&InterrogateFile { name: metadata.name, group: metadata.group, slot: i as u8 }));
                 // surely
                 let pk_inter = GROUP_KEYS[group as usize].pk_inter.0;
-                let _ = encrypt_payload_pub(bytes_of_mut(&mut body[count]), &pk_inter).unwrap();
+                let _ = encrypt_payload_pub(content, gn.try_into().unwrap(), nonce.try_into().unwrap(), tag.try_into().unwrap(), &pk_inter).unwrap();
                 count += 1;
             }
         }
@@ -115,18 +96,18 @@ fn handle_transfer<'a>(ctx: &mut Context, body: &'a mut [u8]) -> Result<(), List
         return Err(ListenError::InvalidSlot);
     }
 
-    let data_len = ctx.fat[slot].length as usize;
+    let data_len = ctx.fat.as_ref().entries[slot].length as usize;
 
-    let file = FileView::from_file(&ctx.files[slot].contents, data_len);
-    if !file.exists || file.group != group {
+    let file = ctx.files[slot].as_ref();
+    if !file.is_full() || file.metadata.group != group {
         return Err(ListenError::InvalidGroup);
     }
 
     // should we check signature here?
 
-    let mut buf = [0; 8191];
+    let mut buf = [0; 8192];
 
-    buf.copy_from_slice(&ctx.files[slot].contents[..8191]);
+    buf.copy_from_slice(&ctx.files[slot].as_ref().contents);
 
     // surely
     let pk_transfer = GROUP_KEYS[group as usize].pk_trans.0;

@@ -1,95 +1,34 @@
 #![no_std]
 #![no_main]
+#![feature(breakpoint)]
 
 mod crypto;
 mod listen;
 mod message;
 mod secrets;
 mod view;
+mod file;
+mod util;
 
-use bytemuck::{Pod, Zeroable};
+use ed25519_dalek::{Signature, SigningKey, Signer};
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
-use ed25519_dalek::{Signature, SigningKey, Verifier, VerifyingKey, Signer};
+use mspm0l222x_hal::{Peripherals, uart::uart1};
+use util::*;
 
-use view::{MutFileView, FileView};
-
-use mspm0l222x_hal::{
-    Peripherals, flash::FlashController, iomux::Iomux, led::Led, trng::Trng, uart::{Uart0, println, uart1}
+use crate::{
+    crypto::encrypt_payload_pub, file::{FatEntry, FatTable, File}, message::{Message, MessagePort, Opcode}
 };
-
-use crate::{crypto::{decrypt_payload_pub, decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric, NONCE_SIZE, TAG_SIZE}, message::{Message, Opcode}, secrets::{SymmetricKey}, view::{DATA_OFFSET, MutFile, NAME_OFFSET}};
-
-use message::MessagePort;
-
-unsafe extern "C" {
-    static _stack_start: u8;
-    static _boot_salt: u8;
-    static _files: u8;
-    static _filetable: u8;
-}
 
 #[panic_handler]
 fn handle_panics(info: &PanicInfo) -> ! {
-    println!("{info}");
-    cortex_m::peripheral::SCB::sys_reset();
-}
-
-// TODO: glitching prevention or similar
-// TODO: how badly will this hit flash? Can we rotate slots or something?
-macro_rules! sensitive {
-    ($context:ident, $($body:stmt)+) => {
-        $context.move_salt_to_ram();
-        $($body)+
-        $context.move_salt_to_flash();
-    };
-}
-
-#[repr(C)]
-pub struct File {
-    contents: [u8; 8192],
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct FatEntry {
-    uuid: [u8; 16],
-    length: u16,
-    padding: u16,
-    addr: usize,
-}
-
-use view::{NAME_SIZE, GID_SIZE, UUID_SIZE, MAX_FILE_SIZE, SIGNATURE_SIZE, MAX_CONTENT_SIZE};
-
-#[derive(Debug)]
-pub enum FileViewError {
-    BufferTooSmall,
-}
-
-// TODO: move File/FatEntry to FlashEntry abstraction
-pub(crate) struct Context {
-    pub files: &'static [File; 8],
-    pub fat: &'static [FatEntry; 8],
-    pub flash: FlashController,
-}
-
-impl Context {
-    pub(crate) fn new(peripherals: Peripherals) -> Self {
-        // TODO: PIN salt generation + penalty enforcement
-        // TODO: check for flash write failure
-        let iomux = Iomux::new(&peripherals.iomux);
-        Uart0::init(&iomux, peripherals.uart0);
-        // init Uart1?
-        Led::init(&iomux, peripherals.gpioa, peripherals.gpiob);
-        Trng::init(peripherals.trng);
-        let files = unsafe { core::mem::transmute(&_files) };
-        let fat = unsafe { core::mem::transmute(&_filetable) };
-        let flash = FlashController::new(peripherals.flashctl);
-        Self { files, fat, flash }
+    #[cfg(debug_assertions)]
+    {
+        println!("panic with info: {info}");
     }
 
-    pub(crate) fn move_salt_to_ram(&self) {}
-    pub(crate) fn move_salt_to_flash(&self) {}
+    loop {}
+    // cortex_m::peripheral::SCB::sys_reset();
 }
 
 // TODO: Placeholder function until using the pin to decrypt keys is implemented
@@ -106,19 +45,14 @@ fn get_group_key(group: u16, pin: &[u8; 6]) -> Result<&'static secrets::GroupKey
 #[entry]
 fn main() -> ! {
     let mut ctx = Context::new(Peripherals::take().unwrap());
-
-    for i in (0..8 * 1024).step_by(1024) {
-        unsafe {
-            ctx.flash
-                .write_page((&ctx.files[0] as *const File) as u32 + i, &[0u8; 1024])
-                .unwrap();
-        }
+    for file in &ctx.files {
+        // TODO: gracefully handle this failure
+        assert!(file.as_ref().state == File::EMPTY || file.as_ref().state == File::FULL);
     }
-
-    println!("{:?}", &ctx.files[0].contents[0..10]);
 
     loop {
         let msg = Message::read(MessagePort::UART0).unwrap();
+        println!("Got message {msg:?}");
 
         sensitive!(ctx, {
             match msg.opcode {
@@ -138,14 +72,14 @@ fn main() -> ! {
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)] 
 #[repr(C, packed)]
 struct ListEntry {
-    name: [u8; NAME_SIZE],
+    name: [u8; view::NAME_SIZE],
     group: u16,
     slot: u8
 }
 
 fn handle_list(ctx: &mut Context) {
     // 4 bytes at start for total number of files; file slot, name of file, group id, padding, for 8 files
-    const METADATA_SIZE: usize = 1 + NAME_SIZE + 2 + 1;
+    const METADATA_SIZE: usize = 1 + view::NAME_SIZE + 2 + 1;
     let mut body = [0u8; 4 + 8 * METADATA_SIZE];
     let file_list = &mut body[4..];
     let list_entries: &mut [ListEntry; 8] = bytemuck::from_bytes_mut(file_list);
@@ -156,13 +90,16 @@ fn handle_list(ctx: &mut Context) {
     for i in 0..8 {
         // name | groupid | uuid | data
         // if not in use, continue
-        let file = FileView::from_file(&ctx.files[i].contents, ctx.fat[i].length as usize);
-        let key = secrets::GROUP_KEYS[file.group as usize].pk_sign.0;
-        if !file.exists || !file.verify_signature(&key).is_ok() {
+        let file = ctx.files[i].as_ref();
+        if !file.is_full() {
+            continue;
+        }
+        let key = secrets::GROUP_KEYS[file.metadata.group as usize].pk_sign.0;
+        if !file.verify_signature(&key).is_ok() {
             continue;
         }
 
-        let metadata: ListEntry = ListEntry { name: *file.name, group: file.group, slot: i as u8 };
+        let metadata: ListEntry = ListEntry { name: file.metadata.name, group: file.metadata.group, slot: i as u8 };
         list_entries[counter] = metadata;
 
         counter += 1;
@@ -193,39 +130,38 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
         panic!()
     }
 
-    let file_length = ctx.fat[slot].length as usize;
-    let fv = FileView::from_file(&ctx.files[slot].contents, file_length);
-    if !fv.exists {
+    let file_length = ctx.fat.as_ref().entries[slot].length as usize;
+    let file = ctx.files[slot].as_ref();
+
+    if !file.is_full() {
         panic!()
     }
 
-    let group = fv.group;
+    let group = file.metadata.group;
     let group_key = get_group_key(group, &pin).unwrap();
     let key = secrets::GROUP_KEYS[group as usize].pk_sign.0;
-    fv.verify_signature(&key).unwrap();
+    file.verify_signature(&key).unwrap();
 
-    let mut buf: [u8; view::MAX_FILE_SIZE] = [0u8; _];
-    let _ = fv.copy_to_buf(&mut buf).unwrap();
+    let mut buf = [0; file::CONTENT_SIZE];
+    buf.copy_from_slice(&file.contents[..file_length]);
 
-    crypto::decrypt_payload_pub_combined(&mut buf[DATA_OFFSET..MAX_FILE_SIZE - 1], &group_key.sk_read.0).unwrap();
+    crypto::decrypt_payload_pub(&mut buf[..file_length], &file.nonce, &file.tag, &group_key.sk_read.0, &file.gn).unwrap();
 
-    let data = fv.data;
-
-    let total_length = view::NAME_SIZE + data.len();
+    let total_length = view::NAME_SIZE + file_length;
     let mut body = [0u8; message::CHUNK_SIZE];
 
     message::Message::write_header_helper(Opcode::Read, total_length.try_into().unwrap(), MessagePort::UART0);
 
     let eat = if total_length <= message::CHUNK_SIZE {
-        data.len()
+        file_length
     } else {
-        message::CHUNK_SIZE - NAME_SIZE
+        message::CHUNK_SIZE - view::NAME_SIZE
     };
 
-    let (initial, rest) = data.split_at(eat);
-    body[..view::NAME_SIZE].copy_from_slice(fv.name);
+    let (initial, rest) = buf.split_at(eat);
+    body[..view::NAME_SIZE].copy_from_slice(&file.metadata.name);
     body[view::NAME_SIZE..view::NAME_SIZE + eat].copy_from_slice(initial);
-    message::Message::write_block(&body[..message::CHUNK_SIZE], MessagePort::UART0).unwrap();
+    message::Message::write_block(&body, MessagePort::UART0).unwrap();
 
     for chunk in rest.chunks(message::CHUNK_SIZE) {
         //TODO: not sure if this is possible but just in case
@@ -245,14 +181,14 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
 
     let (pin, rest) = msg.body.split_at(6);
     let (slot, rest) = rest.split_at(1);
-    let (group_id, rest) = rest.split_at(GID_SIZE);
-    let (name, rest) = rest.split_at(NAME_SIZE);
-    let (uuid, rest) = rest.split_at(UUID_SIZE);
+    let (group_id, rest) = rest.split_at(file::GID_SIZE);
+    let (name, rest) = rest.split_at(file::NAME_SIZE);
+    let (uuid, rest) = rest.split_at(file::UUID_SIZE);
     let (length, data) = rest.split_at(2);
 
 
-    let data_len = u16::from_le_bytes(length.try_into().unwrap()) as usize;
-    if data_len > MAX_CONTENT_SIZE {
+    let data_len = usize::from_le_bytes(length.try_into().unwrap());
+    if data_len > file::CONTENT_SIZE {
         panic!()
     }
 
@@ -268,63 +204,43 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
     let sk_sign = SigningKey::from_bytes(&group_key.sk_sign.0);
     let pk_read = group_key.pk_read.0;
 
-    let data_len = u16::from_le_bytes(length.try_into().unwrap()) as usize;
+    let mut buf: [u8; size_of::<File>()] = [0u8; size_of::<File>()];
+    let file: &mut File = bytemuck::from_bytes_mut(&mut buf);
+    let metadata= &mut file.metadata;
+    metadata.name.copy_from_slice(name);
+    metadata.group = group;
+    metadata.uuid.copy_from_slice(uuid); 
 
-    let mut buf: [u8; NONCE_SIZE + MAX_FILE_SIZE + TAG_SIZE] = [0u8; NONCE_SIZE + MAX_FILE_SIZE + TAG_SIZE];
-    {
-        let cv = MutFileView::new(&mut buf).unwrap();
-        cv.name.copy_from_slice(name);
-        cv.group.copy_from_slice(&group.to_le_bytes());
-        cv.uuid.copy_from_slice(uuid);
-    }
-
-    let sig: Signature = sk_sign.sign(&buf[NAME_OFFSET..DATA_OFFSET]);
-    buf[..SIGNATURE_SIZE].copy_from_slice(&sig.to_bytes());
+    let sig: Signature = sk_sign.sign(bytemuck::bytes_of(metadata));
+    file.signature = sig.to_bytes();
 
     let first = core::cmp::min(data_len, data.len());
-    let mut offset = DATA_OFFSET;
-    buf[offset..offset + first].copy_from_slice(&data[..first]);
-    offset += first;
+    let mut offset = 0;
+    file.contents[..first].copy_from_slice(&data[..first]);
 
     while offset < data_len {
         let block = Message::read_block(MessagePort::UART0).unwrap();
         let take = core::cmp::min(data_len - offset, block.len());
-        buf[offset..offset + take].copy_from_slice(&block[..take]);
+        file.contents[offset..offset + take].copy_from_slice(&block[..take]);
         offset += take;
     }
-
-    buf[offset..MAX_FILE_SIZE - 1].fill(0);
-    buf[MAX_FILE_SIZE - 1] = 1;
     // TODO
-    encrypt_payload_pub(&mut buf[DATA_OFFSET..DATA_OFFSET + data_len], &mut buf[0..DATA_OFFSET], &mut , &pk_read).unwrap();
+    encrypt_payload_pub(&mut file.contents[..data_len], &mut file.nonce, &mut file.tag, &pk_read).unwrap();
     
     let new_fat = FatEntry {
         uuid: uuid.try_into().unwrap(),
         length: data_len as u16,
-        padding: ctx.fat[slot].padding, // what is this?
-        addr: ctx.fat[slot].addr,
+        padding: ctx.fat.as_ref().entries[slot].padding, // what is this?
+        addr: ctx.fat.as_ref().entries[slot].addr,
     };
 
-    const PAGE_SIZE: usize = 1024;
-    for page_idx in 0..(MAX_FILE_SIZE / PAGE_SIZE) {
-        let offset = page_idx * PAGE_SIZE;
-        let page: &[u8; PAGE_SIZE] = buf[offset..offset + PAGE_SIZE].try_into().unwrap();
-        unsafe {
-            ctx.flash
-                .write_page((&ctx.files[slot] as *const File) as u32 + offset as u32, page)
-                .unwrap();
-        }
-    }
-
-    let fat_slice = bytemuck::bytes_of(&new_fat);
-    for i in 0..(size_of::<FatEntry>() / 8) {
-        let offset = i * 8;
-        unsafe {
-            ctx.flash.write_word(
-                &ctx.fat[slot] as *const FatEntry as u32 + offset as u32,
-                &fat_slice[offset..offset + 8].try_into().unwrap()
-            ).unwrap();
-        }
+    // TODO: just write the one fat entry
+    unsafe {
+        ctx.files[slot].set(file).unwrap();
+        let current = ctx.fat.as_ref();
+        let mut entries = current.entries;
+        entries[slot] = new_fat;
+        ctx.fat.set(&FatTable { entries }).unwrap();
     }
 
     Message::write_header_helper(Opcode::Write, 0, MessagePort::UART0);
@@ -339,8 +255,9 @@ fn handle_interrogate(ctx: &mut Context) {
     // check for right pin from host
     // - if not right pin, panic w message
 
-
     let mut groups: [u16; secrets::GROUP_KEYS.len()] = [0u16; secrets::GROUP_KEYS.len()];
+    let mut nonce = [0u8; 24];
+    let mut tag = [0u8; 16];
     let mut group_count = 0;
     for (i, group) in secrets::GROUP_KEYS.iter().enumerate() {
         if group.pk_inter.0.is_empty() { continue };
@@ -348,9 +265,14 @@ fn handle_interrogate(ctx: &mut Context) {
         group_count += 1;
     }
 
-    let payload = encrypt_payload_symmetric(&mut groups, &secrets::INTERROGATE_KEYS[0].0, &[Opcode::Interrogate as u8]).unwrap();
+    let _ = crypto::encrypt_payload_symmetric(bytemuck::bytes_of_mut(&mut groups), &mut nonce, &mut tag,&secrets::INTERROGATE_KEYS[0].0, &[Opcode::Interrogate as u8]).unwrap();
 
-    let request= Message::send_data(Opcode::Interrogate, &payload, MessagePort::UART1).unwrap();
+    let mut payload = [0; crypto::NONCE_SIZE + secrets::GROUP_KEYS.len() * 2 + crypto::TAG_SIZE];
+    payload[..crypto::NONCE_SIZE].copy_from_slice(&nonce);
+    payload[crypto::NONCE_SIZE..crypto::NONCE_SIZE + secrets::GROUP_KEYS.len() * 2].copy_from_slice(bytemuck::bytes_of(&mut groups));
+    payload[crypto::NONCE_SIZE + secrets::GROUP_KEYS.len() * 2..].copy_from_slice(&tag);
+
+    Message::send_data(Opcode::Interrogate, &payload, MessagePort::UART1).unwrap();
 
     let mut info = Message::read(MessagePort::UART1).unwrap();
 
@@ -358,26 +280,23 @@ fn handle_interrogate(ctx: &mut Context) {
         panic!("Incorrect Opcode for Retrieve Interrogate");
     }
 
-    let body = decrypt_payload_symmetric(&mut info.body, &secrets::INTERROGATE_KEYS[1].0, &[Opcode::Interrogate as u8]).unwrap();
-    let size_of_metadata: usize = 32 + 2 + 1 + 1;
-    // lol hardcoded
+    let (nonce, rest) = info.body.split_at_mut(24);
+    let (data, tag) = rest.split_at_mut(rest.len() - 16);
 
-    // same as list
-    let mut list: [u8; 4 + 1 + NAME_SIZE + 2 + 1] = [0u8; 4 + 1 + NAME_SIZE + 2 + 1]; 
-    let mut counter: usize = 0;
+    let _ = crypto::decrypt_payload_symmetric(data, nonce[..24].try_into().unwrap(), tag[..16].try_into().unwrap(),  &secrets::INTERROGATE_KEYS[1].0, &[Opcode::Interrogate as u8]).unwrap();
 
-    // TODO
-    for i in (0..body.len()).step_by(size_of_metadata) {
-        crypto::decrypt_payload_pub_combined(&mut body[(i * size_of_metadata)..((i * size_of_metadata) + size_of_metadata)], &secrets::GROUP_KEYS[0].pk_inter.0).unwrap();
-        list[4 + (i * size_of_metadata)..4 + size_of_metadata + (i * size_of_metadata)].copy_from_slice(&body[(i * size_of_metadata)..((i * size_of_metadata) + size_of_metadata)]);
-        counter += 1;
+    let count = data.len() / (size_of::<listen::InterrogateFile>() + crypto::METADATA_SIZE_PUB);
+    let mut list = [0; 8 * size_of::<listen::InterrogateFile>()];
+    let ctxt_size = size_of::<listen::InterrogateFile>() + crypto::METADATA_SIZE_PUB;
+    for i in 0..count {
+        let ctxt_offset: usize = i * ctxt_size;
+        let ptxt = crypto::decrypt_payload_pub_combined(&mut data[ctxt_offset..ctxt_offset + ctxt_size], &secrets::GROUP_KEYS[0].pk_inter.0).unwrap();
+        
+        let file_data: &[u8; size_of::<listen::InterrogateFile>()] = ptxt[..size_of::<listen::InterrogateFile>()].try_into().unwrap();
+        let list_offset = i * size_of::<listen::InterrogateFile>();
+        list[list_offset..list_offset + size_of::<listen::InterrogateFile>()].copy_from_slice(file_data);
     }
-
-    list[0] = counter as u8;
-    //TODO: is this the correct port
-
-    Message::write_header_helper(Opcode::Interrogate, list.len() as u16, MessagePort::UART0);
-    Message::send_data(Opcode::Interrogate, &list, MessagePort::UART0);
+    Message::send_data(Opcode::Interrogate, &list, MessagePort::UART0).unwrap();
 
     // send interrogate request alongside permissions
     // - (group id 1, group id 2 ... associated data = interrogate)
@@ -397,9 +316,7 @@ fn handle_interrogate(ctx: &mut Context) {
 fn handle_listen(ctx: &mut Context) {
     Message::write_header_helper(Opcode::Listen, 0, MessagePort::UART0);
 
-    let uart = uart1();
-    let opcode = uart.read_byte().unwrap();
-    let mut body = [0; 8];
-    let _ = uart.read_bytes(&mut body).unwrap();
-    listen::recv(ctx, opcode.try_into().unwrap(), &mut body);
+    let mut msg = Message::read(MessagePort::UART1).unwrap();
+
+    listen::recv(ctx, msg.opcode, &mut msg.body).unwrap();
 }

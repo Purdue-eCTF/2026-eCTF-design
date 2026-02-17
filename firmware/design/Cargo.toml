@@ -12,8 +12,8 @@ digest = "0.10.7"
 
 cortex-m = "0.7.7"
 cortex-m-rt = { version = "0.7.2", features = [
-    "set-sp",
-    "set-vtor",
+    # "set-sp",
+    # "set-vtor",
     "device",
 ], default-features = false }
 mspm0l222x-hal = { git = "https://github.com/Purdue-eCTF/mspm0l222x-hal.git", features = [
