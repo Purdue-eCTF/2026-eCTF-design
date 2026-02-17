@@ -18,7 +18,7 @@ use mspm0l222x_hal::{
     Peripherals, flash::FlashController, iomux::Iomux, led::Led, trng::Trng, uart::{Uart0, println, uart1}
 };
 
-use crate::{crypto::{decrypt_payload_pub, decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, message::{Message, Opcode}, secrets::SymmetricKey, view::{DATA_OFFSET, MutFile, NAME_OFFSET}};
+use crate::{crypto::{decrypt_payload_pub, decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric, NONCE_SIZE, TAG_SIZE}, message::{Message, Opcode}, secrets::{SymmetricKey}, view::{DATA_OFFSET, MutFile, NAME_OFFSET}};
 
 unsafe extern "C" {
     static _stack_start: u8;
@@ -207,14 +207,14 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     let pk_sign = VerifyingKey::from_bytes(&group_key.pk_sign.0).unwrap();
     fv.verify_signature(&pk_sign).unwrap();
 
-    let mut buf: [u8; view::MAX_FILE_SIZE] = [0u8; _];
+    let mut buf: [u8; MAX_FILE_SIZE] = [0u8; _];
     let _ = fv.copy_to_buf(&mut buf).unwrap();
 
-    crypto::decrypt_payload_pub_combined(&mut buf[view::DATA_OFFSET..MAX_FILE_SIZE - 1], &group_key.sk_read.0).unwrap();
+    crypto::decrypt_payload_pub_combined(&mut buf[DATA_OFFSET..MAX_FILE_SIZE - 1], &group_key.sk_read.0).unwrap();
 
     let data = fv.data;
 
-    let total_length = view::NAME_SIZE + data.len();
+    let total_length = NAME_SIZE + data.len();
     let mut body = [0u8; message::MAX_BODY_SIZE];
     // don't use write here because the file not fit in the message body
     // write a chunk at a time instead
@@ -223,12 +223,12 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     let eat = if total_length <= message::CHUNK_SIZE {
         data.len()
     } else {
-        message::CHUNK_SIZE - view::NAME_SIZE
+        message::CHUNK_SIZE - NAME_SIZE
     };
 
     let (initial, rest) = data.split_at(eat);
-    body[..view::NAME_SIZE].copy_from_slice(fv.name);
-    body[view::NAME_SIZE..view::NAME_SIZE + eat].copy_from_slice(initial);
+    body[..NAME_SIZE].copy_from_slice(fv.name);
+    body[NAME_SIZE..NAME_SIZE + eat].copy_from_slice(initial);
     message::Message::write_block(&body[..message::CHUNK_SIZE]).unwrap();
 
     for chunk in rest.chunks(message::CHUNK_SIZE) {
@@ -274,7 +274,7 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
 
     let data_len = u16::from_le_bytes(length.try_into().unwrap()) as usize;
 
-    let mut buf: [u8; MAX_FILE_SIZE] = [0u8; MAX_FILE_SIZE];
+    let mut buf: [u8; NONCE_SIZE + MAX_FILE_SIZE + TAG_SIZE] = [0u8; NONCE_SIZE + MAX_FILE_SIZE + TAG_SIZE];
     {
         let cv = MutFileView::new(&mut buf).unwrap();
         cv.name.copy_from_slice(name);
@@ -282,11 +282,11 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
         cv.uuid.copy_from_slice(uuid);
     }
 
-    let sig: Signature = sk_sign.sign(&buf[view::NAME_OFFSET..view::DATA_OFFSET]);
+    let sig: Signature = sk_sign.sign(&buf[NAME_OFFSET..DATA_OFFSET]);
     buf[..SIGNATURE_SIZE].copy_from_slice(&sig.to_bytes());
 
     let first = core::cmp::min(data_len, data.len());
-    let mut offset = view::DATA_OFFSET;
+    let mut offset = DATA_OFFSET;
     buf[offset..offset + first].copy_from_slice(&data[..first]);
     offset += first;
 
@@ -299,7 +299,7 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
 
     buf[offset..MAX_FILE_SIZE - 1].fill(0);
     buf[MAX_FILE_SIZE - 1] = 1;
-    encrypt_payload_pub(&mut buf[view::DATA_OFFSET..view::DATA_OFFSET + data_len], &pk_read).unwrap();
+    encrypt_payload_pub(&mut buf[DATA_OFFSET..DATA_OFFSET + data_len], &mut buf[0..DATA_OFFSET], &mut , &pk_read).unwrap();
     
     let new_fat = FatEntry {
         uuid: uuid.try_into().unwrap(),
