@@ -18,7 +18,9 @@ use mspm0l222x_hal::{
     Peripherals, flash::FlashController, iomux::Iomux, led::Led, trng::Trng, uart::{Uart0, println, uart1}
 };
 
-use crate::{crypto::{decrypt_payload_pub, decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric}, message::{Message, Opcode}, secrets::SymmetricKey, view::{DATA_OFFSET, MutFile, NAME_OFFSET}};
+use crate::{crypto::{decrypt_payload_pub, decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric, NONCE_SIZE, TAG_SIZE}, message::{Message, Opcode}, secrets::{SymmetricKey}, view::{DATA_OFFSET, MutFile, NAME_OFFSET}};
+
+use message::MessagePort;
 
 unsafe extern "C" {
     static _stack_start: u8;
@@ -116,7 +118,7 @@ fn main() -> ! {
     println!("{:?}", &ctx.files[0].contents[0..10]);
 
     loop {
-        let msg = Message::read().unwrap();
+        let msg = Message::read(MessagePort::UART0).unwrap();
 
         sensitive!(ctx, {
             match msg.opcode {
@@ -168,7 +170,8 @@ fn handle_list(ctx: &mut Context) {
     }
     body[0..4].copy_from_slice(&(counter as u32).to_le_bytes());
 
-    Message::send_data(Opcode::List, &body).unwrap();
+    // PRAYING THIS WORKS (TODO does result need to be used)
+    Message::send_data(Opcode::List, &body, MessagePort::UART0).unwrap();
     
     // (does metadata need to be formatted??)
 }
@@ -202,27 +205,27 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     fv.verify_signature(&key).unwrap();
 
     let mut buf: [u8; view::MAX_FILE_SIZE] = [0u8; _];
-    fv.copy_to_buf(&mut buf).unwrap();
+    let _ = fv.copy_to_buf(&mut buf).unwrap();
 
-    crypto::decrypt_payload_pub_combined(&mut buf[view::DATA_OFFSET..MAX_FILE_SIZE - 1], &group_key.sk_read.0).unwrap();
+    crypto::decrypt_payload_pub_combined(&mut buf[DATA_OFFSET..MAX_FILE_SIZE - 1], &group_key.sk_read.0).unwrap();
 
     let data = fv.data;
 
     let total_length = view::NAME_SIZE + data.len();
     let mut body = [0u8; message::CHUNK_SIZE];
 
-    message::Message::write_header_helper(Opcode::Read, total_length.try_into().unwrap());
+    message::Message::write_header_helper(Opcode::Read, total_length.try_into().unwrap(), MessagePort::UART0);
 
     let eat = if total_length <= message::CHUNK_SIZE {
         data.len()
     } else {
-        message::CHUNK_SIZE - view::NAME_SIZE
+        message::CHUNK_SIZE - NAME_SIZE
     };
 
     let (initial, rest) = data.split_at(eat);
     body[..view::NAME_SIZE].copy_from_slice(fv.name);
     body[view::NAME_SIZE..view::NAME_SIZE + eat].copy_from_slice(initial);
-    message::Message::write_block(&body[..message::CHUNK_SIZE]).unwrap();
+    message::Message::write_block(&body[..message::CHUNK_SIZE], MessagePort::UART0).unwrap();
 
     for chunk in rest.chunks(message::CHUNK_SIZE) {
         //TODO: not sure if this is possible but just in case
@@ -231,7 +234,7 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
             break;
         }
         body[..cl].copy_from_slice(chunk);
-        message::Message::write_block(&body[..cl]).unwrap();
+        message::Message::write_block(&body[..cl], MessagePort::UART0).unwrap();
     }
 }
 
@@ -267,7 +270,7 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
 
     let data_len = u16::from_le_bytes(length.try_into().unwrap()) as usize;
 
-    let mut buf: [u8; MAX_FILE_SIZE] = [0u8; MAX_FILE_SIZE];
+    let mut buf: [u8; NONCE_SIZE + MAX_FILE_SIZE + TAG_SIZE] = [0u8; NONCE_SIZE + MAX_FILE_SIZE + TAG_SIZE];
     {
         let cv = MutFileView::new(&mut buf).unwrap();
         cv.name.copy_from_slice(name);
@@ -275,16 +278,16 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
         cv.uuid.copy_from_slice(uuid);
     }
 
-    let sig: Signature = sk_sign.sign(&buf[view::NAME_OFFSET..view::DATA_OFFSET]);
+    let sig: Signature = sk_sign.sign(&buf[NAME_OFFSET..DATA_OFFSET]);
     buf[..SIGNATURE_SIZE].copy_from_slice(&sig.to_bytes());
 
     let first = core::cmp::min(data_len, data.len());
-    let mut offset = view::DATA_OFFSET;
+    let mut offset = DATA_OFFSET;
     buf[offset..offset + first].copy_from_slice(&data[..first]);
     offset += first;
 
     while offset < data_len {
-        let block = Message::read_block().unwrap();
+        let block = Message::read_block(MessagePort::UART0).unwrap();
         let take = core::cmp::min(data_len - offset, block.len());
         buf[offset..offset + take].copy_from_slice(&block[..take]);
         offset += take;
@@ -292,7 +295,8 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
 
     buf[offset..MAX_FILE_SIZE - 1].fill(0);
     buf[MAX_FILE_SIZE - 1] = 1;
-    encrypt_payload_pub(&mut buf[view::DATA_OFFSET..view::DATA_OFFSET + data_len], &pk_read).unwrap();
+    // TODO
+    encrypt_payload_pub(&mut buf[DATA_OFFSET..DATA_OFFSET + data_len], &mut buf[0..DATA_OFFSET], &mut , &pk_read).unwrap();
     
     let new_fat = FatEntry {
         uuid: uuid.try_into().unwrap(),
@@ -347,9 +351,10 @@ fn handle_interrogate(ctx: &mut Context) {
     let payload = encrypt_payload_symmetric(&mut groups, &secrets::INTERROGATE_KEYS[0].0, &[Opcode::Interrogate as u8]).unwrap();
 
     // TODO replace with uart1 io. pretend Interrogate_retrieve exists pls
-    let request= Message::send_data(Opcode::Interrogate, &payload).unwrap();
+    // TODO, does this solve the above todo
+    let request= Message::send_data(Opcode::Interrogate, &payload, MessagePort::UART1).unwrap();
 
-    let mut info = Message::read().unwrap();
+    let mut info = Message::read(MessagePort::UART1).unwrap();
 
     if info.opcode != Opcode::Interrogate {
         panic!("Incorrect Opcode for Retrieve Interrogate");
@@ -363,14 +368,16 @@ fn handle_interrogate(ctx: &mut Context) {
     let mut list: [u8; 4 + 1 + NAME_SIZE + 2 + 1] = [0u8; 4 + 1 + NAME_SIZE + 2 + 1]; 
     let mut counter: usize = 0;
 
+    // TODO
     for i in (0..body.len()).step_by(size_of_metadata) {
-        crypto::decrypt_payload_pub_combined(&mut body[(i * size_of_metadata)..((i * size_of_metadata) + size_of_metadata)], &secrets::GROUP_KEYS[0].pk_inter.0);
+        crypto::decrypt_payload_pub_combined(&mut body[(i * size_of_metadata)..((i * size_of_metadata) + size_of_metadata)], &secrets::GROUP_KEYS[0].pk_inter.0).unwrap();
         list[4 + (i * size_of_metadata)..4 + size_of_metadata + (i * size_of_metadata)].copy_from_slice(&body[(i * size_of_metadata)..((i * size_of_metadata) + size_of_metadata)]);
         counter += 1;
     }
 
     list[0] = counter as u8;
-    Message::send_data(Opcode::Interrogate, &list);
+    //TODO: is this the correct port
+    Message::send_data(Opcode::Interrogate, &list, MessagePort::UART0);
 
     // send interrogate request alongside permissions
     // - (group id 1, group id 2 ... associated data = interrogate)

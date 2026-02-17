@@ -5,8 +5,8 @@ use mspm0l222x_hal::trng;
 use thiserror::Error;
 use x25519_dalek::{PublicKey, StaticSecret};
 
-const NONCE_SIZE: usize = 24;
-const TAG_SIZE: usize = 16;
+pub const NONCE_SIZE: usize = 24;
+pub const TAG_SIZE: usize = 16;
 const GN_SIZE: usize = 32;
 
 // TODO: Tests

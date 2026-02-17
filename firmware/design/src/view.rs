@@ -1,11 +1,13 @@
 use ed25519_dalek::{VerifyingKey, Verifier, Signature};
 
+use crate::{crypto::{NONCE_SIZE, TAG_SIZE}};
+
 pub const NAME_SIZE: usize = 32;
 pub const GID_SIZE: usize = 2;
 pub const UUID_SIZE: usize = 16;
 pub const MAX_FILE_SIZE: usize = 8192;
 pub const SIGNATURE_SIZE: usize = 64;
-pub const MAX_CONTENT_SIZE: usize = MAX_FILE_SIZE - SIGNATURE_SIZE - NAME_SIZE - GID_SIZE - UUID_SIZE - 1;
+pub const MAX_CONTENT_SIZE: usize = MAX_FILE_SIZE - NONCE_SIZE - SIGNATURE_SIZE - NAME_SIZE - GID_SIZE - UUID_SIZE - TAG_SIZE - 1;
 
 // TODO: Unsure if MAX_FILE_SIZE is actually the max because file is stored as
 // GN || ct which is why I'm adding 128 to be safe
@@ -22,24 +24,30 @@ pub enum ConcatError {
 }
 
 pub struct MutFileView<'a> {
+    pub nonce: &'a mut [u8; NONCE_SIZE],
     pub signature: &'a mut [u8; SIGNATURE_SIZE],
     pub name: &'a mut [u8; NAME_SIZE],
     pub group: &'a mut [u8; 2],
     pub uuid: &'a mut [u8; UUID_SIZE],
     pub data: &'a mut [u8],
+    pub tag: &'a mut [u8; TAG_SIZE],
 }
 
 impl<'a> MutFileView<'a> {
     pub fn new(underlying: &'a mut [u8]) -> Result<Self, ConcatError> {
-        let (signature, rest) = underlying.split_at_mut(SIGNATURE_SIZE);
+        let (nonce, rest) = underlying.split_at_mut(NONCE_SIZE);
+        let (signature, rest) = rest.split_at_mut(SIGNATURE_SIZE);
         let (name, rest) = rest.split_at_mut(NAME_SIZE);
         let (group, rest) = rest.split_at_mut(GID_SIZE);
         let (uuid, rest) = rest.split_at_mut(UUID_SIZE);
+        let (tag, rest) = rest.split_at_mut(TAG_SIZE);
         Ok(Self {
+            nonce: nonce.try_into().unwrap(),
             signature: signature.try_into().unwrap(),
             name: name.try_into().unwrap(),
             group: group.try_into().unwrap(),
             uuid: uuid.try_into().unwrap(),
+            tag: tag.try_into().unwrap(),
             data: rest,
         })
     }
