@@ -96,6 +96,7 @@ fn handle_list(ctx: &mut Context) {
     // set number of files listed
     body[0..4].copy_from_slice(&(counter as u32).to_le_bytes());
 
+    // return data without the extra space allocated in the body buffer
     let actual_body = &body[..4 + counter * METADATA_SIZE];
     Message::write_header_helper(Opcode::List, actual_body.len() as u16, MessagePort::UART0);
     Message::send_data(Opcode::List, actual_body, MessagePort::UART0).unwrap();
@@ -111,6 +112,7 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
         panic!()
     }
 
+    // retrieve pin from message (TODO is pin for sure in first six bytes of msg?)
     let mut pin = [0u8; 6];
     pin.copy_from_slice(&msg.body[0..6]);
 
@@ -124,6 +126,7 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     let file_length = ctx.fat.as_ref().entries[slot].length as usize;
     let file = ctx.files[slot].as_ref();
 
+    // die if there isn't a file here
     if !file.is_full() {
         panic!()
     }
@@ -134,10 +137,11 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     let key = secrets::GROUP_KEYS[file.metadata.group as usize].pk_sign.0;
     crypto::verify_signature(file, &key).unwrap();
 
+    // set file to buf, which is initialized at max file size
     let mut buf = [0; file::CONTENT_SIZE];
     buf[..file_length].copy_from_slice(&file.contents[..file_length]);
 
-    // decrypt the file
+    // decrypt the file into buffer
     crypto::decrypt_payload_pub(&mut buf[..file_length], &file.gn, &file.nonce, &file.tag, &group_key.sk_read.0).unwrap();
 
     let total_length = file::NAME_SIZE + file_length;
@@ -178,6 +182,7 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
         panic!()
     }
 
+    // split message into meaningful variables
     let (pin_bytes, rest) = msg.body.split_at(6);
     let (slot, rest) = rest.split_at(1);
     let (group_id, rest) = rest.split_at(file::GID_SIZE);
@@ -185,7 +190,7 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
     let (uuid, rest) = rest.split_at(file::UUID_SIZE);
     let (length, data) = rest.split_at(2);
 
-
+    // check if the data from message is larger than allocated data/content area in fat
     let data_len = usize::from_le_bytes(length.try_into().unwrap());
     if data_len > file::CONTENT_SIZE {
         panic!()
@@ -199,12 +204,16 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
         panic!()
     }
 
+    // retrieve signing and read encryption keys with pin
     let pin = pin_bytes.try_into().unwrap();
     let group_key = secrets::get_group_keys_from_pin(group, &pin).unwrap();
     let pk_read = group_key.pk_read.0;
 
+    // generate empty file variable
     let mut buf: [u8; size_of::<File>()] = [0u8; size_of::<File>()];
     let file: &mut File = bytemuck::from_bytes_mut(&mut buf);
+
+    // set file metadata
     let metadata= &mut file.metadata;
     metadata.name.copy_from_slice(name);
     metadata.group = group;
