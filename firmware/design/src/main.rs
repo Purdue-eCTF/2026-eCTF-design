@@ -157,13 +157,13 @@ fn handle_read(ctx: &mut Context, msg: &[u8]) {
 
 /// Write a file received from host into flash. The file should be encrypted
 /// and signed.
-fn handle_write(ctx: &mut Context, msg: &Message) {
-    if msg.length < 59 {
+fn handle_write(ctx: &mut Context, msg: &[u8]) {
+    if msg.len() < 59 {
         panic!()
     }
 
     // split message into meaningful variables
-    let (pin_bytes, rest) = msg.body.split_at(6);
+    let (pin_bytes, rest) = msg.split_at(6);
     let (slot, rest) = rest.split_at(1);
     let (group_id, rest) = rest.split_at(file::GID_SIZE);
     let (name, rest) = rest.split_at(file::NAME_SIZE);
@@ -234,17 +234,17 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
     Message::write_header(Opcode::Write, 0, MessagePort::UART0);
 }
 
-fn handle_receive(_ctx: &mut Context, msg: &Message) {
-    if msg.length != 8 {
+fn handle_receive(_ctx: &mut Context, msg: &[u8]) {
+    if msg.len() != 8 {
         panic!()
     }
 
     let mut pin = [0u8; 6];
-    pin.copy_from_slice(&msg.body[0..6]);
+    pin.copy_from_slice(&msg[0..6]);
 
     let pin = pin;
-    let read_slot = msg.body[6];
-    let write_slot = msg.body[7];
+    let read_slot = msg[6];
+    let write_slot = msg[7];
 
     let group = 0u16;
     let group_keys = secrets::get_group_keys_from_pin(group, &pin).unwrap();
@@ -258,12 +258,12 @@ fn handle_receive(_ctx: &mut Context, msg: &Message) {
 /// has permissions for. Since the entire list of files is encrypted
 /// symmetrically and each file's metadata encrypted asymmetrically, all this
 /// will be decrypted before being sent back to host.
-fn handle_interrogate(_ctx: &mut Context, msg: &Message) {
+fn handle_interrogate(_ctx: &mut Context, msg: &[u8]) {
     // Command contains just the PIN
-    if msg.length != 6 {
+    if msg.len() != 6 {
         panic!()
     }
-    let pin: &[u8; 6] = msg.body[..6].try_into().unwrap();
+    let pin: &[u8; 6] = msg[..6].try_into().unwrap();
 
     // encrypt groups being sent over to other board
     let mut groups: [u16; secrets::GROUP_KEYS.len()] = [0u16; secrets::GROUP_KEYS.len()];
@@ -297,8 +297,9 @@ fn handle_interrogate(_ctx: &mut Context, msg: &Message) {
     payload[group_count * 2..].copy_from_slice(bytemuck::bytes_of(&sm));
 
     // interrogate the other HSM and receive response
-    Message::send_data(Opcode::Interrogate, &payload[..actual_payload_size], MessagePort::UART1).unwrap();
-    let mut info = Message::read(MessagePort::UART1).unwrap();
+    Message::write(&payload[..actual_payload_size], Opcode::Interrogate, MessagePort::UART1).unwrap();
+    let mut info_body = [0u8; MAX_BODY_SIZE];
+    let mut info = Message::read(MessagePort::UART1, &mut info_body).unwrap();
 
     if info.opcode != Opcode::Interrogate {
         panic!("Incorrect Opcode for Retrieve Interrogate");
@@ -316,10 +317,11 @@ fn handle_interrogate(_ctx: &mut Context, msg: &Message) {
     // )
     // EncFilei = group || Enc_pk_inter(slot || name)
 
-    let offset = info.body.len() - size_of::<crypto::SymmetricMetadata>();
+    //TODO, someone check if the change I made is correct
+    let offset = info_body.len() - size_of::<crypto::SymmetricMetadata>();
 
     // data: concatenated, encrypted, InterrogateFile structs
-    let (data, rest) = info.body.split_at_mut(offset);
+    let (data, rest) = info_body.split_at_mut(offset);
 
     // sm: struct containing nonce and tag from encrypion with I1
     let sm: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(rest);
@@ -372,7 +374,7 @@ fn handle_interrogate(_ctx: &mut Context, msg: &Message) {
     }
 
     let actual_message_size = 4 + count * size_of::<listen::InterrogateFile>();
-    Message::send_data(Opcode::Interrogate, &response[..actual_message_size], MessagePort::UART0).unwrap();
+    Message::write(&response[..actual_message_size], Opcode::Interrogate, MessagePort::UART0).unwrap();
 
 }
 
@@ -380,6 +382,7 @@ fn handle_interrogate(_ctx: &mut Context, msg: &Message) {
 /// process before sending back the corresponding data.
 fn handle_listen(ctx: &mut Context) {
     Message::write_header(Opcode::Listen, 0, MessagePort::UART0);
-    let mut msg = Message::read(MessagePort::UART1).unwrap();
-    listen::recv(ctx, msg.opcode, &mut msg.body).unwrap();
+    let mut body = [0u8; MAX_BODY_SIZE];
+    let msg = Message::read(MessagePort::UART1, &mut body).unwrap();
+    listen::recv(ctx, msg.opcode, &mut body).unwrap();
 }
