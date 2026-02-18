@@ -36,7 +36,7 @@ def listen_logs(run_id):
                     print("Invalid pub message", resp)
                 else:
                     _, msg = resp
-                    print(msg.decode())
+                    print(msg.decode(), end='')
 
 
 def main():
