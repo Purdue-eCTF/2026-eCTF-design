@@ -1,40 +1,38 @@
-// TODO: automatically generate via build.rs
-const BOOT_SALT_0: [u8; 32] = [0; _];
+use crate::secrets_generated::GROUP_KEYS;
 
 #[derive(Default)]
-struct SymmetricKey([u32; 8]);
-
-struct AsymmetricKey([u32; 8]);
+pub struct SymmetricKey(pub [u8; 32]);
 
 #[derive(Default)]
-struct GroupKey {
-    group: u16,
-    sk_sign: SymmetricKey,
-    pk_sign: SymmetricKey,
-    sk_read: SymmetricKey,
-    pk_read: SymmetricKey,
-    sk_trans: SymmetricKey,
-    pk_trans: SymmetricKey,
-    sk_inter: SymmetricKey,
-    pk_inter: SymmetricKey,
-    t0: SymmetricKey,
-    t1: SymmetricKey,
-    s0: SymmetricKey,
-    s1: SymmetricKey,
+pub struct GroupKey {
+    pub group: u16,
+    pub sk_sign: SymmetricKey,
+    pub pk_sign: SymmetricKey,
+    pub sk_read: SymmetricKey,
+    pub pk_read: SymmetricKey,
+    pub sk_trans: SymmetricKey, // TODO: why is this unused?
+    pub pk_trans: SymmetricKey,
+    pub sk_inter: SymmetricKey,
+    pub pk_inter: SymmetricKey,
 }
 
-const GROUP_KEYS: [GroupKey; 1] = [GroupKey {
-    group: 0x0000,
-    sk_sign: SymmetricKey([0; _]),
-    pk_sign: SymmetricKey([0; _]),
-    sk_read: SymmetricKey([0; _]),
-    pk_read: SymmetricKey([0; _]),
-    sk_trans: SymmetricKey([0; _]),
-    pk_trans: SymmetricKey([0; _]),
-    sk_inter: SymmetricKey([0; _]),
-    pk_inter: SymmetricKey([0; _]),
-    t0: SymmetricKey([0; _]),
-    t1: SymmetricKey([0; _]),
-    s0: SymmetricKey([0; _]),
-    s1: SymmetricKey([0; _]),
-}];
+// TODO: Placeholder function until using the pin to decrypt keys is implemented
+pub fn get_group_keys_from_pin(group: u16, _pin: &[u8; 6]) -> Result<&'static GroupKey, ()> {
+    let mut r = Err(());
+    for key in GROUP_KEYS.iter() {
+        if key.group == group {
+            r = Ok(key);
+        }
+    }
+    r
+}
+
+pub fn get_group_keys(group: u16) -> Result<&'static GroupKey, ()> {
+    let mut r = Err(());
+    for key in GROUP_KEYS.iter() {
+        if key.group == group {
+            r = Ok(key);
+        }
+    }
+    r
+}

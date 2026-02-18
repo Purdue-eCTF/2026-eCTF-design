@@ -1,16 +1,69 @@
 use core::{fmt, ops::Index};
 
-use bytemuck::NoUninit;
+use bytemuck::{NoUninit, Pod, Zeroable};
 
 use crate::util;
 
+pub const CONTENT_SIZE: usize = 8192;
+pub const UUID_SIZE: usize = 16;
+pub const NAME_SIZE: usize = 32;
+pub const FILE_METADATA_SIZE: usize = size_of::<File>() - CONTENT_SIZE - 6;
+
+#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[repr(transparent)]
+pub struct FileName(pub [u8; NAME_SIZE]);
+
+#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[repr(transparent)]
+pub struct UUID(pub [u8; UUID_SIZE]);
+
+#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[repr(C, packed)]
+pub struct FileMeta {
+    pub name: FileName,
+    pub group: u16,
+    pub slot: u8,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ProtectedFileData {
+    pub nonce: [u8; 24],
+    pub tag: [u8; 16],
+    pub gn: [u8; 32],
+    pub name: FileName,
+    pub uuid: UUID,
+    pub group: u16,
+    pub contents: [u8; CONTENT_SIZE],
+    _pad: [u8; 6],
+}
+
+impl ProtectedFileData {
+    pub const fn empty() -> Self {
+        Self {
+            nonce: [0; 24],
+            tag: [0; 16],
+            gn: [0; 32],
+            name: FileName([0; NAME_SIZE]),
+            uuid: UUID([0; UUID_SIZE]),
+            group: 0,
+            contents: [0; CONTENT_SIZE],
+            _pad: [0; 6],
+        }
+    }
+}
+unsafe impl Zeroable for ProtectedFileData {
+    fn zeroed() -> Self {
+        Self::empty()
+    }
+}
+unsafe impl Pod for ProtectedFileData {}
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct File {
-    pub contents: [u8; 8192],
-    pub signature: [u8; 32],
-    pub nonce: [u8; 32],
     pub state: u64,
+    pub signature: [u8; 64],
+    pub protected: ProtectedFileData,
 }
 
 impl File {
@@ -18,17 +71,37 @@ impl File {
     pub const FULL: u64 = 0xc0aa73e0c260426e;
     const fn empty() -> Self {
         Self {
-            contents: [0xff; _],
-            signature: [0; _],
             state: File::EMPTY,
-            nonce: [0; _],
+            signature: [0; _],
+            protected: ProtectedFileData::empty(),
         }
     }
     pub(crate) fn is_full(&self) -> bool {
         self.state == File::FULL
     }
+    pub(crate) fn new() -> Self {
+        Self {
+            state: File::EMPTY,
+            signature: [0; _],
+            protected: ProtectedFileData {
+                nonce: [0; _],
+                tag: [0; _],
+                gn: [0; _],
+                name: FileName([0; _]),
+                uuid: UUID([0; _]),
+                group: 0,
+                contents: [0; _],
+                _pad: [0; _],
+            },
+        }
+    }
 }
-unsafe impl NoUninit for File {} // Generic arrays not supported by derive macro
+unsafe impl Zeroable for File {
+    fn zeroed() -> Self {
+        Self::empty()
+    }
+}
+unsafe impl Pod for File {}
 
 #[unsafe(link_section = ".files.default")]
 #[unsafe(no_mangle)]
@@ -46,7 +119,7 @@ pub static __FILES: [(File, u64, [u8; (9 * 1024) - size_of::<File>() - 8]); 8] =
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct FatEntry {
-    pub uuid: [u8; 16],
+    pub uuid: UUID,
     pub length: u16,
     pub padding: u16,
     pub addr: u32,

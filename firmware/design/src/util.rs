@@ -14,7 +14,7 @@ use mspm0l222x_hal::{
 
 use crate::{
     file::{FatTable, File},
-    message::{MAX_BODY_SIZE, Message, Opcode},
+    message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
 };
 
 // TODO: glitching prevention or similar
@@ -61,13 +61,13 @@ impl<T: NoUninit> FlashEntry<T> {
     pub(crate) unsafe fn new(location: u32) -> Self {
         // Flash entry must be sector-aligned
         assert!(
-            location % (FLASH_PAGE_SIZE as u32) == 0,
+            location.is_multiple_of(FLASH_PAGE_SIZE as u32),
             "location {} is not page-aligned",
             location
         );
         // Type must be 8-byte aligned
         const {
-            assert!(size_of::<T>() % 8 == 0);
+            assert!(size_of::<T>().is_multiple_of(8));
         }
 
         Self {
@@ -168,7 +168,7 @@ impl Context {
         let files = unsafe {
             [
                 FlashEntry::new(((&_files as *const u8).add(0 * file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(1 * file_size)) as u32),
+                FlashEntry::new(((&_files as *const u8).add(file_size)) as u32),
                 FlashEntry::new(((&_files as *const u8).add(2 * file_size)) as u32),
                 FlashEntry::new(((&_files as *const u8).add(3 * file_size)) as u32),
                 FlashEntry::new(((&_files as *const u8).add(4 * file_size)) as u32),
@@ -198,7 +198,7 @@ impl UartWriter {
 impl UartWriter {
     fn flush(&mut self) {
         if self.1 != 0 {
-            let _ = Message::send_data(Opcode::Debug, &self.0[..self.1]);
+            let _ = Message::write(&self.0[..self.1], Opcode::Debug, MessagePort::UART0);
             self.1 = 0;
         }
     }
@@ -218,7 +218,7 @@ impl Write for UartWriter {
 
             for chunk in s[remaining..].as_bytes().chunks(MAX_BODY_SIZE) {
                 if chunk.len() >= MAX_BODY_SIZE {
-                    let _ = Message::send_data(Opcode::Debug, &chunk);
+                    let _ = Message::write(chunk, Opcode::Debug, MessagePort::UART0);
                 } else {
                     self.1 = chunk.len();
                     self.0[..chunk.len()].copy_from_slice(chunk);
