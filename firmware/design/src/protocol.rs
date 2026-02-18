@@ -104,6 +104,3 @@ pub fn initiate_transfer(slot: u8, group: u16) -> Result<(), ProtocolError> {
 pub const TRANSFER_RECEIVE_MAX_LENGTH: usize =
     size_of::<File>() + size_of::<PubKeyMetadata>() + size_of::<SymmetricMetadata>();
 
-pub fn read_transfer(buf: &mut [u8; TRANSFER_RECEIVE_MAX_LENGTH]) -> Result<(), ProtocolError> {
-    Ok(())
-}

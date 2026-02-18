@@ -180,10 +180,7 @@ fn handle_transfer<'a>(ctx: &mut Context, body: &'a mut [u8]) -> Result<(), List
 
     payload_end += size_of::<crypto::SymmetricMetadata>();
 
-    Message::write_header(Opcode::Receive, payload_end.try_into().unwrap(), MessagePort::UART1);
-    for chunk in payload[..payload_end].chunks(message::CHUNK_SIZE) {
-        message::Message::write_block(chunk, MessagePort::UART1).unwrap();
-    }
+    Message::write(&payload[..payload_end], Opcode::Receive, MessagePort::UART1).unwrap();
 
     Ok(())
 }

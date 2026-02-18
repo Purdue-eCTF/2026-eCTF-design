@@ -16,7 +16,7 @@ use mspm0l222x_hal::Peripherals;
 use util::*;
 
 use crate::{
-    crypto::encrypt_payload_pub, file::{FatEntry, FatTable, File}, message::{MAX_BODY_SIZE, Message, MessagePort, Opcode}
+    crypto::{PubKeyMetadata, SymmetricMetadata, decrypt_payload_pub, decrypt_payload_symmetric, encrypt_payload_pub, verify_signature}, file::{FatEntry, FatTable, File}, message::{MAX_BODY_SIZE, Message, MessagePort, Opcode}, secrets::TRANSFER_KEYS
 };
 
 const METADATA_SIZE: usize = 1 + file::NAME_SIZE + 2 + 1;
@@ -234,7 +234,7 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
     Message::write_header(Opcode::Write, 0, MessagePort::UART0);
 }
 
-fn handle_receive(_ctx: &mut Context, msg: &[u8]) {
+fn handle_receive(ctx: &mut Context, msg: &[u8]) {
     if msg.len() != 8 {
         panic!()
     }
@@ -247,11 +247,46 @@ fn handle_receive(_ctx: &mut Context, msg: &[u8]) {
     let write_slot = msg[7];
 
     let group = 0u16;
-    let group_keys = secrets::get_group_keys_from_pin(group, &pin).unwrap();
+    let group_key = secrets::get_group_keys_from_pin(group, &pin).unwrap();
 
     protocol::initiate_transfer(read_slot, group).unwrap();
+    let mut buf = [0u8; protocol::TRANSFER_RECEIVE_MAX_LENGTH];
+    let response = Message::read(MessagePort::UART1, &mut buf).unwrap();
+    let data = &mut buf[..response.length as usize];
 
-    todo!()
+    let (outer, skm_bytes) = data.split_at_mut(data.len() - size_of::<SymmetricMetadata>());
+    let sm : &SymmetricMetadata = bytemuck::from_bytes(&skm_bytes);
+    let t1 = TRANSFER_KEYS[1].0;
+    decrypt_payload_symmetric(outer, &sm.nonce, &sm.tag, &t1, &[Opcode::Receive.into()]).unwrap();
+
+    let (inner, pkm_bytes) = outer.split_at_mut(outer.len() - size_of::<PubKeyMetadata>());
+    let pkm : &PubKeyMetadata = bytemuck::from_bytes(&pkm_bytes);
+    decrypt_payload_pub(inner, &pkm.gn, &pkm.nonce, &pkm.tag, &group_key.pk_trans.0).unwrap();
+
+    let file_bytes = inner;
+    //TODO: Is this correct? File has a fixed length but the sent file has variable length
+    let file : &File = bytemuck::from_bytes(&file_bytes);
+    verify_signature(file, &group_key.pk_sign.0).unwrap();
+
+    //Copied from handle_write
+    //TODO: How to get length? May need to add something in th eprotocol for this
+    let new_fat = FatEntry {
+        uuid: file.protected.uuid,
+        length: file::CONTENT_SIZE.try_into().unwrap(),
+        padding: ctx.fat.as_ref().entries[write_slot as usize].padding, // what is this?
+        addr: ctx.fat.as_ref().entries[write_slot as usize].addr,
+    };
+
+    // TODO: just write the one fat entry
+    unsafe {
+        ctx.files[write_slot as usize].set(file).unwrap();
+        let current = ctx.fat.as_ref();
+        let mut entries = current.entries;
+        entries[write_slot as usize] = new_fat;
+        ctx.fat.set(&FatTable { entries }).unwrap();
+    }
+
+    Message::write_header(Opcode::Receive, 0, MessagePort::UART0);
 }
 
 /// Interrogate an adjacent board for a list of files that the current board

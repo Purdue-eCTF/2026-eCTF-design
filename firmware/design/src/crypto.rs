@@ -49,6 +49,9 @@ pub enum CryptoError {
 }
 
 
+// TODO: Have these keys use a reference to the type instead of a byte array
+// so we don't accidently pass in a pubkey to a function that expects a sym_key
+// and vice versa
 pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> {
     let pk_sign = VerifyingKey::from_bytes(key).unwrap();
     let expected_signature = Signature::from_bytes(&file.signature);
