@@ -119,7 +119,7 @@ fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
     let _ = crypto::encrypt_payload_symmetric(&mut body[..body_size],  &mut sm.nonce, &mut sm.tag, &i1, &[Opcode::Interrogate.into()]).unwrap();
     
     let payload_size = body_size + size_of::<crypto::SymmetricMetadata>();
-    Message::send_data(Opcode::Interrogate, &body[..payload_size], MessagePort::UART1).unwrap();
+    Message::write(&body[..payload_size], Opcode::Interrogate, MessagePort::UART1).unwrap();
 }
 
 fn handle_transfer<'a>(ctx: &mut Context, body: &'a mut [u8]) -> Result<(), ListenError> {
@@ -180,7 +180,7 @@ fn handle_transfer<'a>(ctx: &mut Context, body: &'a mut [u8]) -> Result<(), List
 
     payload_end += size_of::<crypto::SymmetricMetadata>();
 
-    Message::write_header_helper(Opcode::Receive, payload_end.try_into().unwrap(), MessagePort::UART1);
+    Message::write_header(Opcode::Receive, payload_end.try_into().unwrap(), MessagePort::UART1);
     for chunk in payload[..payload_end].chunks(message::CHUNK_SIZE) {
         message::Message::write_block(chunk, MessagePort::UART1).unwrap();
     }

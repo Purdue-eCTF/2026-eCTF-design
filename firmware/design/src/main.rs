@@ -102,7 +102,7 @@ fn handle_list(ctx: &mut Context) {
     // return data without the extra space allocated in the body buffer
     let actual_body = &body[..4 + counter * METADATA_SIZE];
     Message::write_header(Opcode::List, actual_body.len() as u16, MessagePort::UART0);
-    Message::send_data(Opcode::List, actual_body, MessagePort::UART0).unwrap();
+    Message::write(actual_body, Opcode::List, MessagePort::UART0).unwrap();
     
     // (does metadata need to be formatted??)
 }
