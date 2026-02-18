@@ -16,7 +16,7 @@ use mspm0l222x_hal::Peripherals;
 use util::*;
 
 use crate::{
-    crypto::encrypt_payload_pub, file::{FatEntry, FatTable, File}, message::{Message, MessagePort, Opcode}
+    crypto::{encrypt_payload_pub, decrypt_payload_pub, encrypt_payload_symmetric, decrypt_payload_symmetric, sign_file, verify_signature}, file::{FatEntry, FatTable, File}, message::{Message, MessagePort, Opcode}
 };
 
 const METADATA_SIZE: usize = 1 + file::NAME_SIZE + 2 + 1;
@@ -84,7 +84,7 @@ fn handle_list(ctx: &mut Context) {
 
         // verify file signature before handling
         let key = secrets::GROUP_KEYS[file.protected.group as usize].pk_sign.0;
-        if !crypto::verify_signature(file, &key).is_ok() {
+        if !verify_signature(file, &key).is_ok() {
             continue;
         }
 
@@ -136,14 +136,14 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     let group = file.protected.group;
     let group_key = secrets::get_group_keys_from_pin(group, &pin).unwrap();
     let key = secrets::GROUP_KEYS[file.protected.group as usize].pk_sign.0;
-    crypto::verify_signature(file, &key).unwrap();
+    verify_signature(file, &key).unwrap();
 
     // set file to buf, which is initialized at max file size
     let mut buf = [0; file::CONTENT_SIZE];
     buf[..file_length].copy_from_slice(&file.protected.contents[..file_length]);
 
     // decrypt the file into buffer
-    crypto::decrypt_payload_pub(&mut buf[..file_length], &file.protected.gn, &file.protected.nonce, &file.protected.tag, &group_key.sk_read.0).unwrap();
+    decrypt_payload_pub(&mut buf[..file_length], &file.protected.gn, &file.protected.nonce, &file.protected.tag, &group_key.sk_read.0).unwrap();
 
     let total_length = file::NAME_SIZE + file_length;
     let mut body = [0u8; message::CHUNK_SIZE];
@@ -213,11 +213,12 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
     protected.group = group;
     protected.uuid.copy_from_slice(uuid); 
 
-
+    // set initial content data
     let first: usize = core::cmp::min(data_len, data.len());
     protected.contents[..first].copy_from_slice(&data[..first]);
     let mut offset = first;
 
+    // get rest of content data from host and write to contents
     while offset < data_len {
         let block = Message::read_block(MessagePort::UART0).unwrap();
         let take = core::cmp::min(data_len - offset, block.len());
@@ -225,9 +226,9 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
         offset += take;
     }
 
+    // encrypt everything
     encrypt_payload_pub(&mut protected.contents[..data_len], &mut protected.gn, &mut protected.nonce, &mut protected.tag, &pk_read).unwrap();
-
-    crypto::sign_file(file, &group_key.sk_sign.0).unwrap();
+    sign_file(file, &group_key.sk_sign.0).unwrap();
     
     let new_fat = FatEntry {
         uuid: uuid.try_into().unwrap(),
@@ -296,7 +297,7 @@ fn handle_interrogate(_ctx: &mut Context, msg: &Message) {
     let groups_size = group_count * 2;
 
     // encrypt the groups and write nonce, tag to sm
-    let _ = crypto::encrypt_payload_symmetric(&mut bytemuck::bytes_of_mut(&mut groups)[..groups_size], &mut sm.nonce, &mut sm.tag,&secrets::INTERROGATE_KEYS[0].0, &[Opcode::Interrogate as u8]).unwrap();
+    let _ = encrypt_payload_symmetric(&mut bytemuck::bytes_of_mut(&mut groups)[..groups_size], &mut sm.nonce, &mut sm.tag,&secrets::INTERROGATE_KEYS[0].0, &[Opcode::Interrogate as u8]).unwrap();
 
     // copy the encrypted groups, nonce, and tag to another buffer
     let mut payload = [0; 2 * secrets::GROUP_KEYS.len() + size_of::<crypto::SymmetricMetadata>()];
@@ -338,7 +339,7 @@ fn handle_interrogate(_ctx: &mut Context, msg: &Message) {
     // sm: struct containing nonce and tag from encrypion with I1
     let sm: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(rest);
 
-    let _ = crypto::decrypt_payload_symmetric(data, &sm.nonce, &sm.tag,  &secrets::INTERROGATE_KEYS[1].0, &[Opcode::Interrogate as u8]).unwrap();
+    let _ = decrypt_payload_symmetric(data, &sm.nonce, &sm.tag,  &secrets::INTERROGATE_KEYS[1].0, &[Opcode::Interrogate as u8]).unwrap();
     // data = (EncFile1 || PKM1) || 
     //        (EncFile2 || PKM2) ||
     //        ... || 
@@ -375,7 +376,7 @@ fn handle_interrogate(_ctx: &mut Context, msg: &Message) {
         let key = secrets::get_group_keys_from_pin(ifile.group, pin).unwrap().sk_inter.0;
 
         // decrypt the slot and filename
-        let _ = crypto::decrypt_payload_pub(bytemuck::bytes_of_mut(&mut ifile.protected), &pkm.gn, &pkm.nonce, &pkm.tag, &key).unwrap();
+        let _ = decrypt_payload_pub(bytemuck::bytes_of_mut(&mut ifile.protected), &pkm.gn, &pkm.nonce, &pkm.tag, &key).unwrap();
 
         // copy to the correct offset in list
         let list_offset = i * size_of::<listen::InterrogateFile>();
