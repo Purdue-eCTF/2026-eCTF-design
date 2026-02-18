@@ -164,7 +164,7 @@ impl Context {
 
         // Trng::init(peripherals.trng);
 
-        let file_size = core::mem::size_of::<File>();
+        let file_size = core::mem::size_of::<File>().div_ceil(FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE;
         let files = unsafe {
             [
                 FlashEntry::new(((&_files as *const u8).add(0 * file_size)) as u32),
