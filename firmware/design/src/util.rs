@@ -198,7 +198,7 @@ impl UartWriter {
 impl UartWriter {
     fn flush(&mut self) {
         if self.1 != 0 {
-            let _ = Message::send_data(Opcode::Debug, &self.0[..self.1], MessagePort::UART0);
+            let _ = Message::write(&self.0[..self.1], Opcode::Debug, MessagePort::UART0);
             self.1 = 0;
         }
     }
@@ -218,7 +218,7 @@ impl Write for UartWriter {
 
             for chunk in s[remaining..].as_bytes().chunks(MAX_BODY_SIZE) {
                 if chunk.len() >= MAX_BODY_SIZE {
-                    let _ = Message::send_data(Opcode::Debug, &chunk, MessagePort::UART0);
+                    let _ = Message::write(&chunk, Opcode::Debug, MessagePort::UART0);
                 } else {
                     self.1 = chunk.len();
                     self.0[..chunk.len()].copy_from_slice(chunk);

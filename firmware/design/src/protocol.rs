@@ -95,7 +95,7 @@ pub fn initiate_transfer(slot: u8, group: u16) -> Result<(), ProtocolError> {
     let body = bytes_of(&t0_enc);
     let body_len: u16 = body.len().try_into().unwrap();
 
-    Message::write_header_helper(Opcode::Receive, body_len, MessagePort::UART1);
+    Message::write_header(Opcode::Receive, body_len, MessagePort::UART1);
     Message::write_block(body, MessagePort::UART1).map_err(|e| ProtocolError::Message(e))?;
 
     Ok(())
