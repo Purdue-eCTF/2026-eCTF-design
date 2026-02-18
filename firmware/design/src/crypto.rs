@@ -5,7 +5,7 @@ use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
 use ed25519_dalek::{Signature, SigningKey, Signer, Verifier, VerifyingKey};
 use mspm0l222x_hal::trng;
 use thiserror::Error;
-use x25519_dalek::{PublicKey, StaticSecret};
+use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
 
 use crate::file::File;
 
@@ -73,17 +73,18 @@ pub fn decrypt_payload_pub<'a>(
     gn: &[u8; GN_SIZE],
     nonce: &'a [u8; NONCE_SIZE],
     tag: &'a [u8; TAG_SIZE],
-    key: &[u8; 32],
+    secret_key: &[u8; 32],
 ) -> Result<&'a mut [u8], CryptoError> {
-    let sk = StaticSecret::from(key.clone());
+    let sk = StaticSecret::from(secret_key.clone());
     let pubkey = PublicKey::from(gn.clone());
     let shared = sk.diffie_hellman(&pubkey).to_bytes();
 
     let mut sym_key = [0u8; 32];
     let memory = Block::new();
 
+    // TODO: params
     argon2::Argon2::default()
-        .hash_password_into_with_memory(&shared, gn, &mut sym_key, [memory])
+        .hash_password_into_with_memory(&shared, &[], &mut sym_key, [memory])
         .map_err(|_| CryptoError::KDFFailure)?;
 
     decrypt_payload_symmetric(payload, nonce, tag, &sym_key, &[])?;
@@ -94,29 +95,41 @@ pub fn decrypt_payload_pub<'a>(
 pub fn encrypt_payload_pub<'a>(
     payload: &'a mut [u8],
     gn: &'a mut [u8; GN_SIZE],
-    nonce: &'a mut [u8; 24],
-    tag: &'a mut [u8; 16],
-    key: &[u8; 32],
+    nonce: &'a mut [u8; NONCE_SIZE],
+    tag: &'a mut [u8; TAG_SIZE],
+    public_key: &[u8; 32],
 ) -> Result<&'a mut [u8], CryptoError> {
-    if key.len() < GN_SIZE {
-        return Err(CryptoError::InvalidEncryptionPayload);
+    let pk = PublicKey::from(public_key.clone());
+    let mut n_bytes = [0; 32];
+
+    let trng = trng::trng();
+    for chunk in n_bytes.chunks_exact_mut(4) {
+        chunk.copy_from_slice(&trng.word().to_le_bytes());
     }
 
-    for chunk in gn.chunks_exact_mut(4) {
-        chunk.copy_from_slice(&trng::trng().word().to_le_bytes());
-    }
-    let sk = StaticSecret::from(key.clone());
-    let pubkey = PublicKey::from(gn.clone());
-    let shared = sk.diffie_hellman(&pubkey).to_bytes();
+    let n = StaticSecret::from(n_bytes);
 
-    encrypt_payload_symmetric(payload, nonce, tag, &shared, &[])?;
+    let new_pk = PublicKey::from(&n);
+    gn.copy_from_slice(&new_pk.to_bytes());
+
+    let shared = n.diffie_hellman(&pk).to_bytes();
+
+    let memory = Block::new();
+    let mut secret = [0; 32];
+    
+    // TODO: params
+    argon2::Argon2::default()
+        .hash_password_into_with_memory(&shared, &[], &mut secret, [memory])
+        .map_err(|_| CryptoError::KDFFailure)?;
+
+    encrypt_payload_symmetric(payload, nonce, tag, &secret, &[])?;
     Ok(payload)
 }
 
 pub fn decrypt_payload_symmetric<'a>(
     payload: &'a mut [u8],
-    nonce: &'a [u8; 24],
-    tag: &'a [u8; 16],
+    nonce: &'a [u8; NONCE_SIZE],
+    tag: &'a [u8; TAG_SIZE],
     key: &[u8; 32],
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
