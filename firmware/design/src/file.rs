@@ -8,30 +8,31 @@ pub const CONTENT_SIZE: usize = 8192;
 pub const GID_SIZE: usize = 2;
 pub const UUID_SIZE: usize = 16;
 pub const NAME_SIZE: usize = 32;
+pub const FILE_METADATA_SIZE: usize = size_of::<File>() - CONTENT_SIZE - 6;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct ProtectedFileData {
-    pub contents: [u8; CONTENT_SIZE],
     pub nonce: [u8; 24],
     pub tag: [u8; 16],
     pub gn: [u8; 32],
     pub name: [u8; 32],
     pub uuid: [u8; 16],
     pub group: u16,
+    pub contents: [u8; CONTENT_SIZE],
     _pad: [u8; 6],
 }
 
 impl ProtectedFileData {
     pub const fn empty() -> Self {
         Self {
-            contents: [0; CONTENT_SIZE],
             nonce: [0; 24],
             tag: [0; 16],
             gn: [0; 32],
             name: [0; NAME_SIZE],
             uuid: [0; UUID_SIZE],
             group: 0,
+            contents: [0; CONTENT_SIZE],
             _pad: [0; 6],
         }
     }

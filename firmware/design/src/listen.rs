@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::{
-    Context, crypto, file::File, message::{self, Message, MessagePort, Opcode}, protocol::TransferM0Encrypted, secrets::{INTERROGATE_KEYS, TRANSFER_KEYS, get_group_keys}
+    Context, crypto, file::{self, File}, message::{self, Message, MessagePort, Opcode}, protocol::TransferM0Encrypted, secrets::{INTERROGATE_KEYS, TRANSFER_KEYS, get_group_keys}
 };
 use thiserror::Error;
 
@@ -147,14 +147,17 @@ fn handle_transfer<'a>(ctx: &mut Context, body: &'a mut [u8]) -> Result<(), List
         return Err(ListenError::InvalidFile);
     }
 
-    let file_size = ctx.fat.as_ref().entries[slot].length as usize;
+    let content_length = ctx.fat.as_ref().entries[slot].length as usize;
 
     // we will create M1 = Enc_T1(Enc_pk_trans(file) || PKM) || SM
     // create a payload buffer of the maximum size
     let mut payload = [0; size_of::<File>() + size_of::<crypto::PubKeyMetadata>() + size_of::<crypto::SymmetricMetadata>()];
 
-    let mut payload_end = file_size;
+    let mut payload_end = content_length;
     {
+        
+        let file_size: usize = file::FILE_METADATA_SIZE + content_length;
+
         let (file, rest) = payload.split_at_mut(file_size);
         let (pkm_bytes, _) = rest.split_at_mut(size_of::<crypto::PubKeyMetadata>());
         let pkm: &mut crypto::PubKeyMetadata = bytemuck::from_bytes_mut(pkm_bytes);

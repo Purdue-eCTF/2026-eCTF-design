@@ -16,7 +16,7 @@ use mspm0l222x_hal::Peripherals;
 use util::*;
 
 use crate::{
-    crypto::{PubKeyMetadata, SymmetricMetadata, decrypt_payload_pub, decrypt_payload_symmetric, encrypt_payload_pub, verify_signature, sign_file}, file::{FatEntry, FatTable, File}, message::{MAX_BODY_SIZE, Message, MessagePort, Opcode}, secrets::TRANSFER_KEYS
+    crypto::{PubKeyMetadata, SymmetricMetadata, decrypt_payload_pub, decrypt_payload_symmetric, encrypt_payload_pub, encrypt_payload_symmetric, sign_file, verify_signature}, file::{FatEntry, FatTable, File}, message::{MAX_BODY_SIZE, Message, MessagePort, Opcode}, secrets::TRANSFER_KEYS
 };
 
 const METADATA_SIZE: usize = 1 + file::NAME_SIZE + 2 + 1;
@@ -264,16 +264,19 @@ fn handle_receive(ctx: &mut Context, msg: &[u8]) {
     let pkm : &PubKeyMetadata = bytemuck::from_bytes(&pkm_bytes);
     decrypt_payload_pub(inner, &pkm.gn, &pkm.nonce, &pkm.tag, &group_key.pk_trans.0).unwrap();
 
-    let file_bytes = inner;
-    //TODO: Is this correct? File has a fixed length but the sent file has variable length
-    let file : &File = bytemuck::from_bytes(&file_bytes);
+    let file : &mut File = bytemuck::from_bytes_mut(inner);
+
     verify_signature(file, &group_key.pk_sign.0).unwrap();
 
-    //Copied from handle_write
-    //TODO: How to get length? May need to add something in th eprotocol for this
+    let file_size = response.length as usize - size_of::<SymmetricMetadata>() - size_of::<PubKeyMetadata>();
+    let content_length = file_size - file::FILE_METADATA_SIZE;
+
+    // May write over pkm, skm
+    file.protected.contents[content_length..].fill(0);
+    
     let new_fat = FatEntry {
         uuid: file.protected.uuid,
-        length: file::CONTENT_SIZE.try_into().unwrap(),
+        length: content_length.try_into().unwrap(),
         padding: ctx.fat.as_ref().entries[write_slot as usize].padding, // what is this?
         addr: ctx.fat.as_ref().entries[write_slot as usize].addr,
     };
@@ -335,7 +338,7 @@ fn handle_interrogate(_ctx: &mut Context, msg: &[u8]) {
     // interrogate the other HSM and receive response
     Message::write(&payload[..actual_payload_size], Opcode::Interrogate, MessagePort::UART1).unwrap();
     let mut info_body = [0u8; MAX_BODY_SIZE];
-    let mut info = Message::read(MessagePort::UART1, &mut info_body).unwrap();
+    let info = Message::read(MessagePort::UART1, &mut info_body).unwrap();
 
     if info.opcode != Opcode::Interrogate {
         panic!("Incorrect Opcode for Retrieve Interrogate");
