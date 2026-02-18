@@ -1,6 +1,6 @@
 use crate::file::File;
-use crate::message::{self, Message, MessageError, MessagePort, Opcode};
-use crate::secrets::TRANSFER_KEYS;
+use crate::message::{Message, MessageError, MessagePort, Opcode};
+use crate::secrets_generated::TRANSFER_SEND;
 use bytemuck::{Pod, Zeroable, bytes_of};
 use thiserror::Error;
 
@@ -34,7 +34,7 @@ impl TransferM0Encrypted {
     }
 
     pub fn decrypt(&self) -> Result<TransferM0, CryptoError> {
-        let t0 = TRANSFER_KEYS[0].0;
+        let t0 = TRANSFER_SEND.0;
         let mut pt = [0u8, 3];
         pt.clone_from_slice(&self.ct);
         decrypt_payload_symmetric(
@@ -42,7 +42,7 @@ impl TransferM0Encrypted {
             &self.sm.nonce,
             &self.sm.tag,
             &t0,
-            &[Opcode::Receive.try_into().unwrap()],
+            &[Opcode::Receive.into()],
         )?;
 
         let mut r = TransferM0::empty();
@@ -70,7 +70,7 @@ impl TransferM0 {
         r.ct[0] = self.slot;
         r.ct[1..3].clone_from_slice(&self.group.to_le_bytes());
 
-        let t0 = TRANSFER_KEYS[0].0;
+        let t0 = TRANSFER_SEND.0;
         encrypt_payload_symmetric(
             &mut r.ct,
             &mut r.sm.nonce,
@@ -91,16 +91,15 @@ impl TransferM0 {
 
 pub fn initiate_transfer(slot: u8, group: u16) -> Result<(), ProtocolError> {
     let t0 = TransferM0::new(slot, group);
-    let t0_enc = t0.encrypt().map_err(|e| ProtocolError::Crypto(e))?;
+    let t0_enc = t0.encrypt().map_err(ProtocolError::Crypto)?;
     let body = bytes_of(&t0_enc);
     let body_len: u16 = body.len().try_into().unwrap();
 
     Message::write_header(Opcode::Receive, body_len, MessagePort::UART1);
-    Message::write_block(body, MessagePort::UART1).map_err(|e| ProtocolError::Message(e))?;
+    Message::write_block(body, MessagePort::UART1).map_err(ProtocolError::Message)?;
 
     Ok(())
 }
 
 pub const TRANSFER_RECEIVE_MAX_LENGTH: usize =
     size_of::<File>() + size_of::<PubKeyMetadata>() + size_of::<SymmetricMetadata>();
-

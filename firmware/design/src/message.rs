@@ -1,5 +1,8 @@
 use bytemuck::bytes_of_mut;
-use mspm0l222x_hal::{HalError, uart::{uart0, uart1}};
+use mspm0l222x_hal::{
+    HalError,
+    uart::{uart0, uart1},
+};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -117,7 +120,7 @@ pub struct Message {
 
 impl Message {
     /// Creates a new message from the given opcode, length, and body.
-    pub fn new(opcode: Opcode, length: u16, port : MessagePort) -> Self {
+    pub fn new(opcode: Opcode, length: u16, port: MessagePort) -> Self {
         Self {
             opcode,
             length,
@@ -197,7 +200,7 @@ impl Message {
         }
     }
 
-    pub fn write_header(opcode: Opcode, length: u16, port : MessagePort) {
+    pub fn write_header(opcode: Opcode, length: u16, port: MessagePort) {
         let writer = MessageUart::new(port);
         writer.write_bytes(&[MAGIC, opcode.into()]);
         writer.write_bytes(&length.to_le_bytes());
@@ -205,7 +208,6 @@ impl Message {
 
     /// Writes a message from a slice
     /// This will fail if the buffer is too large (u16 limit)
-
     pub fn write(buf: &[u8], opcode: Opcode, port: MessagePort) -> Result<(), MessageError> {
         Self::write_header(opcode, buf.len().try_into().unwrap(), port);
         if !NACKS.contains(&opcode) {
@@ -214,9 +216,13 @@ impl Message {
         Self::write_slice(buf, port, &opcode)
     }
 
-    pub fn write_slice(data: &[u8], port: MessagePort, opcode: &Opcode) -> Result<(), MessageError> {
+    pub fn write_slice(
+        data: &[u8],
+        port: MessagePort,
+        opcode: &Opcode,
+    ) -> Result<(), MessageError> {
         let writer = MessageUart::new(port);
-        if data.len() != 0 {
+        if !data.is_empty() {
             for chunk in data.chunks(CHUNK_SIZE) {
                 writer.write_bytes(chunk);
                 if !NACKS.contains(opcode) {
@@ -238,7 +244,6 @@ impl Message {
         Self::read_ack(port)?;
         Ok(())
     }
-
 }
 
 // TODO: inter-device messaging over UART1

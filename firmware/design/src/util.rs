@@ -61,13 +61,13 @@ impl<T: NoUninit> FlashEntry<T> {
     pub(crate) unsafe fn new(location: u32) -> Self {
         // Flash entry must be sector-aligned
         assert!(
-            location % (FLASH_PAGE_SIZE as u32) == 0,
+            location.is_multiple_of(FLASH_PAGE_SIZE as u32),
             "location {} is not page-aligned",
             location
         );
         // Type must be 8-byte aligned
         const {
-            assert!(size_of::<T>() % 8 == 0);
+            assert!(size_of::<T>().is_multiple_of(8));
         }
 
         Self {
@@ -168,7 +168,7 @@ impl Context {
         let files = unsafe {
             [
                 FlashEntry::new(((&_files as *const u8).add(0 * file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(1 * file_size)) as u32),
+                FlashEntry::new(((&_files as *const u8).add(file_size)) as u32),
                 FlashEntry::new(((&_files as *const u8).add(2 * file_size)) as u32),
                 FlashEntry::new(((&_files as *const u8).add(3 * file_size)) as u32),
                 FlashEntry::new(((&_files as *const u8).add(4 * file_size)) as u32),
@@ -218,7 +218,7 @@ impl Write for UartWriter {
 
             for chunk in s[remaining..].as_bytes().chunks(MAX_BODY_SIZE) {
                 if chunk.len() >= MAX_BODY_SIZE {
-                    let _ = Message::write(&chunk, Opcode::Debug, MessagePort::UART0);
+                    let _ = Message::write(chunk, Opcode::Debug, MessagePort::UART0);
                 } else {
                     self.1 = chunk.len();
                     self.0[..chunk.len()].copy_from_slice(chunk);

@@ -2,10 +2,10 @@ use argon2::{self, Block};
 use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::aead::generic_array::GenericArray;
 use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
-use ed25519_dalek::{Signature, SigningKey, Signer, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use mspm0l222x_hal::trng;
 use thiserror::Error;
-use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
+use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::file::File;
 
@@ -48,14 +48,13 @@ pub enum CryptoError {
     KDFFailure,
 }
 
-
 // TODO: Have these keys use a reference to the type instead of a byte array
 // so we don't accidently pass in a pubkey to a function that expects a sym_key
 // and vice versa
 pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> {
     let pk_sign = VerifyingKey::from_bytes(key).unwrap();
     let expected_signature = Signature::from_bytes(&file.signature);
-    let _ = pk_sign
+    pk_sign
         .verify(bytemuck::bytes_of(&file.protected), &expected_signature)
         .unwrap();
     Ok(())
@@ -75,8 +74,8 @@ pub fn decrypt_payload_pub<'a>(
     tag: &'a [u8; TAG_SIZE],
     secret_key: &[u8; 32],
 ) -> Result<&'a mut [u8], CryptoError> {
-    let sk = StaticSecret::from(secret_key.clone());
-    let pubkey = PublicKey::from(gn.clone());
+    let sk = StaticSecret::from(*secret_key);
+    let pubkey = PublicKey::from(*gn);
     let shared = sk.diffie_hellman(&pubkey).to_bytes();
 
     let mut sym_key = [0u8; 32];
@@ -99,7 +98,7 @@ pub fn encrypt_payload_pub<'a>(
     tag: &'a mut [u8; TAG_SIZE],
     public_key: &[u8; 32],
 ) -> Result<&'a mut [u8], CryptoError> {
-    let pk = PublicKey::from(public_key.clone());
+    let pk = PublicKey::from(*public_key);
     let mut n_bytes = [0; 32];
 
     let trng = trng::trng();
@@ -116,7 +115,7 @@ pub fn encrypt_payload_pub<'a>(
 
     let memory = Block::new();
     let mut secret = [0; 32];
-    
+
     // TODO: params
     argon2::Argon2::default()
         .hash_password_into_with_memory(&shared, &[], &mut secret, [memory])
