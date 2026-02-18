@@ -83,12 +83,12 @@ fn handle_list(ctx: &mut Context) {
         if !file.is_full() { continue; }
 
         // verify file signature before handling
-        let key = secrets::GROUP_KEYS[file.metadata.group as usize].pk_sign.0;
+        let key = secrets::GROUP_KEYS[file.protected.group as usize].pk_sign.0;
         if !crypto::verify_signature(file, &key).is_ok() {
             continue;
         }
 
-        let metadata: ListEntry = ListEntry { name: file.metadata.name, group: file.metadata.group, slot: i as u8 };
+        let metadata: ListEntry = ListEntry { name: file.protected.name, group: file.protected.group, slot: i as u8 };
         list_entries[counter] = metadata;
 
         counter += 1;
@@ -133,17 +133,17 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     }
 
     // get group key and verify file hasn't been tampered
-    let group = file.metadata.group;
+    let group = file.protected.group;
     let group_key = secrets::get_group_keys_from_pin(group, &pin).unwrap();
-    let key = secrets::GROUP_KEYS[file.metadata.group as usize].pk_sign.0;
+    let key = secrets::GROUP_KEYS[file.protected.group as usize].pk_sign.0;
     crypto::verify_signature(file, &key).unwrap();
 
     // set file to buf, which is initialized at max file size
     let mut buf = [0; file::CONTENT_SIZE];
-    buf[..file_length].copy_from_slice(&file.contents[..file_length]);
+    buf[..file_length].copy_from_slice(&file.protected.contents[..file_length]);
 
     // decrypt the file into buffer
-    crypto::decrypt_payload_pub(&mut buf[..file_length], &file.gn, &file.nonce, &file.tag, &group_key.sk_read.0).unwrap();
+    crypto::decrypt_payload_pub(&mut buf[..file_length], &file.protected.gn, &file.protected.nonce, &file.protected.tag, &group_key.sk_read.0).unwrap();
 
     let total_length = file::NAME_SIZE + file_length;
     let mut body = [0u8; message::CHUNK_SIZE];
@@ -161,7 +161,7 @@ fn handle_read(ctx: &mut Context, msg: &Message) {
     let (rest, _) = buf.split_at(file_length);
     let (initial, rest) = rest.split_at(eat);
 
-    body[..file::NAME_SIZE].copy_from_slice(&file.metadata.name);
+    body[..file::NAME_SIZE].copy_from_slice(&file.protected.name);
     body[file::NAME_SIZE..file::NAME_SIZE + eat].copy_from_slice(initial);
 
     message::Message::write_block(&body[..file::NAME_SIZE + eat], MessagePort::UART0).unwrap();
@@ -208,24 +208,26 @@ fn handle_write(ctx: &mut Context, msg: &Message) {
     let file: &mut File = bytemuck::from_bytes_mut(&mut buf);
 
     // set file metadata
-    let metadata= &mut file.metadata;
-    metadata.name.copy_from_slice(name);
-    metadata.group = group;
-    metadata.uuid.copy_from_slice(uuid); 
+    let protected = &mut file.protected;
+    protected.name.copy_from_slice(name);
+    protected.group = group;
+    protected.uuid.copy_from_slice(uuid); 
 
-    crypto::sign_file(file, &group_key.sk_sign.0).unwrap();
 
-    let first = core::cmp::min(data_len, data.len());
-    file.contents[..first].copy_from_slice(&data[..first]);
+    let first: usize = core::cmp::min(data_len, data.len());
+    protected.contents[..first].copy_from_slice(&data[..first]);
     let mut offset = first;
 
     while offset < data_len {
         let block = Message::read_block(MessagePort::UART0).unwrap();
         let take = core::cmp::min(data_len - offset, block.len());
-        file.contents[offset..offset + take].copy_from_slice(&block[..take]);
+        protected.contents[offset..offset + take].copy_from_slice(&block[..take]);
         offset += take;
     }
-    encrypt_payload_pub(&mut file.contents[..data_len], &mut file.gn, &mut file.nonce, &mut file.tag, &pk_read).unwrap();
+
+    encrypt_payload_pub(&mut protected.contents[..data_len], &mut protected.gn, &mut protected.nonce, &mut protected.tag, &pk_read).unwrap();
+
+    crypto::sign_file(file, &group_key.sk_sign.0).unwrap();
     
     let new_fat = FatEntry {
         uuid: uuid.try_into().unwrap(),

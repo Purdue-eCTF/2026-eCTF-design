@@ -53,30 +53,16 @@ pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> 
     let pk_sign = VerifyingKey::from_bytes(key).unwrap();
     let expected_signature = Signature::from_bytes(&file.signature);
     let _ = pk_sign
-        .verify(bytemuck::bytes_of(&file.metadata), &expected_signature)
+        .verify(bytemuck::bytes_of(&file.protected), &expected_signature)
         .unwrap();
     Ok(())
 }
 
 pub fn sign_file(file: &mut File, key: &[u8; 32]) -> Result<(), CryptoError> {
     let sk_sign = SigningKey::from_bytes(key);
-    let signature = sk_sign.sign(bytemuck::bytes_of(&file.metadata));
+    let signature = sk_sign.sign(bytemuck::bytes_of(&file.protected));
     file.signature = signature.to_bytes();
     Ok(())
-}
-// expect gn || ct
-pub fn decrypt_payload_pub_combined<'a>(payload: &'a mut [u8], key: &[u8; 32]) -> Result<&'a mut [u8], CryptoError> {
-    if payload.len() < GN_SIZE {
-        return Err(CryptoError::InvalidDecryptionPayload);
-    }
-    let (gn, body) = payload.split_at_mut(GN_SIZE);
-    let (nonce, rest) = body.split_at_mut(NONCE_SIZE);
-    let (ct, tag) = rest.split_at_mut(rest.len() - TAG_SIZE);
-    let gn: &[u8; GN_SIZE] = bytemuck::from_bytes(gn);
-    let nonce: &[u8; NONCE_SIZE] = bytemuck::from_bytes(nonce);
-    let tag: &[u8; TAG_SIZE] = bytemuck::from_bytes(tag);
-    decrypt_payload_pub(ct, gn, nonce, tag, key)?;
-    Ok(ct)
 }
 
 pub fn decrypt_payload_pub<'a>(

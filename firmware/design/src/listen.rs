@@ -75,7 +75,7 @@ fn handle_interrogate(ctx: &mut Context, body: &mut [u8]) {
         for i in 0..8 {
             let file = ctx.files[i].as_ref();
             // check if the slot is full and the group id matches
-            let metadata = &file.metadata;
+            let metadata = &file.protected;
             // if a valid file matches the group, add it to the list
             if file.is_full() && metadata.group == group {
                 let group_keys = get_group_keys(group).unwrap();
@@ -138,7 +138,7 @@ fn handle_transfer<'a>(ctx: &mut Context, body: &'a mut [u8]) -> Result<(), List
     }
 
     let file = ctx.files[slot].as_ref();
-    if !file.is_full() || file.metadata.group != group {
+    if !file.is_full() || file.protected.group != group {
         return Err(ListenError::InvalidFile);
     }
 

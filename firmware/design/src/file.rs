@@ -11,39 +11,43 @@ pub const NAME_SIZE: usize = 32;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FileMetadata {
+pub struct ProtectedFileData {
+    pub contents: [u8; CONTENT_SIZE],
+    pub nonce: [u8; 24],
+    pub tag: [u8; 16],
+    pub gn: [u8; 32],
     pub name: [u8; 32],
     pub uuid: [u8; 16],
     pub group: u16,
     _pad: [u8; 6],
 }
 
-impl FileMetadata {
+impl ProtectedFileData {
     pub const fn empty() -> Self {
         Self {
-            name: [0; _],
-            uuid: [0; _],
+            contents: [0; CONTENT_SIZE],
+            nonce: [0; 24],
+            tag: [0; 16],
+            gn: [0; 32],
+            name: [0; NAME_SIZE],
+            uuid: [0; UUID_SIZE],
             group: 0,
             _pad: [0; 6],
         }
     }
 }
-unsafe impl Zeroable for FileMetadata {
+unsafe impl Zeroable for ProtectedFileData {
     fn zeroed() -> Self {
         Self::empty()
     }
 }
-unsafe impl Pod for FileMetadata {}
+unsafe impl Pod for ProtectedFileData {}
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct File {
-    pub contents: [u8; 8192],
-    pub nonce: [u8; 24],
-    pub tag: [u8; 16],
-    pub gn: [u8; 32],
     pub state: u64,
     pub signature: [u8; 64],
-    pub metadata: FileMetadata,
+    pub protected: ProtectedFileData,
 }
 
 impl File {
@@ -51,13 +55,9 @@ impl File {
     pub const FULL: u64 = 0xc0aa73e0c260426e;
     const fn empty() -> Self {
         Self {
-            contents: [0xff; _],
-            nonce: [0; _],
-            tag: [0; _],
-            gn: [0; _],
             state: File::EMPTY,
             signature: [0; _],
-            metadata: FileMetadata::empty(),
+            protected: ProtectedFileData::empty(),
         }
     }
     pub(crate) fn is_full(&self) -> bool {
