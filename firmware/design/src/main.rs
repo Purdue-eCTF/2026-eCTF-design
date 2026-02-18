@@ -16,7 +16,7 @@ use mspm0l222x_hal::Peripherals;
 use util::*;
 
 use crate::{
-    crypto::{encrypt_payload_pub, decrypt_payload_pub, encrypt_payload_symmetric, decrypt_payload_symmetric, sign_file, verify_signature}, file::{MAX_BODY_SIZE, FatEntry, FatTable, File}, message::{Message, MessagePort, Opcode}
+    crypto::{encrypt_payload_pub, decrypt_payload_pub, encrypt_payload_symmetric, decrypt_payload_symmetric, sign_file, verify_signature}, file::{FatEntry, FatTable, File}, message::{MAX_BODY_SIZE, Message, MessagePort, Opcode}
 };
 
 const METADATA_SIZE: usize = 1 + file::NAME_SIZE + 2 + 1;
