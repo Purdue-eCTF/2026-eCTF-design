@@ -31,7 +31,7 @@ use crate::{
 fn handle_panics(info: &PanicInfo) -> ! {
     // #[cfg(debug_assertions)]
     {
-        println!("panic with info: {info}");
+        eprintln!("panic with info: {info}");
     }
 
     loop {}
@@ -119,7 +119,8 @@ fn handle_read(ctx: &mut Context, msg: &[u8]) {
         panic!()
     }
 
-    // retrieve pin from message (TODO is pin for sure in first six bytes of msg?)
+    // retrieve pin from message
+    // TODO: is pin for sure in first six bytes of msg?
     let mut pin = [0u8; 6];
     pin.copy_from_slice(&msg[0..6]);
 
@@ -171,7 +172,7 @@ fn handle_read(ctx: &mut Context, msg: &[u8]) {
 struct WriteFileHeader {
     pub pin: [u8; 6],
     pub slot: u8,
-    pub gid: u16,
+    pub group: u16,
     pub name: FileName,
     pub uuid: UUID,
     pub length: u16,
@@ -183,7 +184,7 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
     let WriteFileHeader {
         pin,
         slot,
-        gid: group,
+        group,
         name,
         uuid,
         length,

@@ -31,7 +31,7 @@ macro_rules! sensitive {
 /// Prints to the uart port
 #[macro_export]
 macro_rules! print {
-    ($($arg:tt)*) => ($crate::util::write_debug_format(format_args!($($arg)*)));
+    ($($arg:tt)*) => ($crate::util::write_fmt(Opcode::Debug, format_args!($($arg)*)));
 }
 
 /// Prints to the uart port
@@ -39,6 +39,19 @@ macro_rules! print {
 macro_rules! println {
     () => ($crate::print!("\n"));
     ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
+}
+
+/// Prints to the uart port
+#[macro_export]
+macro_rules! eprint {
+    ($($arg:tt)*) => ($crate::util::write_fmt(Opcode::Error, format_args!($($arg)*)));
+}
+
+/// Prints to the uart port
+#[macro_export]
+macro_rules! eprintln {
+    () => ($crate::eprint!("\n"));
+    ($($arg:tt)*) => ($crate::eprint!("{}\n", format_args!($($arg)*)));
 }
 
 #[repr(C)]
@@ -188,10 +201,10 @@ impl Context {
     pub(crate) fn move_salt_to_flash(&self) {}
 }
 
-struct UartWriter([u8; MAX_BODY_SIZE], usize);
+struct UartWriter([u8; MAX_BODY_SIZE], usize, Opcode);
 impl UartWriter {
-    fn new() -> Self {
-        Self([0; _], 0)
+    fn new(opcode: Opcode) -> Self {
+        Self([0; _], 0, opcode)
     }
 }
 
@@ -233,8 +246,8 @@ impl Write for UartWriter {
 /// Called internally by print and println macros.
 ///
 /// Prints formatted info as debug messages.
-pub fn write_debug_format(args: fmt::Arguments) {
-    let mut writer = UartWriter::new();
+pub fn write_fmt(opcode: Opcode, args: fmt::Arguments) {
+    let mut writer = UartWriter::new(opcode);
     let _ = writer.write_fmt(args);
     writer.flush();
 }
