@@ -3,22 +3,21 @@ use core::{
     fmt::{self, Write},
     marker::PhantomData,
     mem::size_of,
-    ops::Index,
 };
 
 use mspm0l222x_hal::{
     Peripherals,
     flash::{self, FLASH_PAGE_SIZE, FlashController},
-    trng::{self, Trng},
     iomux::Iomux,
+    trng::Trng,
     uart::Uart0,
 };
 
+use crate::salt::{self, Salt};
 use crate::{
     file::{FatTable, File},
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
 };
-use crate::security::{SecurityContext, FlashOps};
 
 // TODO: glitching prevention or similar
 // TODO: how badly will this hit flash? Can we rotate slots or something?
@@ -57,17 +56,6 @@ macro_rules! eprintln {
     ($($arg:tt)*) => ($crate::eprint!("{}\n", format_args!($($arg)*)));
 }
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct Salt {
-    pub boot_salt_0: [u8; 32],
-    pub boot_salt_1: [u8; 32],
-    pub lockout_flag: u32,
-    pub padding: [u8; 1024 - 68],
-}
-
-unsafe impl NoUninit for Salt {}
-
 // TODO: automatically handle partial page writes
 pub const FLASH_MAGIC: u64 = 0x7c79b307cf99d0d6;
 pub struct FlashEntry<T: NoUninit> {
@@ -96,24 +84,22 @@ impl<T: NoUninit> FlashEntry<T> {
         }
     }
 
-    pub(crate) unsafe fn set(&self, data: &T) -> Result<(), mspm0l222x_hal::HalError> {
+    pub(crate) unsafe fn erase(&self) {
         let flash = flash::flash();
+        for page in 0..self.pages {
+            unsafe {
+                let _ = flash.erase_page(self.location + page * FLASH_PAGE_SIZE as u32);
+            }
+        }
+    }
+    pub(crate) unsafe fn set(&self, data: &T) -> Result<(), mspm0l222x_hal::HalError> {
         let res = self.set_inner(data);
-
         if res.is_err() {
             // prevent partial writes
-            let mut err = Ok(());
-            for page in 0..self.pages {
-                unsafe {
-                    let erased = flash.erase_page(self.location + page * FLASH_PAGE_SIZE as u32);
-                    err = err.and(erased);
-                }
-            }
-
-            err
-        } else {
-            res
+            unsafe { self.erase() };
         }
+
+        res
     }
 
     pub(crate) fn is_set(&self) -> bool {
@@ -144,14 +130,13 @@ impl<T: NoUninit> FlashEntry<T> {
 
         Ok(())
     }
-
-    fn addr(&self) -> u32 {
-        self.location
-    }
 }
 
 impl<T: NoUninit> AsRef<T> for FlashEntry<T> {
     fn as_ref(&self) -> &T {
+        if !self.is_set() {
+            panic!("tried to get ref to unset flash entry");
+        }
         unsafe { &*(self.location as *const T) }
     }
 }
@@ -161,7 +146,8 @@ pub(crate) struct Context {
     pub files: [FlashEntry<File>; 8],
     pub fat: FlashEntry<FatTable>,
     pub salt: FlashEntry<Salt>,
-    pub security_ctx: SecurityContext,
+    pub ram_salt: Option<Salt>,
+    pub pin_salt: Salt,
 }
 
 unsafe extern "C" {
@@ -180,18 +166,8 @@ impl Context {
         println!("starting!");
         // Uart1::init(&iomux, peripherals.uart1);
         FlashController::init(peripherals.flashctl);
-        // TODO: set appropriate memory protection
 
         Trng::init(peripherals.trng);
-
-        let flash_ref = flash::flash(); 
-        let trng_ref = trng::trng();
-
-        let mut security_ctx = SecurityContext::new();
-
-        security_ctx.secure_boot(flash_ref, trng_ref);
-
-        println!("Secure Boot initialized.");
 
         let file_size = core::mem::size_of::<File>().div_ceil(FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE;
         let files = unsafe {
@@ -209,17 +185,43 @@ impl Context {
 
         let fat = unsafe { FlashEntry::new(&_filetable as *const u8 as u32) };
 
-        let salt = unsafe { FlashEntry::new(&_salt as *const u8 as u32) };
-        Self { files, fat, salt, security_ctx }
+        let salt: FlashEntry<Salt> = unsafe { FlashEntry::new(&_salt as *const u8 as u32) };
+        // if salt isn't set, then the device was restarted during an operation
+        if !salt.is_set() {
+            let derived = Salt::derive_boot_salt_1();
+            unsafe { salt.set(&derived).unwrap() };
+        }
+        // pin salt always derived
+        let pin_salt = salt.as_ref().derive_pin_salt();
+        Self {
+            files,
+            fat,
+            salt,
+            ram_salt: None,
+            pin_salt,
+        }
     }
 
     pub(crate) fn move_salt_to_ram(&mut self) {
-        self.security_ctx.ram_salt = FlashOps::fetch_and_lock(flash::flash());
+        let salt = self.salt.as_ref();
+        self.ram_salt = Some(*salt);
+        unsafe { self.salt.erase() };
     }
 
     pub(crate) fn move_salt_to_flash(&mut self) {
-        FlashOps::restore_and_unlock(flash::flash(), &self.security_ctx.ram_salt);
-        self.security_ctx.ram_salt.fill(0);
+        let Some(salt) = self.ram_salt else {
+            panic!("tried to move salt to flash with no ram salt");
+        };
+        unsafe { self.salt.set(&salt).unwrap() };
+    }
+
+    pub(crate) fn k_auth(&self, pin: &[u8; 6]) -> [u8; 32] {
+        let mut k = [0; 32];
+        let mut input = [0; 32 + 6];
+        input[..6].copy_from_slice(pin);
+        input[6..].copy_from_slice(&self.pin_salt.0);
+        Salt::derive_argon(&input, &mut k, salt::T_COST_K_AUTH);
+        k
     }
 }
 

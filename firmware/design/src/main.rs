@@ -7,10 +7,10 @@ mod file;
 mod listen;
 mod message;
 mod protocol;
+mod salt;
 mod secrets;
 mod secrets_generated;
 mod util;
-pub mod security;
 
 use bytemuck::{Pod, Zeroable};
 use core::panic::PanicInfo;
@@ -25,7 +25,7 @@ use crate::{
     },
     file::{FatEntry, FatTable, File, FileMeta, FileName, UUID},
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
-    secrets_generated::{GROUP_KEYS, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV},
+    secrets_generated::{GROUP_KEYS_ENC, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV},
 };
 
 #[panic_handler]
@@ -42,27 +42,6 @@ fn handle_panics(info: &PanicInfo) -> ! {
 #[entry]
 fn main() -> ! {
     let mut ctx = Context::new(Peripherals::take().unwrap());
-
-    // Generate PIN Salt
-    let boot_salt = ctx.security_ctx.ram_salt;
-    // Should take 1 second
-    let pin_salt = ctx.security_ctx.generate_pin_salt(&boot_salt);
-    // Receive PIN
-    println!("Ready for PIN...");
-    let pin_input = *b"123456"; //testing
-    //let mut pin_input = [0u8; 6];
-    
-    /*mspm0l222x_hal::uart::uart0()
-        .read_bytes(&mut pin_input)
-        .expect("UART Read Failed");
-    TODO: Does the UART read works?
-    println!("Verifying...");*/
-    println!("Verifying PIN: 123456...");
-
-    let _ = ctx.security_ctx.authenticate_pin(&pin_input, &pin_salt);
-    println!("Access Granted (TEST MODE).");
-    // TODO: Authenticate PIN correctly
-    ctx.move_salt_to_flash();
 
     for file in &ctx.files {
         // TODO: gracefully handle this failure
@@ -110,8 +89,11 @@ fn handle_list(ctx: &mut Context) {
         }
 
         // verify file signature before handling
-        // TODO: linear scan for key
-        let key = GROUP_KEYS[file.protected.group as usize].pk_sign.0;
+        let group_keys =
+            secrets::get_group_keys_from_pin(ctx, file.protected.group, &secrets_generated::PIN)
+                .unwrap();
+        let key = group_keys.pk_sign.0;
+
         if verify_signature(file, &key).is_err() {
             continue;
         }
@@ -164,9 +146,8 @@ fn handle_read(ctx: &mut Context, msg: &[u8]) {
 
     // get group key and verify file hasn't been tampered
     let group = file.protected.group;
-    let group_key = secrets::get_group_keys_from_pin(group, &pin).unwrap();
-    // TODO: linear scan for correct GROUP_KEYS value
-    let key = GROUP_KEYS[file.protected.group as usize].pk_sign.0;
+    let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
+    let key = group_key.pk_sign.0;
     verify_signature(file, &key).unwrap();
 
     // buf = N || PT
@@ -228,7 +209,7 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
 
     // retrieve signing and read encryption keys with pin
     let pin = pin.try_into().unwrap();
-    let group_key = secrets::get_group_keys_from_pin(group, &pin).unwrap();
+    let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
     let pk_read = group_key.pk_read.0;
 
     // generate empty file variable
@@ -292,7 +273,7 @@ fn handle_receive(ctx: &mut Context, msg: &[u8]) {
     let write_slot = msg[7];
 
     let group = 0u16;
-    let group_key = secrets::get_group_keys_from_pin(group, &pin).unwrap();
+    let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
 
     protocol::initiate_transfer(read_slot, group).unwrap();
     let mut buf = [0u8; protocol::TRANSFER_RECEIVE_MAX_LENGTH];
@@ -342,15 +323,16 @@ fn handle_receive(ctx: &mut Context, msg: &[u8]) {
 /// has permissions for. Since the entire list of files is encrypted
 /// symmetrically and each file's metadata encrypted asymmetrically, all this
 /// will be decrypted before being sent back to host.
-fn handle_interrogate(_ctx: &mut Context, msg: &[u8]) {
+fn handle_interrogate(ctx: &mut Context, msg: &[u8]) {
     // Command contains just the PIN
     if msg.len() != 6 {
         panic!()
     }
+
     let pin: &[u8; 6] = msg[..6].try_into().unwrap();
 
     // encrypt groups being sent over to other board
-    let mut groups: [u16; GROUP_KEYS.len()] = [0u16; GROUP_KEYS.len()];
+    let mut groups: [u16; GROUP_KEYS_ENC.len()] = [0u16; GROUP_KEYS_ENC.len()];
 
     let mut sm = crypto::SymmetricMetadata {
         nonce: [0; crypto::NONCE_SIZE],
@@ -359,11 +341,12 @@ fn handle_interrogate(_ctx: &mut Context, msg: &[u8]) {
     let mut group_count = 0;
 
     // Get groups for which the HSM has receive permission
-    for group in GROUP_KEYS.iter() {
-        let group_key = secrets::get_group_keys_from_pin(group.group, pin).unwrap();
-        if group_key.sk_inter.0.is_empty() {
+    for group in GROUP_KEYS_ENC.iter() {
+        let group_key = secrets::get_group_keys_from_pin(ctx, group.group, pin).unwrap();
+        if group_key.sk_inter.is_empty() {
             continue;
         };
+
         groups[group_count] = group.group;
         group_count += 1;
     }
@@ -381,7 +364,7 @@ fn handle_interrogate(_ctx: &mut Context, msg: &[u8]) {
     .unwrap();
 
     // copy the encrypted groups, nonce, and tag to another buffer
-    let mut payload = [0; 2 * GROUP_KEYS.len() + size_of::<crypto::SymmetricMetadata>()];
+    let mut payload = [0; 2 * GROUP_KEYS_ENC.len() + size_of::<crypto::SymmetricMetadata>()];
 
     // actual payload may be smaller than the maximum size the buffer was defined with
     let actual_payload_size = group_count * 2 + size_of::<crypto::SymmetricMetadata>();
@@ -469,7 +452,7 @@ fn handle_interrogate(_ctx: &mut Context, msg: &[u8]) {
         let ifile: &mut listen::InterrogateFile = bytemuck::from_bytes_mut(file_bytes);
         let pkm: &crypto::PubKeyMetadata = bytemuck::from_bytes(pkm_bytes);
 
-        let key = secrets::get_group_keys_from_pin(ifile.group, pin)
+        let key = secrets::get_group_keys_from_pin(ctx, ifile.group, pin)
             .unwrap()
             .sk_inter
             .0;

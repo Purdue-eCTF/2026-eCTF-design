@@ -5,8 +5,8 @@ use crate::{
     file::{self, File, FileName},
     message::{Message, MessagePort, Opcode},
     protocol::TransferM0Encrypted,
-    secrets::get_group_keys,
-    secrets_generated::{INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV},
+    secrets,
+    secrets_generated::{INTERROGATE_RECV, INTERROGATE_SEND, PIN, TRANSFER_RECV},
 };
 use thiserror::Error;
 
@@ -90,7 +90,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
             let metadata = &file.protected;
             // if a valid file matches the group, add it to the list
             if file.is_full() && metadata.group == group {
-                let group_keys = get_group_keys(group).unwrap();
+                let group_keys = secrets::get_group_keys_from_pin(ctx, group, &PIN).unwrap();
                 if crypto::verify_signature(file, &group_keys.pk_sign.0).is_err() {
                     continue;
                 }
@@ -172,8 +172,9 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ListenErro
         return Err(ListenError::InvalidFile);
     }
 
-    let pk_sign = get_group_keys(group).unwrap().pk_sign.0;
-    if crypto::verify_signature(file, &pk_sign).is_err() {
+    // TODO: check that all instances where we use &PIN are valid
+    let group_keys = secrets::get_group_keys_from_pin(ctx, group, &PIN).unwrap();
+    if crypto::verify_signature(file, &group_keys.pk_sign.0).is_err() {
         return Err(ListenError::InvalidFile);
     }
 
@@ -197,7 +198,8 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ListenErro
         file.copy_from_slice(&bytemuck::bytes_of(ctx.files[slot].as_ref())[..file_size]);
 
         // encrypt and write G^n, nonce, tag to PKM after the file
-        let pk_transfer = get_group_keys(group).unwrap().pk_trans.0;
+        let group_keys = secrets::get_group_keys_from_pin(ctx, group, &PIN).unwrap();
+        let pk_transfer = group_keys.pk_trans.0;
         let _ = crypto::encrypt_payload_pub(
             file,
             &mut pkm.gn,
