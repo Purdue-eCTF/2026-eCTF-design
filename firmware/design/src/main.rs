@@ -10,6 +10,7 @@ mod protocol;
 mod secrets;
 mod secrets_generated;
 mod util;
+pub mod security;
 
 use bytemuck::{Pod, Zeroable};
 use core::panic::PanicInfo;
@@ -41,6 +42,28 @@ fn handle_panics(info: &PanicInfo) -> ! {
 #[entry]
 fn main() -> ! {
     let mut ctx = Context::new(Peripherals::take().unwrap());
+
+    // Generate PIN Salt
+    let boot_salt = ctx.security_ctx.ram_salt;
+    // Should take 1 second
+    let pin_salt = ctx.security_ctx.generate_pin_salt(&boot_salt);
+    // Receive PIN
+    println!("Ready for PIN...");
+    let pin_input = *b"123456"; //testing
+    //let mut pin_input = [0u8; 6];
+    
+    /*mspm0l222x_hal::uart::uart0()
+        .read_bytes(&mut pin_input)
+        .expect("UART Read Failed");
+    TODO: Does the UART read works?
+    println!("Verifying...");*/
+    println!("Verifying PIN: 123456...");
+
+    let _ = ctx.security_ctx.authenticate_pin(&pin_input, &pin_salt);
+    println!("Access Granted (TEST MODE).");
+    // TODO: Authenticate PIN correctly
+    ctx.move_salt_to_flash();
+
     for file in &ctx.files {
         // TODO: gracefully handle this failure
         assert!(file.as_ref().state == File::EMPTY || file.as_ref().state == File::FULL);

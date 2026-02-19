@@ -3,11 +3,13 @@ use core::{
     fmt::{self, Write},
     marker::PhantomData,
     mem::size_of,
+    ops::Index,
 };
 
 use mspm0l222x_hal::{
     Peripherals,
     flash::{self, FLASH_PAGE_SIZE, FlashController},
+    trng::{self, Trng},
     iomux::Iomux,
     uart::Uart0,
 };
@@ -16,6 +18,7 @@ use crate::{
     file::{FatTable, File},
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
 };
+use crate::security::{SecurityContext, FlashOps};
 
 // TODO: glitching prevention or similar
 // TODO: how badly will this hit flash? Can we rotate slots or something?
@@ -57,7 +60,10 @@ macro_rules! eprintln {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Salt {
-    pub salt: [u8; 32],
+    pub boot_salt_0: [u8; 32],
+    pub boot_salt_1: [u8; 32],
+    pub lockout_flag: u32,
+    pub padding: [u8; 1024 - 68],
 }
 
 unsafe impl NoUninit for Salt {}
@@ -155,6 +161,7 @@ pub(crate) struct Context {
     pub files: [FlashEntry<File>; 8],
     pub fat: FlashEntry<FatTable>,
     pub salt: FlashEntry<Salt>,
+    pub security_ctx: SecurityContext,
 }
 
 unsafe extern "C" {
@@ -175,7 +182,16 @@ impl Context {
         FlashController::init(peripherals.flashctl);
         // TODO: set appropriate memory protection
 
-        // Trng::init(peripherals.trng);
+        Trng::init(peripherals.trng);
+
+        let flash_ref = flash::flash(); 
+        let trng_ref = trng::trng();
+
+        let mut security_ctx = SecurityContext::new();
+
+        security_ctx.secure_boot(flash_ref, trng_ref);
+
+        println!("Secure Boot initialized.");
 
         let file_size = core::mem::size_of::<File>().div_ceil(FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE;
         let files = unsafe {
@@ -194,11 +210,17 @@ impl Context {
         let fat = unsafe { FlashEntry::new(&_filetable as *const u8 as u32) };
 
         let salt = unsafe { FlashEntry::new(&_salt as *const u8 as u32) };
-        Self { files, fat, salt }
+        Self { files, fat, salt, security_ctx }
     }
 
-    pub(crate) fn move_salt_to_ram(&self) {}
-    pub(crate) fn move_salt_to_flash(&self) {}
+    pub(crate) fn move_salt_to_ram(&mut self) {
+        self.security_ctx.ram_salt = FlashOps::fetch_and_lock(flash::flash());
+    }
+
+    pub(crate) fn move_salt_to_flash(&mut self) {
+        FlashOps::restore_and_unlock(flash::flash(), &self.security_ctx.ram_salt);
+        self.security_ctx.ram_salt.fill(0);
+    }
 }
 
 struct UartWriter([u8; MAX_BODY_SIZE], usize, Opcode);
