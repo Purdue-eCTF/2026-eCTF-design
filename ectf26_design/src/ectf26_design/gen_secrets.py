@@ -12,8 +12,10 @@ Copyright: Copyright (c) 2026 The MITRE Corporation
 
 import argparse
 import json
+import secrets
 from pathlib import Path
-
+from Crypto.PublicKey import ECC
+from Crypto.Cipher import ChaCha20_Poly1305  # XChaCha is included in this
 from loguru import logger
 
 
@@ -38,26 +40,62 @@ def gen_secrets(groups: list[int]) -> bytes:
     # Create the secrets object
     # You can change this to generate any secret material
     # The secrets file will never be shared with attackers
-    secrets = {
-        "groups": groups,
-        "some_secrets": "EXAMPLE",
+    all_secrets = {
+        "groups": {},
     }
 
-    # TODO: generate appropriate keys
+    # 32 random bytes (and double check that they're random using secrets.toke_bytes)
     for group in groups:
-        write_keypair = ...
-        read_keypair = ...
-        transfer_keypair = ...
-        interrogate_keypair = ...
-        shared_k0 = ...
-        shared_k1 = ...
+        group_data = {"public_keys": {}, "secret_keys": {}, "shared_symmetric": {}}
+
+        write_keypair = ECC.generate(curve="Ed25519")
+        read_keypair = ECC.generate(curve="Ed25519")
+        transfer_keypair = ECC.generate(curve="Ed25519")
+        interrogate_keypair = ECC.generate(curve="Ed25519")
+
+        # Adding all keys for now since no knowledge (as of 2/16) of which perms the group has
+        # Can add control flow based on perms here later
+        group_data["public_keys"]["pk_sign"] = (
+            write_keypair.public_key().export_key(format="DER").hex()
+        )
+        group_data["public_keys"]["pk_read"] = (
+            read_keypair.public_key().export_key(format="DER").hex()
+        )
+        group_data["public_keys"]["pk_trans"] = (
+            transfer_keypair.public_key().export_key(format="DER").hex()
+        )
+        group_data["public_keys"]["pk_inter"] = (
+            interrogate_keypair.public_key().export_key(format="DER").hex()
+        )
+
+        group_data["secret_keys"]["sk_sign"] = write_keypair.export_key(
+            format="DER"
+        ).hex()
+        group_data["secret_keys"]["sk_read"] = read_keypair.export_key(
+            format="DER"
+        ).hex()
+        group_data["secret_keys"]["sk_trans"] = transfer_keypair.export_key(
+            format="DER"
+        ).hex()
+        group_data["secret_keys"]["sk_inter"] = interrogate_keypair.export_key(
+            format="DER"
+        ).hex()
+
+        group_data["shared_symmetric"] = {
+            "T0": secrets.token_hex(32),
+            "T1": secrets.token_hex(32),
+            "I0": secrets.token_hex(32),
+            "I1": secrets.token_hex(32),
+        }
+
+        all_secrets["groups"][f"{group:04x}"] = group_data
 
     # NOTE: if you choose to use JSON for your file type, you will not
     # be able to store binary data, and must either use a different file
     # type or encode the binary data to hex, base64, or another type of
     # ASCII-only encoding
-    # TODO: do we care about binary data
-    return json.dumps(secrets).encode()
+
+    return json.dumps(all_secrets).encode()
 
 
 def parse_args():
