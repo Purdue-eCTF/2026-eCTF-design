@@ -123,9 +123,12 @@ SECTIONS {
         KEEP(*(.got .got.*));
     }
 
-    .filetable (NOLOAD) : {
+    .filetable : {
         _filetable = .;
-        . += 0x400;
+        KEEP(*(.filetable.default));
+        . = ALIGN(1024);
+        _efiletable = .;
+        ASSERT(_efiletable - _filetable == 0x400, "FAT section has incorrect length");
     } > FILETABLE
 
     .salt : {

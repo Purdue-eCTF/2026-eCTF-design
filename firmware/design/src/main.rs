@@ -2,6 +2,7 @@
 #![no_main]
 #![feature(breakpoint)]
 
+mod context;
 mod crypto;
 mod file;
 mod listen;
@@ -10,13 +11,12 @@ mod protocol;
 mod salt;
 mod secrets;
 mod secrets_generated;
-mod util;
 
 use bytemuck::{Pod, Zeroable};
+use context::*;
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
 use mspm0l222x_hal::Peripherals;
-use util::*;
 
 use crate::{
     crypto::{
@@ -45,7 +45,10 @@ fn main() -> ! {
 
     for file in &ctx.files {
         // TODO: gracefully handle this failure
-        assert!(file.as_ref().state == File::EMPTY || file.as_ref().state == File::FULL);
+        let Some(file) = file.get() else {
+            panic!("file with no flash entry");
+        };
+        assert!(file.state == File::EMPTY || file.state == File::FULL);
     }
 
     let mut message_body = [0u8; MAX_BODY_SIZE];
@@ -81,12 +84,10 @@ fn handle_list(ctx: &mut Context) {
     let list_entries: &mut [FileMeta; 8] = bytemuck::from_bytes_mut(file_list);
     let mut counter: usize = 0;
     for i in 0..8 {
-        let file = ctx.files[i].as_ref();
-
-        // if not in use, continue
-        if !file.is_full() {
+        // if not in use or flash entry is empty, continue
+        let Some(file) = ctx.files[i].get().filter(|f| f.is_full()) else {
             continue;
-        }
+        };
 
         // verify file signature before handling
         let group_keys =
@@ -136,8 +137,12 @@ fn handle_read(ctx: &mut Context, msg: &[u8]) {
         panic!()
     }
 
-    let file_length = ctx.fat.as_ref().entries[slot].length as usize;
-    let file = ctx.files[slot].as_ref();
+    let Some(fat) = ctx.fat.get() else {
+        panic!("failed to load FAT");
+    };
+
+    let file_length = fat.entries[slot].length as usize;
+    let file = ctx.files[slot].get().unwrap();
 
     // die if there isn't a file here
     if !file.is_full() {
@@ -241,15 +246,15 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
     let new_fat = FatEntry {
         uuid,
         length: data_len as u16,
-        padding: ctx.fat.as_ref().entries[slot].padding, // what is this?
-        addr: ctx.fat.as_ref().entries[slot].addr,
+        padding: 0,
+        addr: ctx.fat.get().unwrap().entries[slot].addr,
     };
 
     // TODO: just write the one fat entry
     unsafe {
         ctx.files[slot].set(&file).unwrap();
     }
-    let current = ctx.fat.as_ref();
+    let current = ctx.fat.get().unwrap();
     // avoid in-place mutation
     let mut entries = current.entries;
     entries[slot] = new_fat;
@@ -303,14 +308,14 @@ fn handle_receive(ctx: &mut Context, msg: &[u8]) {
     let new_fat = FatEntry {
         uuid: file.protected.uuid,
         length: content_length.try_into().unwrap(),
-        padding: ctx.fat.as_ref().entries[write_slot as usize].padding, // what is this?
-        addr: ctx.fat.as_ref().entries[write_slot as usize].addr,
+        padding: ctx.fat.get().unwrap().entries[write_slot as usize].padding, // what is this?
+        addr: ctx.fat.get().unwrap().entries[write_slot as usize].addr,
     };
 
     // TODO: just write the one fat entry
     unsafe {
         ctx.files[write_slot as usize].set(file).unwrap();
-        let current = ctx.fat.as_ref();
+        let current = ctx.fat.get().unwrap();
         let mut entries = current.entries;
         entries[write_slot as usize] = new_fat;
         ctx.fat.set(&FatTable { entries }).unwrap();

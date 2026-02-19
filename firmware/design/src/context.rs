@@ -33,7 +33,7 @@ macro_rules! sensitive {
 /// Prints to the uart port
 #[macro_export]
 macro_rules! print {
-    ($($arg:tt)*) => ($crate::util::write_fmt(Opcode::Debug, format_args!($($arg)*)));
+    ($($arg:tt)*) => ($crate::context::write_fmt(Opcode::Debug, format_args!($($arg)*)));
 }
 
 /// Prints to the uart port
@@ -46,7 +46,7 @@ macro_rules! println {
 /// Prints to the uart port
 #[macro_export]
 macro_rules! eprint {
-    ($($arg:tt)*) => ($crate::util::write_fmt(Opcode::Error, format_args!($($arg)*)));
+    ($($arg:tt)*) => ($crate::context::write_fmt(Opcode::Error, format_args!($($arg)*)));
 }
 
 /// Prints to the uart port
@@ -130,14 +130,13 @@ impl<T: NoUninit> FlashEntry<T> {
 
         Ok(())
     }
-}
 
-impl<T: NoUninit> AsRef<T> for FlashEntry<T> {
-    fn as_ref(&self) -> &T {
-        if !self.is_set() {
-            panic!("tried to get ref to unset flash entry");
+    pub(crate) fn get(&self) -> Option<&T> {
+        if self.is_set() {
+            Some(unsafe { &*(self.location as *const T) })
+        } else {
+            None
         }
-        unsafe { &*(self.location as *const T) }
     }
 }
 
@@ -192,7 +191,7 @@ impl Context {
             unsafe { boot_salt_1.set(&derived).unwrap() };
         }
         // pin salt always derived
-        let pin_salt = boot_salt_1.as_ref().derive_pin_salt();
+        let pin_salt = boot_salt_1.get().unwrap().derive_pin_salt();
         Self {
             files,
             fat,
@@ -203,7 +202,7 @@ impl Context {
     }
 
     pub(crate) fn move_salt_to_ram(&mut self) {
-        let salt = self.boot_salt_1.as_ref();
+        let salt = self.boot_salt_1.get().unwrap();
         self.ram_salt = Some(*salt);
         unsafe { self.boot_salt_1.erase() };
     }

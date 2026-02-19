@@ -2,7 +2,7 @@ use core::{fmt, ops::Index};
 
 use bytemuck::{NoUninit, Pod, Zeroable};
 
-use crate::util;
+use crate::context;
 
 pub const CONTENT_SIZE: usize = 8192;
 pub const UUID_SIZE: usize = 16;
@@ -103,19 +103,6 @@ unsafe impl Zeroable for File {
 }
 unsafe impl Pod for File {}
 
-#[unsafe(link_section = ".files.default")]
-#[unsafe(no_mangle)]
-pub static __FILES: [(File, u64, [u8; (9 * 1024) - size_of::<File>() - 8]); 8] = [
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-];
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct FatEntry {
@@ -123,6 +110,17 @@ pub struct FatEntry {
     pub length: u16,
     pub padding: u16,
     pub addr: u32,
+}
+
+impl FatEntry {
+    const fn empty() -> Self {
+        Self {
+            uuid: UUID([0; _]),
+            length: 0,
+            padding: 0,
+            addr: 0,
+        }
+    }
 }
 
 impl core::fmt::Debug for FatEntry {
@@ -143,6 +141,11 @@ impl FatTable {
     pub(crate) fn new(entries: [FatEntry; 8]) -> Self {
         Self { entries }
     }
+    pub const fn empty() -> Self {
+        Self {
+            entries: [FatEntry::empty(); 8],
+        }
+    }
 }
 
 impl Index<usize> for FatTable {
@@ -152,3 +155,22 @@ impl Index<usize> for FatTable {
     }
 }
 unsafe impl NoUninit for FatTable {}
+
+#[repr(align(1024), C)]
+#[derive(Copy, Clone)]
+pub struct FileSlot {
+    pub file: File,
+    pub magic: u64,
+}
+
+// Force "filled" files and FAT to appear in flash on first boot
+#[unsafe(link_section = ".files.default")]
+#[unsafe(no_mangle)]
+pub static __FILES: [FileSlot; 8] = [FileSlot {
+    file: File::empty(),
+    magic: context::FLASH_MAGIC,
+}; 8];
+
+#[unsafe(link_section = ".filetable.default")]
+#[unsafe(no_mangle)]
+pub static __FAT: ([u8; core::mem::size_of::<FatTable>()], u64) = ([0; _], context::FLASH_MAGIC);

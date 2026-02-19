@@ -85,7 +85,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
         let group = u16::from_le_bytes(*bytes);
 
         for i in 0..8 {
-            let file = ctx.files[i].as_ref();
+            let file = ctx.files[i].get().unwrap();
             // check if the slot is full and the group id matches
             let metadata = &file.protected;
             // if a valid file matches the group, add it to the list
@@ -167,7 +167,7 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ListenErro
         return Err(ListenError::InvalidFile);
     }
 
-    let file = ctx.files[slot].as_ref();
+    let file = ctx.files[slot].get().unwrap();
     if !file.is_full() || file.protected.group != group {
         return Err(ListenError::InvalidFile);
     }
@@ -178,7 +178,7 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ListenErro
         return Err(ListenError::InvalidFile);
     }
 
-    let content_length = ctx.fat.as_ref().entries[slot].length as usize;
+    let content_length = ctx.fat.get().unwrap().entries[slot].length as usize;
 
     // we will create M1 = Enc_T1(Enc_pk_trans(file) || PKM) || SM
     // create a payload buffer of the maximum size
@@ -195,7 +195,7 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ListenErro
         let pkm: &mut crypto::PubKeyMetadata = bytemuck::from_bytes_mut(pkm_bytes);
 
         // copy the file to payload
-        file.copy_from_slice(&bytemuck::bytes_of(ctx.files[slot].as_ref())[..file_size]);
+        file.copy_from_slice(&bytemuck::bytes_of(ctx.files[slot].get().unwrap())[..file_size]);
 
         // encrypt and write G^n, nonce, tag to PKM after the file
         let group_keys = secrets::get_group_keys_from_pin(ctx, group, &PIN).unwrap();

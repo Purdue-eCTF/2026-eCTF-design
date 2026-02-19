@@ -1,4 +1,4 @@
-use crate::{secrets_generated::GROUP_KEYS_ENC, util::Context};
+use crate::{context::Context, secrets_generated::GROUP_KEYS_ENC};
 
 use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
