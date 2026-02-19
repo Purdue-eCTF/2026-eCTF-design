@@ -87,21 +87,6 @@ SECTIONS {
         __etext = .;
     } > APP1
 
-    .rodata : ALIGN(8) {
-        . = ALIGN(8);
-        *(.rodata .rodata.*);
-
-        . = ALIGN(8);
-    } > APP1
-    
-    .data : {
-        . = ALIGN(8);
-        __sdata = .;
-        *(.data .data.*);
-        . = ALIGN(8); /* 4-byte align the end (VMA) of this section */
-        __edata = .;
-    } > RAM AT>APP1
-
     __sidata = LOADADDR(.data);
 
     .files : {
@@ -147,6 +132,21 @@ SECTIONS {
         _salt = .;
         . += 1024;
     } > APP2
+
+    .rodata : ALIGN(8) {
+        . = ALIGN(8);
+        *(.rodata .rodata.*);
+
+        . = ALIGN(8);
+    } > APP2
+
+    .data : {
+        . = ALIGN(8);
+        __sdata = .;
+        *(.data .data.*);
+        . = ALIGN(8); /* 4-byte align the end (VMA) of this section */
+        __edata = .;
+    } > RAM AT>APP2
 
     /* ## Discarded sections */
     /DISCARD/ :

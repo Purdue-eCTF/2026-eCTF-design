@@ -217,7 +217,6 @@ dependencies = [
  "chacha20poly1305",
  "cortex-m",
  "cortex-m-rt",
- "digest",
  "ed25519-dalek",
  "mspm0l222x-hal",
  "thiserror",

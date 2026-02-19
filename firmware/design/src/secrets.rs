@@ -1,8 +1,7 @@
 use crate::{secrets_generated::GROUP_KEYS_ENC, util::Context};
 
 use bytemuck::{Pod, Zeroable};
-use chacha20poly1305::{AeadInPlace, XChaCha20Poly1305};
-use digest::KeyInit;
+use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
 
 #[derive(Default, Pod, Zeroable, Clone, Copy)]
 #[repr(transparent)]
