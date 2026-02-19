@@ -145,7 +145,7 @@ impl<T: NoUninit> AsRef<T> for FlashEntry<T> {
 pub(crate) struct Context {
     pub files: [FlashEntry<File>; 8],
     pub fat: FlashEntry<FatTable>,
-    pub salt: FlashEntry<Salt>,
+    pub boot_salt_1: FlashEntry<Salt>,
     pub ram_salt: Option<Salt>,
     pub pin_salt: Salt,
 }
@@ -185,34 +185,34 @@ impl Context {
 
         let fat = unsafe { FlashEntry::new(&_filetable as *const u8 as u32) };
 
-        let salt: FlashEntry<Salt> = unsafe { FlashEntry::new(&_salt as *const u8 as u32) };
+        let boot_salt_1: FlashEntry<Salt> = unsafe { FlashEntry::new(&_salt as *const u8 as u32) };
         // if salt isn't set, then the device was restarted during an operation
-        if !salt.is_set() {
+        if !boot_salt_1.is_set() {
             let derived = Salt::derive_boot_salt_1();
-            unsafe { salt.set(&derived).unwrap() };
+            unsafe { boot_salt_1.set(&derived).unwrap() };
         }
         // pin salt always derived
-        let pin_salt = salt.as_ref().derive_pin_salt();
+        let pin_salt = boot_salt_1.as_ref().derive_pin_salt();
         Self {
             files,
             fat,
-            salt,
+            boot_salt_1,
             ram_salt: None,
             pin_salt,
         }
     }
 
     pub(crate) fn move_salt_to_ram(&mut self) {
-        let salt = self.salt.as_ref();
+        let salt = self.boot_salt_1.as_ref();
         self.ram_salt = Some(*salt);
-        unsafe { self.salt.erase() };
+        unsafe { self.boot_salt_1.erase() };
     }
 
     pub(crate) fn move_salt_to_flash(&mut self) {
         let Some(salt) = self.ram_salt else {
             panic!("tried to move salt to flash with no ram salt");
         };
-        unsafe { self.salt.set(&salt).unwrap() };
+        unsafe { self.boot_salt_1.set(&salt).unwrap() };
     }
 
     pub(crate) fn k_auth(&self, pin: &[u8; 6]) -> [u8; 32] {

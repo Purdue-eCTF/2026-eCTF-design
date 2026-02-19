@@ -40,7 +40,7 @@ impl Salt {
 
     pub fn derive_pin_salt(&self) -> Self {
         let mut salt = [0; _];
-        Salt::derive_argon(&PIN, &mut salt, T_COST_PIN);
+        Salt::derive_argon(&self.0, &mut salt, T_COST_PIN);
         Self(salt)
     }
 
