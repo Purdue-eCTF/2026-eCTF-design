@@ -255,7 +255,7 @@ impl Write for UartWriter {
 
             for chunk in s[remaining..].as_bytes().chunks(MAX_BODY_SIZE) {
                 if chunk.len() >= MAX_BODY_SIZE {
-                    let _ = Message::write(Opcode::Debug, MessagePort::UART0, chunk);
+                    let _ = Message::write(self.2, MessagePort::UART0, chunk);
                 } else {
                     self.1 = chunk.len();
                     self.0[..chunk.len()].copy_from_slice(chunk);
