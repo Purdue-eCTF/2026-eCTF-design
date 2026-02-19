@@ -107,8 +107,7 @@ fn handle_list(ctx: &mut Context) {
 
     // return data without the extra space allocated in the body buffer
     let actual_body = &body[..4 + counter * METADATA_SIZE];
-    Message::write_header(Opcode::List, actual_body.len() as u16, MessagePort::UART0);
-    Message::write(actual_body, Opcode::List, MessagePort::UART0).unwrap();
+    Message::write(Opcode::List, MessagePort::UART0, actual_body).unwrap();
 }
 
 // Read file on given slot, returning to the host the file; requires pin on
@@ -164,7 +163,7 @@ fn handle_read(ctx: &mut Context, msg: &[u8]) {
     .unwrap();
 
     let total_length = file::NAME_SIZE + file_length;
-    Message::write(&buf[..total_length], Opcode::Read, MessagePort::UART0).unwrap();
+    Message::write(Opcode::Read, MessagePort::UART0, &buf[..total_length]).unwrap();
 }
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
@@ -371,9 +370,9 @@ fn handle_interrogate(_ctx: &mut Context, msg: &[u8]) {
 
     // interrogate the other HSM and receive response
     Message::write(
-        &payload[..actual_payload_size],
         Opcode::Interrogate,
         MessagePort::UART1,
+        &payload[..actual_payload_size],
     )
     .unwrap();
     let mut info_body = [0u8; MAX_BODY_SIZE];
@@ -471,9 +470,9 @@ fn handle_interrogate(_ctx: &mut Context, msg: &[u8]) {
 
     let actual_message_size = 4 + count * size_of::<listen::InterrogateFile>();
     Message::write(
-        &response[..actual_message_size],
         Opcode::Interrogate,
         MessagePort::UART0,
+        &response[..actual_message_size],
     )
     .unwrap();
 }

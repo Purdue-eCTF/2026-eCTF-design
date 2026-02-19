@@ -208,7 +208,7 @@ impl Message {
 
     /// Writes a message from a slice
     /// This will fail if the buffer is too large (u16 limit)
-    pub fn write(buf: &[u8], opcode: Opcode, port: MessagePort) -> Result<(), MessageError> {
+    pub fn write(opcode: Opcode, port: MessagePort, buf: &[u8]) -> Result<(), MessageError> {
         Self::write_header(opcode, buf.len().try_into().unwrap(), port);
         if !NACKS.contains(&opcode) {
             Self::read_ack(port)?;

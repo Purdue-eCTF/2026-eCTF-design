@@ -146,9 +146,9 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
 
     let payload_size = body_size + size_of::<crypto::SymmetricMetadata>();
     Message::write(
-        &body[..payload_size],
         Opcode::Interrogate,
         MessagePort::UART1,
+        &body[..payload_size],
     )
     .unwrap();
 }
@@ -228,7 +228,7 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ListenErro
 
     payload_end += size_of::<crypto::SymmetricMetadata>();
 
-    Message::write(&payload[..payload_end], Opcode::Receive, MessagePort::UART1).unwrap();
+    Message::write(Opcode::Receive, MessagePort::UART1, &payload[..payload_end]).unwrap();
 
     Ok(())
 }
