@@ -48,6 +48,15 @@ def main():
     threading.Thread(target=listen_logs, args=(sys.argv[4],), daemon=True).start()
 
     conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # enable keepalive
+    conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    # start sending probes after x seconds
+    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 10)
+    # send probe every x seconds
+    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+    # close connection after x fails
+    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+
     conn.connect((os.environ["IP"], int(os.environ["BUILD_PORT"])))
     print("Connected to build server")
 
@@ -61,7 +70,9 @@ def main():
 
     print("Authenticated with build server")
 
-    conn.send(f"{sys.argv[1]}\x1b{sys.argv[2]}\x1b{sys.argv[3]}\x1b{sys.argv[4]}".encode())
+    conn.send(
+        f"{sys.argv[1]}\x1b{sys.argv[2]}\x1b{sys.argv[3]}\x1b{sys.argv[4]}".encode()
+    )
     while True:
         data = conn.recv(1024)
         if not data:
@@ -74,6 +85,7 @@ def main():
             sys.exit(exit_code)
         except ValueError:
             pass
+
 
 if __name__ == "__main__":
     main()
