@@ -10,7 +10,6 @@ mod message;
 mod protocol;
 mod salt;
 mod secrets;
-mod secrets_generated;
 
 use bytemuck::{Pod, Zeroable};
 use context::*;
@@ -25,7 +24,7 @@ use crate::{
     },
     file::{FatEntry, FatTable, File, FileMeta, FileName, UUID},
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
-    secrets_generated::{GROUP_KEYS_ENC, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV},
+    secrets::{GROUP_KEYS_ENC, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV},
 };
 
 #[panic_handler]
@@ -91,8 +90,7 @@ fn handle_list(ctx: &mut Context) {
 
         // verify file signature before handling
         let group_keys =
-            secrets::get_group_keys_from_pin(ctx, file.protected.group, &secrets_generated::PIN)
-                .unwrap();
+            secrets::get_group_keys_from_pin(ctx, file.protected.group, &secrets::PIN).unwrap();
         let key = group_keys.pk_sign.0;
 
         if verify_signature(file, &key).is_err() {

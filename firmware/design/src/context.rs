@@ -17,7 +17,7 @@ use crate::{
     file::{FatTable, File},
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
 };
-use crate::{salt::Salt, secrets_generated::T_COST_K_AUTH};
+use crate::{salt::Salt, secrets::T_COST_K_AUTH};
 
 // TODO: glitching prevention or similar
 // TODO: how badly will this hit flash? Can we rotate slots or something?

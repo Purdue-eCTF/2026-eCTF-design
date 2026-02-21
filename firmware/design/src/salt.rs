@@ -1,4 +1,4 @@
-use crate::secrets_generated::{ARGON_M_COST, ARGON_P_COST, BOOT_SALT_0, T_COST_BOOT, T_COST_PIN};
+use crate::secrets::{ARGON_M_COST, ARGON_P_COST, BOOT_SALT_0, T_COST_BOOT, T_COST_PIN};
 use argon2::Block;
 use argon2::{Algorithm, Argon2, Params, Version};
 use bytemuck::{Pod, Zeroable};

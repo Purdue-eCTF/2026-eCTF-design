@@ -6,7 +6,7 @@ use crate::{
     message::{Message, MessagePort, Opcode},
     protocol::TransferM0Encrypted,
     secrets,
-    secrets_generated::{INTERROGATE_RECV, INTERROGATE_SEND, PIN, TRANSFER_RECV},
+    secrets::{INTERROGATE_RECV, INTERROGATE_SEND, PIN, TRANSFER_RECV},
 };
 use thiserror::Error;
 

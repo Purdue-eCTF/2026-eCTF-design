@@ -1,4 +1,4 @@
-use crate::{context::Context, secrets_generated::GROUP_KEYS_ENC};
+use crate::context::Context;
 
 use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
@@ -56,3 +56,5 @@ pub fn get_group_keys_from_pin(ctx: &Context, group: u16, pin: &[u8; 6]) -> Resu
     }
     r
 }
+
+include!(concat!(env!("OUT_DIR"), "/secrets_generated.rs"));
