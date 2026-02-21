@@ -6,6 +6,7 @@ on:
       - main
   workflow_dispatch:
 
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -33,5 +34,5 @@ jobs:
           BUILD_LOG_PORT: ${{ secrets.BUILD_LOG_PORT }}
           TEST_LOG_PORT: ${{ secrets.TEST_LOG_PORT }}
           ACTOR: ${{ github.actor }}
-          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
-        run: python upload.py '${{ github.sha }}' "$ACTOR" "$COMMIT_MESSAGE" '${{ github.run_id }}'
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: python upload.py "$GITHUB_SHA" "$ACTOR" "$(git show -s --format=%s)" '${{ github.run_id }}'
