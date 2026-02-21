@@ -17,13 +17,10 @@ impl SymmetricKey {
 #[repr(C)]
 pub struct GroupKey {
     pub sk_sign: SymmetricKey,
-    pub pk_sign: SymmetricKey,
     pub sk_read: SymmetricKey,
     pub pk_read: SymmetricKey,
     pub sk_trans: SymmetricKey, // TODO: why is this unused?
-    pub pk_trans: SymmetricKey,
     pub sk_inter: SymmetricKey,
-    pub pk_inter: SymmetricKey,
 }
 
 pub struct EncryptedGroupKey {
@@ -31,6 +28,9 @@ pub struct EncryptedGroupKey {
     pub blob: [u8; core::mem::size_of::<GroupKey>()],
     pub tag: [u8; 16],
     pub nonce: [u8; 24],
+    pub pk_sign: SymmetricKey,
+    pub pk_trans: SymmetricKey,
+    pub pk_inter: SymmetricKey,
 }
 
 impl EncryptedGroupKey {
@@ -45,16 +45,19 @@ impl EncryptedGroupKey {
     }
 }
 
-pub fn get_group_keys_from_pin(ctx: &Context, group: u16, pin: &[u8; 6]) -> Result<GroupKey, ()> {
-    let k_auth = ctx.k_auth(pin);
-    let mut r = Err(());
+pub fn get_enc_group_keys(group: u16) -> Result<&'static EncryptedGroupKey, ()> {
     for key in GROUP_KEYS_ENC.iter() {
         if key.group == group {
-            let dec = key.decrypt(&k_auth);
-            r = Ok(dec);
+            return Ok(key);
         }
     }
-    r
+    Err(())
+}
+
+pub fn get_group_keys_from_pin(ctx: &Context, group: u16, pin: &[u8; 6]) -> Result<GroupKey, ()> {
+    let k_auth = ctx.k_auth(pin);
+    let enc_keys = get_enc_group_keys(group)?;
+    Ok(enc_keys.decrypt(&k_auth))
 }
 
 include!(concat!(env!("OUT_DIR"), "/secrets_generated.rs"));

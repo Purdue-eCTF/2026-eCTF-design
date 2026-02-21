@@ -9,18 +9,16 @@ use argon2::password_hash::rand_core::RngCore;
 // TODO: ASLR for code and files
 use argon2::{Algorithm, Argon2, Params, Version};
 use bytemuck::{Pod, Zeroable};
+use chacha20poly1305::aead::OsRng;
 use chacha20poly1305::aead::generic_array::GenericArray;
-use chacha20poly1305::aead::{AeadMut, OsRng};
 use chacha20poly1305::{AeadCore, AeadInPlace, KeyInit, XChaCha20Poly1305};
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use rand::rngs::StdRng;
-use rand::{Rng, RngExt, rngs::ThreadRng};
 use serde::{Deserialize, de, de::Visitor};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 // TODO: don't have all this stuff copy pasted in build.rs
 
-#[derive(Copy, Clone, Default, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, Default, Pod, Zeroable)]
 #[repr(transparent)]
 struct SymmetricKey(pub [u8; 32]);
 
@@ -40,44 +38,48 @@ fn public_signing_key(secret_key: &SymmetricKey) -> SymmetricKey {
 #[repr(C)]
 struct GroupKey {
     pub sk_sign: SymmetricKey,
-    pub pk_sign: SymmetricKey,
     pub sk_read: SymmetricKey,
     pub pk_read: SymmetricKey,
     pub sk_trans: SymmetricKey,
-    pub pk_trans: SymmetricKey,
     pub sk_inter: SymmetricKey,
-    pub pk_inter: SymmetricKey,
 }
 
 impl From<GroupSecretKeys> for GroupKey {
     fn from(value: GroupSecretKeys) -> Self {
         GroupKey {
             sk_sign: value.sk_sign,
-            pk_sign: public_signing_key(&value.sk_sign),
             sk_read: value.sk_read,
             pk_read: public_encryption_key(&value.sk_read),
             sk_trans: value.sk_trans,
-            pk_trans: public_encryption_key(&value.sk_trans),
             sk_inter: value.sk_inter,
-            pk_inter: public_encryption_key(&value.sk_inter),
         }
     }
 }
 
 #[derive(Debug)]
-pub struct EncryptedGroupKey {
+struct EncryptedGroupKey {
     pub group: u16,
     pub blob: [u8; core::mem::size_of::<GroupKey>()],
     pub tag: [u8; 16],
     pub nonce: [u8; 24],
+    pub pk_sign: SymmetricKey,
+    pub pk_trans: SymmetricKey,
+    pub pk_inter: SymmetricKey,
 }
 
 impl EncryptedGroupKey {
-    fn from_group_keys(group: u16, group_keys: &GroupKey, key: &SymmetricKey) -> Self {
+    fn from_group_keys(
+        group: u16,
+        group_keys: &GroupKey,
+        k_auth: &SymmetricKey,
+        pk_sign: SymmetricKey,
+        pk_trans: SymmetricKey,
+        pk_inter: SymmetricKey,
+    ) -> Self {
         let mut blob: [u8; core::mem::size_of::<GroupKey>()] = [0; _];
         blob.copy_from_slice(bytemuck::bytes_of(group_keys));
 
-        let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(&key.0));
+        let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(&k_auth.0));
         let nonce = XChaCha20Poly1305::generate_nonce(OsRng);
 
         let group_bytes = group.to_le_bytes();
@@ -90,6 +92,9 @@ impl EncryptedGroupKey {
             blob,
             tag: *tag.as_array().unwrap(),
             nonce: *nonce.as_array().unwrap(),
+            pk_sign,
+            pk_trans,
+            pk_inter,
         }
     }
 }
@@ -193,6 +198,9 @@ fn main() {
     for perm in perms.iter() {
         let entry = global_secrets.groups.get_mut(&perm.group).unwrap();
         let mut keys = GroupKey::from(*entry);
+        let mut pk_sign = public_signing_key(&keys.sk_sign);
+        let mut pk_trans = public_encryption_key(&keys.sk_trans);
+        let mut pk_inter = public_encryption_key(&keys.sk_inter);
 
         if !perm.read {
             keys.pk_read = SymmetricKey([0; _]);
@@ -209,15 +217,18 @@ fn main() {
         }
 
         if !(perm.receive || perm.read || perm.write) {
-            keys.pk_sign = SymmetricKey([0; _]);
-            keys.pk_trans = SymmetricKey([0; _]);
-            keys.pk_inter = SymmetricKey([0; _]);
+            pk_sign = SymmetricKey([0; _]);
+            pk_trans = SymmetricKey([0; _]);
+            pk_inter = SymmetricKey([0; _]);
         }
 
         encrypted_keys.push(EncryptedGroupKey::from_group_keys(
             perm.group,
             &keys,
             &salts.k_auth,
+            pk_sign,
+            pk_trans,
+            pk_inter,
         ));
     }
 
@@ -255,6 +266,8 @@ pub const T_COST_PIN: u32 = {};
 pub const T_COST_K_AUTH: u32 = {};
 
 pub const BOOT_SALT_0: [u8; 32] = {:?};
+// TODO: make in special section of flash
+pub const BOOT_SALT_1: [u8; 32] = {:?};
 
 // T0
 pub const TRANSFER_SEND: SymmetricKey = SymmetricKey({:?});
@@ -275,6 +288,7 @@ pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
         T_COST_PIN,
         T_COST_K_AUTH,
         pin_salts.boot_salt_0,
+        pin_salts.boot_salt_1,
         global_keys.t0.0,
         global_keys.t1.0,
         global_keys.i0.0,

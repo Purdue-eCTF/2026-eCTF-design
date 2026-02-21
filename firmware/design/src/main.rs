@@ -24,7 +24,9 @@ use crate::{
     },
     file::{FatEntry, FatTable, File, FileMeta, FileName, UUID},
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
-    secrets::{GROUP_KEYS_ENC, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV},
+    secrets::{
+        GROUP_KEYS_ENC, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, get_enc_group_keys,
+    },
 };
 
 #[panic_handler]
@@ -89,8 +91,7 @@ fn handle_list(ctx: &mut Context) {
         };
 
         // verify file signature before handling
-        let group_keys =
-            secrets::get_group_keys_from_pin(ctx, file.protected.group, &secrets::PIN).unwrap();
+        let group_keys = secrets::get_enc_group_keys(file.protected.group).unwrap();
         let key = group_keys.pk_sign.0;
 
         if verify_signature(file, &key).is_err() {
@@ -150,7 +151,7 @@ fn handle_read(ctx: &mut Context, msg: &[u8]) {
     // get group key and verify file hasn't been tampered
     let group = file.protected.group;
     let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
-    let key = group_key.pk_sign.0;
+    let key = get_enc_group_keys(group).unwrap().pk_sign.0;
     verify_signature(file, &key).unwrap();
 
     // buf = N || PT
@@ -276,6 +277,7 @@ fn handle_receive(ctx: &mut Context, msg: &[u8]) {
     let write_slot = msg[7];
 
     let group = 0u16;
+    let enc_group_keys = secrets::get_enc_group_keys(group).unwrap();
     let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
 
     protocol::initiate_transfer(read_slot, group).unwrap();
@@ -290,11 +292,11 @@ fn handle_receive(ctx: &mut Context, msg: &[u8]) {
 
     let (inner, pkm_bytes) = outer.split_at_mut(outer.len() - size_of::<PubKeyMetadata>());
     let pkm: &PubKeyMetadata = bytemuck::from_bytes(pkm_bytes);
-    decrypt_payload_pub(inner, &pkm.gn, &pkm.nonce, &pkm.tag, &group_key.pk_trans.0).unwrap();
+    decrypt_payload_pub(inner, &pkm.gn, &pkm.nonce, &pkm.tag, &group_key.sk_trans.0).unwrap();
 
     let file: &mut File = bytemuck::from_bytes_mut(inner);
 
-    verify_signature(file, &group_key.pk_sign.0).unwrap();
+    verify_signature(file, &enc_group_keys.pk_sign.0).unwrap();
 
     let file_size =
         response.length as usize - size_of::<SymmetricMetadata>() - size_of::<PubKeyMetadata>();
