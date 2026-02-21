@@ -56,6 +56,7 @@ impl From<GroupSecretKeys> for GroupKey {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 struct EncryptedGroupKey {
     pub group: u16,
