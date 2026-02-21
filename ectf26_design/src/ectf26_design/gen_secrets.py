@@ -19,10 +19,6 @@ from Crypto.Signature import eddsa
 from loguru import logger
 
 
-def pub_from_priv_bytes(key: bytes) -> str:
-    return eddsa.import_private_key(key).public_key().export_key(format="raw").hex()
-
-
 def gen_secrets(groups: list[int]) -> bytes:
     """Generate the contents secrets file
 
@@ -41,10 +37,14 @@ def gen_secrets(groups: list[int]) -> bytes:
 
     all_secrets = {
         "groups": {},
+        "t0": get_random_bytes(32).hex(),
+        "t1": get_random_bytes(32).hex(),
+        "i0": get_random_bytes(32).hex(),
+        "i1": get_random_bytes(32).hex(),
     }
 
     for group in groups:
-        group_data = {"public_keys": {}, "secret_keys": {}, "shared_symmetric": {}}
+        group_data = {}
 
         write_priv = get_random_bytes(32)
         read_priv = get_random_bytes(32)
@@ -52,22 +52,11 @@ def gen_secrets(groups: list[int]) -> bytes:
         interrogate_priv = get_random_bytes(32)
 
         # Generate all keys, since the access controls only get passed to the dockerfile
-        group_data["public_keys"]["pk_sign"] = pub_from_priv_bytes(write_priv)
-        group_data["public_keys"]["pk_read"] = pub_from_priv_bytes(read_priv)
-        group_data["public_keys"]["pk_trans"] = pub_from_priv_bytes(transfer_priv)
-        group_data["public_keys"]["pk_inter"] = pub_from_priv_bytes(interrogate_priv)
-
-        group_data["secret_keys"]["sk_sign"] = write_priv.hex()
-        group_data["secret_keys"]["sk_read"] = read_priv.hex()
-        group_data["secret_keys"]["sk_trans"] = transfer_priv.hex()
-        group_data["secret_keys"]["sk_inter"] = interrogate_priv.hex()
-
-        group_data["shared_symmetric"] = {
-            "T0": get_random_bytes(32).hex(),
-            "T1": get_random_bytes(32).hex(),
-            "I0": get_random_bytes(32).hex(),
-            "I1": get_random_bytes(32).hex(),
-        }
+        # public keys are generated in the build.rs
+        group_data["sk_sign"] = write_priv.hex()
+        group_data["sk_read"] = read_priv.hex()
+        group_data["sk_trans"] = transfer_priv.hex()
+        group_data["sk_inter"] = interrogate_priv.hex()
 
         all_secrets["groups"][f"{group}"] = group_data
 

@@ -26,10 +26,15 @@ ed25519-dalek = { version = "2.2.0", default-features = false }
 # mspm0l222x-hal = { path = "../mspm0l222x-hal", features = ["rt"] }
 
 [build-dependencies]
+bytemuck = { version = "1.25.0", features = ["derive"] }
 serde = { version = "1.0.217", features = ["serde_derive"] }
 serde_json = "1.0.137"
 argon2 = "0.5.3"
 ed25519-dalek = { version = "2.1.1", default-features = false }
+x25519-dalek = { version = "2.0.1", default-features = false, features = [
+    "static_secrets",
+] }
+chacha20poly1305 = "0.10.1"
 rand = "0.10.0"
 
 [profile.release]

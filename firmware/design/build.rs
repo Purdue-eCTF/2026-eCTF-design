@@ -3,16 +3,38 @@
 use core::fmt;
 use std::collections::HashMap;
 
+use argon2::password_hash::rand_core::RngCore;
 // TODO: ASLR for code and files
-use argon2::Argon2;
+use argon2::{Algorithm, Argon2, Params, Version};
+use bytemuck::{Pod, Zeroable};
+use chacha20poly1305::aead::generic_array::GenericArray;
+use chacha20poly1305::aead::{AeadMut, OsRng};
+use chacha20poly1305::{AeadCore, AeadInPlace, KeyInit, XChaCha20Poly1305};
+use ed25519_dalek::{SigningKey, VerifyingKey};
+use rand::rngs::StdRng;
 use rand::{Rng, RngExt, rngs::ThreadRng};
 use serde::{Deserialize, de, de::Visitor};
+use x25519_dalek::{PublicKey, StaticSecret};
 
-#[derive(Copy, Clone, Default)]
+// TODO: don't have all this stuff copy pasted in build.rs
+
+#[derive(Copy, Clone, Default, Pod, Zeroable)]
 #[repr(transparent)]
 struct SymmetricKey(pub [u8; 32]);
 
-#[derive(Default, Clone, Copy, Deserialize)]
+fn public_encryption_key(secret_key: &SymmetricKey) -> SymmetricKey {
+    let secret_key = StaticSecret::from(secret_key.0);
+    let public_key = PublicKey::from(&secret_key);
+    SymmetricKey(public_key.to_bytes())
+}
+
+fn public_signing_key(secret_key: &SymmetricKey) -> SymmetricKey {
+    let secret_key = SigningKey::from_bytes(&secret_key.0);
+    let public_key = VerifyingKey::from(&secret_key);
+    SymmetricKey(public_key.to_bytes())
+}
+
+#[derive(Default, Clone, Copy, Deserialize, Pod, Zeroable)]
 #[repr(C)]
 struct GroupKey {
     pub sk_sign: SymmetricKey,
@@ -23,12 +45,24 @@ struct GroupKey {
     pub pk_trans: SymmetricKey,
     pub sk_inter: SymmetricKey,
     pub pk_inter: SymmetricKey,
-    pub t0: SymmetricKey,
-    pub t1: SymmetricKey,
-    pub i0: SymmetricKey,
-    pub i1: SymmetricKey,
 }
 
+impl From<GroupSecretKeys> for GroupKey {
+    fn from(value: GroupSecretKeys) -> Self {
+        GroupKey {
+            sk_sign: value.sk_sign,
+            pk_sign: public_signing_key(&value.sk_sign),
+            sk_read: value.sk_read,
+            pk_read: public_encryption_key(&value.sk_read),
+            sk_trans: value.sk_trans,
+            pk_trans: public_encryption_key(&value.sk_trans),
+            sk_inter: value.sk_inter,
+            pk_inter: public_encryption_key(&value.sk_inter),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct EncryptedGroupKey {
     pub group: u16,
     pub blob: [u8; core::mem::size_of::<GroupKey>()],
@@ -36,9 +70,45 @@ pub struct EncryptedGroupKey {
     pub nonce: [u8; 24],
 }
 
+impl EncryptedGroupKey {
+    fn from_group_keys(group: u16, group_keys: &GroupKey, key: &SymmetricKey) -> Self {
+        let mut blob: [u8; core::mem::size_of::<GroupKey>()] = [0; _];
+        blob.copy_from_slice(bytemuck::bytes_of(group_keys));
+
+        let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(&key.0));
+        let nonce = XChaCha20Poly1305::generate_nonce(OsRng);
+
+        let group_bytes = group.to_le_bytes();
+        let tag = cipher
+            .encrypt_in_place_detached(&nonce, &group_bytes, &mut blob)
+            .expect("failed to encrypt group keys");
+
+        EncryptedGroupKey {
+            group,
+            blob,
+            tag: *tag.as_array().unwrap(),
+            nonce: *nonce.as_array().unwrap(),
+        }
+    }
+}
+
+// structs which represent format of global secrets
+#[derive(Default, Clone, Copy, Deserialize)]
+#[repr(C)]
+struct GroupSecretKeys {
+    pub sk_sign: SymmetricKey,
+    pub sk_read: SymmetricKey,
+    pub sk_trans: SymmetricKey,
+    pub sk_inter: SymmetricKey,
+}
+
 #[derive(Deserialize)]
 struct GlobalSecrets {
-    groups: HashMap<u16, GroupKey>,
+    groups: HashMap<u16, GroupSecretKeys>,
+    t0: SymmetricKey,
+    t1: SymmetricKey,
+    i0: SymmetricKey,
+    i1: SymmetricKey,
 }
 
 // {
@@ -110,58 +180,101 @@ fn main() {
         .groups
         .retain(|k, _| perms.iter().find(|perm| perm.group == *k).is_some());
 
+    let pin = Pin::from_string(env!("HSM_PIN"));
+    let salts = PinSalts::new(&pin);
+
+    let mut encrypted_keys = Vec::new();
+
     // remove secrets we don't have permissions for
     for perm in perms.iter() {
         let entry = global_secrets.groups.get_mut(&perm.group).unwrap();
+        let mut keys = GroupKey::from(*entry);
+
+        if !perm.read {
+            keys.pk_read = SymmetricKey([0; _]);
+        }
+
         if !perm.write {
-            entry.sk_sign = SymmetricKey([0; _]);
-            entry.pk_read = SymmetricKey([0; _]);
+            keys.sk_sign = SymmetricKey([0; _]);
+            keys.pk_read = SymmetricKey([0; _]);
         }
+
+        if !perm.receive {
+            keys.sk_trans = SymmetricKey([0; _]);
+            keys.sk_inter = SymmetricKey([0; _]);
+        }
+
         if !(perm.receive || perm.read || perm.write) {
-            entry.pk_sign = SymmetricKey([0; _]);
+            keys.pk_sign = SymmetricKey([0; _]);
+            keys.pk_trans = SymmetricKey([0; _]);
+            keys.pk_inter = SymmetricKey([0; _]);
         }
 
-        if !perm.receive {
-            entry.sk_read = SymmetricKey([0; _]);
-        }
-
-        if !perm.receive {
-            // TODO: what...
-            entry.sk_write = SymmetricKey([0; _]);
-        }
+        encrypted_keys.push(EncryptedGroupKey::from_group_keys(
+            perm.group,
+            &keys,
+            &salts.k_auth,
+        ));
     }
-    let mut rng = ThreadRng::default();
-    let boot_salt = gen_bytes(&mut rng, 32);
-    let pin = Pin::from_string(env!("HSM_PIN"));
 
-    print!("{}", generate_secrets(&boot_salt, pin, &[]));
+    let secrets_file = generate_secrets(&salts, &global_secrets, &[]);
+    std::fs::write("/home/jack/secrets.rs", secrets_file.as_bytes()).unwrap();
 }
 
-fn gen_bytes(rng: &mut impl Rng, n: usize) -> Vec<u8> {
-    let mut v = vec![0; n];
-    rng.fill_bytes(&mut v);
-    v
-}
+fn generate_secrets(
+    pin_salts: &PinSalts,
+    global_keys: &GlobalSecrets,
+    group_keys: &[EncryptedGroupKey],
+) -> String {
+    let encrypted_keys = group_keys
+        .iter()
+        .map(|group_key| format!("{:#?}", group_key))
+        .collect::<Vec<_>>()
+        .join(",");
 
-fn generate_secrets(boot_salt_0: &[u8], pin: Pin, group_keys: &[EncryptedGroupKey]) -> String {
     format!(
         "// This file was automatically generated by build.rs
 use crate::secrets::{{EncryptedGroupKey, SymmetricKey}};
 
+pub const ARGON_M_COST: u32 = {}; // memory cost in kb
+pub const ARGON_P_COST: u32 = {}; // parallelism costs
+
+// PLACEHOLDER: Time cost (iterations) for Boot Salt 1 generation
+pub const T_COST_BOOT: u32 = {};
+
+// Time cost for PIN Salt derivation
+pub const T_COST_PIN: u32 = {};
+
+// Time cost for K_auth
+pub const T_COST_K_AUTH: u32 = {};
+
 pub const BOOT_SALT_0: [u8; 32] = {:?};
-pub const PIN: [u8; 6] = {:?};
+
+// T0
+pub const TRANSFER_SEND: SymmetricKey = SymmetricKey({:?});
+// T1
+pub const TRANSFER_RECV: SymmetricKey = SymmetricKey({:?});
+
+// I0
+pub const INTERROGATE_SEND: SymmetricKey = SymmetricKey({:?});
+// I1
+pub const INTERROGATE_RECV: SymmetricKey = SymmetricKey({:?});
 
 // TODO: must be sorted by group
-pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [EncryptedGroupKey {{
-    group: 0x0000,
-    blob: [0; _],
-    nonce: [0; _],
-    tag: [0; _],
-}}];
+pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
 ",
-        boot_salt_0,
-        pin,
-        group_keys.len()
+        ARGON_M_COST,
+        ARGON_P_COST,
+        T_COST_BOOT,
+        T_COST_PIN,
+        T_COST_K_AUTH,
+        pin_salts.boot_salt_0,
+        global_keys.t0.0,
+        global_keys.t1.0,
+        global_keys.i0.0,
+        global_keys.i1.0,
+        group_keys.len(),
+        encrypted_keys,
     )
 }
 
@@ -193,6 +306,64 @@ impl Pin {
         arr.copy_from_slice(s.as_bytes());
 
         Self(arr)
+    }
+}
+
+const ARGON_M_COST: u32 = 8;
+const ARGON_P_COST: u32 = 1;
+// TODO: figure out these costs
+const T_COST_BOOT: u32 = 1;
+const T_COST_PIN: u32 = 1;
+const T_COST_K_AUTH: u32 = 1;
+
+// TODO: emit this in secrets_generated
+const DERIVE_SALT: &[u8] = b"ectf-deriv";
+
+fn derive_next_salt(input: &[u8], t_cost: u32) -> Salt {
+    let params = Params::new(
+        ARGON_M_COST,
+        t_cost,
+        ARGON_P_COST,
+        Some(std::mem::size_of::<Salt>()),
+    )
+    .expect("Argon Params Invalid");
+
+    let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+
+    let mut out: Salt = [0; _];
+    argon
+        .hash_password_into(&input, DERIVE_SALT, &mut out)
+        .expect("deriving salt failed");
+    out
+}
+
+type Salt = [u8; 32];
+struct PinSalts {
+    boot_salt_0: Salt,
+    boot_salt_1: Salt,
+    pin_salt: Salt,
+    k_auth: SymmetricKey,
+}
+
+impl PinSalts {
+    fn new(pin: &Pin) -> Self {
+        let mut boot_salt_0: Salt = [0; _];
+        OsRng.fill_bytes(&mut boot_salt_0);
+
+        let boot_salt_1 = derive_next_salt(&boot_salt_0, T_COST_BOOT);
+        let pin_salt = derive_next_salt(&boot_salt_1, T_COST_PIN);
+
+        let mut pin_buffer = [0; 32 + 6];
+        pin_buffer[..6].copy_from_slice(&pin.0);
+        pin_buffer[6..].copy_from_slice(&pin_salt);
+        let k_auth = derive_next_salt(&pin_buffer, T_COST_K_AUTH);
+
+        PinSalts {
+            boot_salt_0,
+            boot_salt_1,
+            pin_salt,
+            k_auth: SymmetricKey(k_auth),
+        }
     }
 }
 
