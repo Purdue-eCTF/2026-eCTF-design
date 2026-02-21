@@ -34,8 +34,9 @@ pub struct ProtectedFileData {
     pub name: FileName,
     pub uuid: UUID,
     pub group: u16,
+    pub contents_length: u16,
     pub contents: [u8; CONTENT_SIZE],
-    _pad: [u8; 6],
+    _pad: [u8; 4],
 }
 
 impl ProtectedFileData {
@@ -47,8 +48,9 @@ impl ProtectedFileData {
             name: FileName([0; NAME_SIZE]),
             uuid: UUID([0; UUID_SIZE]),
             group: 0,
+            contents_length: 0,
             contents: [0; CONTENT_SIZE],
-            _pad: [0; 6],
+            _pad: [0; 4],
         }
     }
 }
@@ -69,7 +71,7 @@ pub struct File {
 impl File {
     pub const EMPTY: u64 = 0xd8b1f12cd454a41d;
     pub const FULL: u64 = 0xc0aa73e0c260426e;
-    const fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             state: File::EMPTY,
             signature: [0; _],
@@ -78,22 +80,6 @@ impl File {
     }
     pub(crate) fn is_full(&self) -> bool {
         self.state == File::FULL
-    }
-    pub(crate) fn new() -> Self {
-        Self {
-            state: File::EMPTY,
-            signature: [0; _],
-            protected: ProtectedFileData {
-                nonce: [0; _],
-                tag: [0; _],
-                gn: [0; _],
-                name: FileName([0; _]),
-                uuid: UUID([0; _]),
-                group: 0,
-                contents: [0; _],
-                _pad: [0; _],
-            },
-        }
     }
 }
 unsafe impl Zeroable for File {

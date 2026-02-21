@@ -136,12 +136,8 @@ fn handle_read(ctx: &mut Context, msg: &[u8]) {
         panic!()
     }
 
-    let Some(fat) = ctx.fat.get() else {
-        panic!("failed to load FAT");
-    };
-
-    let file_length = fat.entries[slot].length as usize;
     let file = ctx.files[slot].get().unwrap();
+    let file_length = file.protected.contents_length as usize;
 
     // die if there isn't a file here
     if !file.is_full() {
@@ -217,7 +213,7 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
     let pk_read = group_key.pk_read.0;
 
     // generate empty file variable
-    let mut file = File::new();
+    let mut file = File::empty();
     file.state = File::FULL;
 
     // set file metadata
@@ -229,6 +225,7 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
     // we already verified that the data length is correct, so don't check again
     // TODO: do we need to read chunks?
     protected.contents[..data.len()].copy_from_slice(data);
+    protected.contents_length = data.len() as u16;
 
     // encrypt everything
     encrypt_payload_pub(
