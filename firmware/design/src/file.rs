@@ -1,4 +1,4 @@
-use core::{fmt, ops::Index};
+use core::ops::Index;
 
 use bytemuck::{NoUninit, Pod, Zeroable};
 
@@ -104,7 +104,7 @@ unsafe impl Zeroable for File {
 unsafe impl Pod for File {}
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct FatEntry {
     pub uuid: UUID,
     pub length: u16,
@@ -112,40 +112,9 @@ pub struct FatEntry {
     pub addr: u32,
 }
 
-impl FatEntry {
-    const fn empty() -> Self {
-        Self {
-            uuid: UUID([0; _]),
-            length: 0,
-            padding: 0,
-            addr: 0,
-        }
-    }
-}
-
-impl core::fmt::Debug for FatEntry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FatEntry")
-            .field("uuid", &self.uuid)
-            .field("length", &self.length)
-            .field("addr", &self.addr)
-            .finish()
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct FatTable {
     pub entries: [FatEntry; 8],
-}
-impl FatTable {
-    pub(crate) fn new(entries: [FatEntry; 8]) -> Self {
-        Self { entries }
-    }
-    pub const fn empty() -> Self {
-        Self {
-            entries: [FatEntry::empty(); 8],
-        }
-    }
 }
 
 impl Index<usize> for FatTable {

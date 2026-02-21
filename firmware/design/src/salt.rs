@@ -1,4 +1,4 @@
-use crate::secrets_generated::{BOOT_SALT_0, PIN};
+use crate::secrets_generated::{ARGON_M_COST, ARGON_P_COST, BOOT_SALT_0, T_COST_BOOT, T_COST_PIN};
 use argon2::Block;
 use argon2::{Algorithm, Argon2, Params, Version};
 use bytemuck::{Pod, Zeroable};
@@ -6,24 +6,7 @@ use bytemuck::{Pod, Zeroable};
 // ARGON2 TUNING PARAMETERS
 // Requirements: Boot ~4s and PIN ~1s
 
-pub const ARGON_M_COST: u32 = 8; // memory cost in kb
 const ARGON_M_COST_USIZE: usize = ARGON_M_COST as usize;
-pub const ARGON_P_COST: u32 = 1; // parallelism costs
-
-// PLACEHOLDER: Time cost (iterations) for Boot Salt 1 generation
-pub const T_COST_BOOT: u32 = 1;
-
-// Time cost for PIN Salt derivation
-// TODO: tune to hit ~1 second
-pub const T_COST_PIN: u32 = 1;
-
-// Time cost for K_auth
-// TODO: tune to hit ~1 second
-pub const T_COST_K_AUTH: u32 = 1;
-
-// Physical layout of the Security Page in Flash
-// Size must be exactly 1024 bytes to match hardware sector erase size
-// Stores Boot Salts and Lockout state
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]

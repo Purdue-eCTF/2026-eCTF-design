@@ -13,11 +13,11 @@ use mspm0l222x_hal::{
     uart::Uart0,
 };
 
-use crate::salt::{self, Salt};
 use crate::{
     file::{FatTable, File},
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
 };
+use crate::{salt::Salt, secrets_generated::T_COST_K_AUTH};
 
 // TODO: glitching prevention or similar
 // TODO: how badly will this hit flash? Can we rotate slots or something?
@@ -219,7 +219,7 @@ impl Context {
         let mut input = [0; 32 + 6];
         input[..6].copy_from_slice(pin);
         input[6..].copy_from_slice(&self.pin_salt.0);
-        Salt::derive_argon(&input, &mut k, salt::T_COST_K_AUTH);
+        Salt::derive_argon(&input, &mut k, T_COST_K_AUTH);
         k
     }
 }

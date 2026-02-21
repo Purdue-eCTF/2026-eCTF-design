@@ -1,6 +1,20 @@
 // TODO: automatically generate via build.rs
 use crate::secrets::{EncryptedGroupKey, SymmetricKey};
 
+pub const ARGON_M_COST: u32 = 8; // memory cost in kb
+pub const ARGON_P_COST: u32 = 1; // parallelism costs
+
+// PLACEHOLDER: Time cost (iterations) for Boot Salt 1 generation
+pub const T_COST_BOOT: u32 = 1;
+
+// Time cost for PIN Salt derivation
+// TODO: tune to hit ~1 second
+pub const T_COST_PIN: u32 = 1;
+
+// Time cost for K_auth
+// TODO: tune to hit ~1 second
+pub const T_COST_K_AUTH: u32 = 1;
+
 pub const BOOT_SALT_0: [u8; 32] = [0; _];
 pub const PIN: [u8; 6] = [0; _];
 
