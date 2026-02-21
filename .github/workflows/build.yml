@@ -35,4 +35,4 @@ jobs:
           TEST_LOG_PORT: ${{ secrets.TEST_LOG_PORT }}
           ACTOR: ${{ github.actor }}
           BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: python upload.py "$GITHUB_SHA" "$ACTOR" "$(git show -s --format=%s)" '${{ github.run_id }}'
+        run: python upload.py "$GITHUB_SHA" "$ACTOR" "$(git show -s --format=%s)" '${{ github.run_id }}' "$BRANCH"
