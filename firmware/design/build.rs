@@ -310,7 +310,7 @@ impl Perms {
     fn from_string(s: &str) -> Self {
         let (group, perms) = s.split_once("=").unwrap();
         Self {
-            group: group.parse().unwrap(),
+            group: u16::from_str_radix(group, 16).unwrap(),
             read: perms.chars().nth(0) == Some('R'),
             write: perms.chars().nth(0) == Some('W'),
             receive: perms.chars().nth(0) == Some('C'),
