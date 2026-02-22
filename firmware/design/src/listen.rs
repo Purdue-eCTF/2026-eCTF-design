@@ -2,12 +2,13 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::{
     Context,
-    crypto::{self, PubKeyMetadata, SymmetricMetadata},
+    crypto::{
+        self, PubKeyMetadata, SymmetricMetadata, decrypt_payload_pub, unwrap_symmetric_message,
+    },
     file::{self, File, FileName},
     message::{Message, MessagePort, Opcode},
-    protocol::TransferM0Encrypted,
-    secrets,
-    secrets::{INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV},
+    protocol::{ProtocolError, TransferM0Encrypted},
+    secrets::{self, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV},
 };
 use thiserror::Error;
 
@@ -23,8 +24,19 @@ pub(crate) enum ListenError {
 #[repr(C, packed)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 pub struct InterrogateFile {
-    pub group: u16,
+    // group must not be u16 because it is ub to take reference to u16 in packed struct with potentially less alignment
+    pub group_bytes: [u8; 2],
     pub protected: InterrogateFileProtected,
+}
+
+impl InterrogateFile {
+    pub fn group(&self) -> u16 {
+        u16::from_le_bytes(self.group_bytes)
+    }
+
+    pub fn set_group(&mut self, group: u16) {
+        self.group_bytes = group.to_le_bytes();
+    }
 }
 
 #[repr(C, packed)]
@@ -32,6 +44,55 @@ pub struct InterrogateFile {
 pub struct InterrogateFileProtected {
     pub slot: u8,
     pub name: FileName,
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct EncryptedInterrogateInfo {
+    pub file: InterrogateFile,
+    pub metadata: PubKeyMetadata,
+}
+
+impl EncryptedInterrogateInfo {
+    pub fn encrypt(&mut self, public_key: &[u8; 32]) -> Result<(), ProtocolError> {
+        let Self {
+            file:
+                InterrogateFile {
+                    group_bytes,
+                    protected,
+                },
+            metadata,
+            ..
+        } = self;
+
+        *metadata =
+            PubKeyMetadata::encrypt(bytemuck::bytes_of_mut(protected), public_key, group_bytes)?;
+
+        Ok(())
+    }
+
+    pub fn decrypt(&mut self, secret_key: &[u8; 32]) -> Result<(), ProtocolError> {
+        let Self {
+            file:
+                InterrogateFile {
+                    group_bytes,
+                    protected,
+                },
+            metadata,
+            ..
+        } = self;
+
+        decrypt_payload_pub(
+            bytemuck::bytes_of_mut(protected),
+            &metadata.gn,
+            &metadata.nonce,
+            &metadata.tag,
+            secret_key,
+            group_bytes,
+        )?;
+
+        Ok(())
+    }
 }
 
 pub fn recv(ctx: &mut Context, opcode: Opcode, body: &mut [u8]) -> Result<(), ListenError> {
@@ -47,18 +108,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
     // Expect body = Enc_I0(Group1 || Group2 || ... || GroupN) || SM
     let i0 = INTERROGATE_SEND.0;
 
-    // split them
-    let (ct, sm_recv_bytes) =
-        body.split_at_mut(body.len() - size_of::<crypto::SymmetricMetadata>());
-    let sm_recv: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(sm_recv_bytes);
-    let msg = crypto::decrypt_payload_symmetric(
-        ct,
-        &sm_recv.nonce,
-        &sm_recv.tag,
-        &i0,
-        &[Opcode::Interrogate.into()],
-    )
-    .unwrap();
+    let msg = unwrap_symmetric_message(body, &i0, &[Opcode::Interrogate.into()]).unwrap();
 
     // msg = Group1 || Group2 || ... || GroupN
 
@@ -103,7 +153,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
                 // copy the InterrogateFile to the start of the entry
                 let ifile: &mut InterrogateFile = bytemuck::from_bytes_mut(content);
                 *ifile = InterrogateFile {
-                    group: metadata.group,
+                    group_bytes: metadata.group.to_le_bytes(),
                     protected: InterrogateFileProtected {
                         slot: i as u8,
                         name: metadata.name,

@@ -79,22 +79,26 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
 
     // Ignore all secrets we don't have a group for
-    global_secrets
-        .groups
-        .retain(|k, _| perms.iter().find(|perm| perm.group == *k).is_some());
+    global_secrets.groups.retain(|k, _| {
+        perms
+            .iter()
+            .find(|perm| (perm.group == *k) && perm.has_any_perms())
+            .is_some()
+    });
 
     let pin = Pin::from_string(env!("HSM_PIN"));
     let salts = PinSalts::new(&pin);
 
     let mut encrypted_keys = Vec::new();
+    let mut copy_perm_groups = Vec::new();
 
     // remove secrets we don't have permissions for
     for perm in perms.iter() {
         let entry = global_secrets.groups.get_mut(&perm.group).unwrap();
         let mut keys = GroupKey::from(*entry);
-        let mut pk_sign = public_signing_key(&keys.sk_sign);
-        let mut pk_trans = public_encryption_key(&keys.sk_trans);
-        let mut pk_inter = public_encryption_key(&keys.sk_inter);
+        let pk_sign = public_signing_key(&keys.sk_sign);
+        let pk_trans = public_encryption_key(&keys.sk_trans);
+        let pk_inter = public_encryption_key(&keys.sk_inter);
 
         if !perm.read {
             keys.pk_read = SymmetricKey([0; _]);
@@ -105,15 +109,11 @@ fn main() {
             keys.pk_read = SymmetricKey([0; _]);
         }
 
-        if !perm.receive {
+        if perm.receive {
+            copy_perm_groups.push(perm.group);
+        } else {
             keys.sk_trans = SymmetricKey([0; _]);
             keys.sk_inter = SymmetricKey([0; _]);
-        }
-
-        if !(perm.receive || perm.read || perm.write) {
-            pk_sign = SymmetricKey([0; _]);
-            pk_trans = SymmetricKey([0; _]);
-            pk_inter = SymmetricKey([0; _]);
         }
 
         encrypted_keys.push(EncryptedGroupKey::from_group_keys(
@@ -128,7 +128,8 @@ fn main() {
     }
     encrypted_keys.sort_by_key(|k| k.group);
 
-    let secrets_file = generate_secrets(&salts, &global_secrets, &encrypted_keys);
+    let secrets_file =
+        generate_secrets(&salts, &global_secrets, &encrypted_keys, &copy_perm_groups);
     std::fs::write(
         out_dir.join("secrets_generated.rs"),
         secrets_file.as_bytes(),
@@ -140,6 +141,7 @@ fn generate_secrets(
     pin_salts: &PinSalts,
     global_keys: &GlobalSecrets,
     group_keys: &[EncryptedGroupKey],
+    copy_perm_grops: &[u16],
 ) -> String {
     assert!(group_keys.is_sorted_by_key(|k| k.group));
 
@@ -185,6 +187,8 @@ pub const DERIVE_SALT: &[u8] = &{:?};
 
 // TODO: must be sorted by group
 pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
+
+pub const COPY_PERM_GROUPS: [u16; {}] = {:?};
 ",
         ARGON_M_COST,
         ARGON_P_COST,
@@ -202,9 +206,12 @@ pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
         DERIVE_SALT,
         group_keys.len(),
         encrypted_keys,
+        copy_perm_grops.len(),
+        copy_perm_grops,
     )
 }
 
+#[derive(Debug)]
 struct Perms {
     group: u16,
     read: bool,
@@ -218,9 +225,13 @@ impl Perms {
         Self {
             group: u16::from_str_radix(group, 16).unwrap(),
             read: perms.chars().nth(0) == Some('R'),
-            write: perms.chars().nth(0) == Some('W'),
-            receive: perms.chars().nth(0) == Some('C'),
+            write: perms.chars().nth(1) == Some('W'),
+            receive: perms.chars().nth(2) == Some('C'),
         }
+    }
+
+    fn has_any_perms(&self) -> bool {
+        self.read || self.write || self.receive
     }
 }
 
