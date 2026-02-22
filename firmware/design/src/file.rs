@@ -1,8 +1,8 @@
-use core::{fmt, ops::Index};
+use core::ops::Index;
 
 use bytemuck::{NoUninit, Pod, Zeroable};
 
-use crate::util;
+use crate::context;
 
 pub const CONTENT_SIZE: usize = 8192;
 pub const UUID_SIZE: usize = 16;
@@ -34,8 +34,9 @@ pub struct ProtectedFileData {
     pub name: FileName,
     pub uuid: UUID,
     pub group: u16,
+    pub contents_length: u16,
     pub contents: [u8; CONTENT_SIZE],
-    _pad: [u8; 6],
+    _pad: [u8; 4],
 }
 
 impl ProtectedFileData {
@@ -47,8 +48,9 @@ impl ProtectedFileData {
             name: FileName([0; NAME_SIZE]),
             uuid: UUID([0; UUID_SIZE]),
             group: 0,
+            contents_length: 0,
             contents: [0; CONTENT_SIZE],
-            _pad: [0; 6],
+            _pad: [0; 4],
         }
     }
 }
@@ -69,7 +71,7 @@ pub struct File {
 impl File {
     pub const EMPTY: u64 = 0xd8b1f12cd454a41d;
     pub const FULL: u64 = 0xc0aa73e0c260426e;
-    const fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             state: File::EMPTY,
             signature: [0; _],
@@ -79,22 +81,6 @@ impl File {
     pub(crate) fn is_full(&self) -> bool {
         self.state == File::FULL
     }
-    pub(crate) fn new() -> Self {
-        Self {
-            state: File::EMPTY,
-            signature: [0; _],
-            protected: ProtectedFileData {
-                nonce: [0; _],
-                tag: [0; _],
-                gn: [0; _],
-                name: FileName([0; _]),
-                uuid: UUID([0; _]),
-                group: 0,
-                contents: [0; _],
-                _pad: [0; _],
-            },
-        }
-    }
 }
 unsafe impl Zeroable for File {
     fn zeroed() -> Self {
@@ -103,21 +89,8 @@ unsafe impl Zeroable for File {
 }
 unsafe impl Pod for File {}
 
-#[unsafe(link_section = ".files.default")]
-#[unsafe(no_mangle)]
-pub static __FILES: [(File, u64, [u8; (9 * 1024) - size_of::<File>() - 8]); 8] = [
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-    (File::empty(), util::FLASH_MAGIC, [0; _]),
-];
-
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct FatEntry {
     pub uuid: UUID,
     pub length: u16,
@@ -125,24 +98,9 @@ pub struct FatEntry {
     pub addr: u32,
 }
 
-impl core::fmt::Debug for FatEntry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FatEntry")
-            .field("uuid", &self.uuid)
-            .field("length", &self.length)
-            .field("addr", &self.addr)
-            .finish()
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct FatTable {
     pub entries: [FatEntry; 8],
-}
-impl FatTable {
-    pub(crate) fn new(entries: [FatEntry; 8]) -> Self {
-        Self { entries }
-    }
 }
 
 impl Index<usize> for FatTable {
@@ -152,3 +110,22 @@ impl Index<usize> for FatTable {
     }
 }
 unsafe impl NoUninit for FatTable {}
+
+#[repr(align(1024), C)]
+#[derive(Copy, Clone)]
+pub struct FileSlot {
+    pub file: File,
+    pub magic: u64,
+}
+
+// Force "filled" files and FAT to appear in flash on first boot
+#[unsafe(link_section = ".files.default")]
+#[unsafe(no_mangle)]
+pub static __FILES: [FileSlot; 8] = [FileSlot {
+    file: File::empty(),
+    magic: context::FLASH_MAGIC,
+}; 8];
+
+#[unsafe(link_section = ".filetable.default")]
+#[unsafe(no_mangle)]
+pub static __FAT: ([u8; core::mem::size_of::<FatTable>()], u64) = ([0; _], context::FLASH_MAGIC);

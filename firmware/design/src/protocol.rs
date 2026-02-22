@@ -1,6 +1,6 @@
 use crate::file::File;
 use crate::message::{Message, MessageError, MessagePort, Opcode};
-use crate::secrets_generated::TRANSFER_SEND;
+use crate::secrets::TRANSFER_SEND;
 use bytemuck::{Pod, Zeroable, bytes_of};
 use thiserror::Error;
 

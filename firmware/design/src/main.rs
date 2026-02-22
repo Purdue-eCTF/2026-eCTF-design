@@ -2,20 +2,20 @@
 #![no_main]
 #![feature(breakpoint)]
 
+mod context;
 mod crypto;
 mod file;
 mod listen;
 mod message;
 mod protocol;
+mod salt;
 mod secrets;
-mod secrets_generated;
-mod util;
 
 use bytemuck::{Pod, Zeroable};
+use context::*;
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
 use mspm0l222x_hal::Peripherals;
-use util::*;
 
 use crate::{
     crypto::{
@@ -24,7 +24,9 @@ use crate::{
     },
     file::{FatEntry, FatTable, File, FileMeta, FileName, UUID},
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
-    secrets_generated::{GROUP_KEYS, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV},
+    secrets::{
+        GROUP_KEYS_ENC, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, get_enc_group_keys,
+    },
 };
 
 #[panic_handler]
@@ -41,9 +43,13 @@ fn handle_panics(info: &PanicInfo) -> ! {
 #[entry]
 fn main() -> ! {
     let mut ctx = Context::new(Peripherals::take().unwrap());
+
     for file in &ctx.files {
         // TODO: gracefully handle this failure
-        assert!(file.as_ref().state == File::EMPTY || file.as_ref().state == File::FULL);
+        let Some(file) = file.get() else {
+            panic!("file with no flash entry");
+        };
+        assert!(file.state == File::EMPTY || file.state == File::FULL);
     }
 
     let mut message_body = [0u8; MAX_BODY_SIZE];
@@ -79,16 +85,15 @@ fn handle_list(ctx: &mut Context) {
     let list_entries: &mut [FileMeta; 8] = bytemuck::from_bytes_mut(file_list);
     let mut counter: usize = 0;
     for i in 0..8 {
-        let file = ctx.files[i].as_ref();
-
-        // if not in use, continue
-        if !file.is_full() {
+        // if not in use or flash entry is empty, continue
+        let Some(file) = ctx.files[i].get().filter(|f| f.is_full()) else {
             continue;
-        }
+        };
 
         // verify file signature before handling
-        // TODO: linear scan for key
-        let key = GROUP_KEYS[file.protected.group as usize].pk_sign.0;
+        let group_keys = secrets::get_enc_group_keys(file.protected.group).unwrap();
+        let key = group_keys.pk_sign.0;
+
         if verify_signature(file, &key).is_err() {
             continue;
         }
@@ -131,8 +136,8 @@ fn handle_read(ctx: &mut Context, msg: &[u8]) {
         panic!()
     }
 
-    let file_length = ctx.fat.as_ref().entries[slot].length as usize;
-    let file = ctx.files[slot].as_ref();
+    let file = ctx.files[slot].get().unwrap();
+    let file_length = file.protected.contents_length as usize;
 
     // die if there isn't a file here
     if !file.is_full() {
@@ -141,9 +146,8 @@ fn handle_read(ctx: &mut Context, msg: &[u8]) {
 
     // get group key and verify file hasn't been tampered
     let group = file.protected.group;
-    let group_key = secrets::get_group_keys_from_pin(group, &pin).unwrap();
-    // TODO: linear scan for correct GROUP_KEYS value
-    let key = GROUP_KEYS[file.protected.group as usize].pk_sign.0;
+    let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
+    let key = get_enc_group_keys(group).unwrap().pk_sign.0;
     verify_signature(file, &key).unwrap();
 
     // buf = N || PT
@@ -205,11 +209,11 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
 
     // retrieve signing and read encryption keys with pin
     let pin = pin.try_into().unwrap();
-    let group_key = secrets::get_group_keys_from_pin(group, &pin).unwrap();
+    let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
     let pk_read = group_key.pk_read.0;
 
     // generate empty file variable
-    let mut file = File::new();
+    let mut file = File::empty();
     file.state = File::FULL;
 
     // set file metadata
@@ -221,6 +225,7 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
     // we already verified that the data length is correct, so don't check again
     // TODO: do we need to read chunks?
     protected.contents[..data.len()].copy_from_slice(data);
+    protected.contents_length = data.len() as u16;
 
     // encrypt everything
     encrypt_payload_pub(
@@ -237,15 +242,15 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
     let new_fat = FatEntry {
         uuid,
         length: data_len as u16,
-        padding: ctx.fat.as_ref().entries[slot].padding, // what is this?
-        addr: ctx.fat.as_ref().entries[slot].addr,
+        padding: 0,
+        addr: ctx.fat.get().unwrap().entries[slot].addr,
     };
 
     // TODO: just write the one fat entry
     unsafe {
         ctx.files[slot].set(&file).unwrap();
     }
-    let current = ctx.fat.as_ref();
+    let current = ctx.fat.get().unwrap();
     // avoid in-place mutation
     let mut entries = current.entries;
     entries[slot] = new_fat;
@@ -269,7 +274,8 @@ fn handle_receive(ctx: &mut Context, msg: &[u8]) {
     let write_slot = msg[7];
 
     let group = 0u16;
-    let group_key = secrets::get_group_keys_from_pin(group, &pin).unwrap();
+    let enc_group_keys = secrets::get_enc_group_keys(group).unwrap();
+    let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
 
     protocol::initiate_transfer(read_slot, group).unwrap();
     let mut buf = [0u8; protocol::TRANSFER_RECEIVE_MAX_LENGTH];
@@ -283,11 +289,11 @@ fn handle_receive(ctx: &mut Context, msg: &[u8]) {
 
     let (inner, pkm_bytes) = outer.split_at_mut(outer.len() - size_of::<PubKeyMetadata>());
     let pkm: &PubKeyMetadata = bytemuck::from_bytes(pkm_bytes);
-    decrypt_payload_pub(inner, &pkm.gn, &pkm.nonce, &pkm.tag, &group_key.pk_trans.0).unwrap();
+    decrypt_payload_pub(inner, &pkm.gn, &pkm.nonce, &pkm.tag, &group_key.sk_trans.0).unwrap();
 
     let file: &mut File = bytemuck::from_bytes_mut(inner);
 
-    verify_signature(file, &group_key.pk_sign.0).unwrap();
+    verify_signature(file, &enc_group_keys.pk_sign.0).unwrap();
 
     let file_size =
         response.length as usize - size_of::<SymmetricMetadata>() - size_of::<PubKeyMetadata>();
@@ -299,14 +305,14 @@ fn handle_receive(ctx: &mut Context, msg: &[u8]) {
     let new_fat = FatEntry {
         uuid: file.protected.uuid,
         length: content_length.try_into().unwrap(),
-        padding: ctx.fat.as_ref().entries[write_slot as usize].padding, // what is this?
-        addr: ctx.fat.as_ref().entries[write_slot as usize].addr,
+        padding: ctx.fat.get().unwrap().entries[write_slot as usize].padding, // what is this?
+        addr: ctx.fat.get().unwrap().entries[write_slot as usize].addr,
     };
 
     // TODO: just write the one fat entry
     unsafe {
         ctx.files[write_slot as usize].set(file).unwrap();
-        let current = ctx.fat.as_ref();
+        let current = ctx.fat.get().unwrap();
         let mut entries = current.entries;
         entries[write_slot as usize] = new_fat;
         ctx.fat.set(&FatTable { entries }).unwrap();
@@ -319,15 +325,16 @@ fn handle_receive(ctx: &mut Context, msg: &[u8]) {
 /// has permissions for. Since the entire list of files is encrypted
 /// symmetrically and each file's metadata encrypted asymmetrically, all this
 /// will be decrypted before being sent back to host.
-fn handle_interrogate(_ctx: &mut Context, msg: &[u8]) {
+fn handle_interrogate(ctx: &mut Context, msg: &[u8]) {
     // Command contains just the PIN
     if msg.len() != 6 {
         panic!()
     }
+
     let pin: &[u8; 6] = msg[..6].try_into().unwrap();
 
     // encrypt groups being sent over to other board
-    let mut groups: [u16; GROUP_KEYS.len()] = [0u16; GROUP_KEYS.len()];
+    let mut groups: [u16; GROUP_KEYS_ENC.len()] = [0u16; GROUP_KEYS_ENC.len()];
 
     let mut sm = crypto::SymmetricMetadata {
         nonce: [0; crypto::NONCE_SIZE],
@@ -336,11 +343,12 @@ fn handle_interrogate(_ctx: &mut Context, msg: &[u8]) {
     let mut group_count = 0;
 
     // Get groups for which the HSM has receive permission
-    for group in GROUP_KEYS.iter() {
-        let group_key = secrets::get_group_keys_from_pin(group.group, pin).unwrap();
-        if group_key.sk_inter.0.is_empty() {
+    for group in GROUP_KEYS_ENC.iter() {
+        let group_key = secrets::get_group_keys_from_pin(ctx, group.group, pin).unwrap();
+        if group_key.sk_inter.is_empty() {
             continue;
         };
+
         groups[group_count] = group.group;
         group_count += 1;
     }
@@ -358,7 +366,7 @@ fn handle_interrogate(_ctx: &mut Context, msg: &[u8]) {
     .unwrap();
 
     // copy the encrypted groups, nonce, and tag to another buffer
-    let mut payload = [0; 2 * GROUP_KEYS.len() + size_of::<crypto::SymmetricMetadata>()];
+    let mut payload = [0; 2 * GROUP_KEYS_ENC.len() + size_of::<crypto::SymmetricMetadata>()];
 
     // actual payload may be smaller than the maximum size the buffer was defined with
     let actual_payload_size = group_count * 2 + size_of::<crypto::SymmetricMetadata>();
@@ -446,7 +454,7 @@ fn handle_interrogate(_ctx: &mut Context, msg: &[u8]) {
         let ifile: &mut listen::InterrogateFile = bytemuck::from_bytes_mut(file_bytes);
         let pkm: &crypto::PubKeyMetadata = bytemuck::from_bytes(pkm_bytes);
 
-        let key = secrets::get_group_keys_from_pin(ifile.group, pin)
+        let key = secrets::get_group_keys_from_pin(ctx, ifile.group, pin)
             .unwrap()
             .sk_inter
             .0;

@@ -14,8 +14,9 @@ import argparse
 import json
 import secrets
 from pathlib import Path
-from Crypto.PublicKey import ECC
-from Crypto.Cipher import ChaCha20_Poly1305  # XChaCha is included in this
+
+from Crypto.Random import get_random_bytes
+from Crypto.Signature import eddsa
 from loguru import logger
 
 
@@ -34,66 +35,31 @@ def gen_secrets(groups: list[int]) -> bytes:
 
     :returns: Contents of the secrets file
     """
-    # TODO: Update this function to generate any system-wide secrets needed by
-    #   your design
 
-    # Create the secrets object
-    # You can change this to generate any secret material
-    # The secrets file will never be shared with attackers
     all_secrets = {
         "groups": {},
+        "t0": get_random_bytes(32).hex(),
+        "t1": get_random_bytes(32).hex(),
+        "i0": get_random_bytes(32).hex(),
+        "i1": get_random_bytes(32).hex(),
     }
 
-    # 32 random bytes (and double check that they're random using secrets.toke_bytes)
     for group in groups:
-        group_data = {"public_keys": {}, "secret_keys": {}, "shared_symmetric": {}}
+        group_data = {}
 
-        write_keypair = ECC.generate(curve="Ed25519")
-        read_keypair = ECC.generate(curve="Ed25519")
-        transfer_keypair = ECC.generate(curve="Ed25519")
-        interrogate_keypair = ECC.generate(curve="Ed25519")
+        write_priv = get_random_bytes(32)
+        read_priv = get_random_bytes(32)
+        transfer_priv = get_random_bytes(32)
+        interrogate_priv = get_random_bytes(32)
 
-        # Adding all keys for now since no knowledge (as of 2/16) of which perms the group has
-        # Can add control flow based on perms here later
-        group_data["public_keys"]["pk_sign"] = (
-            write_keypair.public_key().export_key(format="DER").hex()
-        )
-        group_data["public_keys"]["pk_read"] = (
-            read_keypair.public_key().export_key(format="DER").hex()
-        )
-        group_data["public_keys"]["pk_trans"] = (
-            transfer_keypair.public_key().export_key(format="DER").hex()
-        )
-        group_data["public_keys"]["pk_inter"] = (
-            interrogate_keypair.public_key().export_key(format="DER").hex()
-        )
+        # Generate all keys, since the access controls only get passed to the dockerfile
+        # public keys are generated in the build.rs
+        group_data["sk_sign"] = write_priv.hex()
+        group_data["sk_read"] = read_priv.hex()
+        group_data["sk_trans"] = transfer_priv.hex()
+        group_data["sk_inter"] = interrogate_priv.hex()
 
-        group_data["secret_keys"]["sk_sign"] = write_keypair.export_key(
-            format="DER"
-        ).hex()
-        group_data["secret_keys"]["sk_read"] = read_keypair.export_key(
-            format="DER"
-        ).hex()
-        group_data["secret_keys"]["sk_trans"] = transfer_keypair.export_key(
-            format="DER"
-        ).hex()
-        group_data["secret_keys"]["sk_inter"] = interrogate_keypair.export_key(
-            format="DER"
-        ).hex()
-
-        group_data["shared_symmetric"] = {
-            "T0": secrets.token_hex(32),
-            "T1": secrets.token_hex(32),
-            "I0": secrets.token_hex(32),
-            "I1": secrets.token_hex(32),
-        }
-
-        all_secrets["groups"][f"{group:04x}"] = group_data
-
-    # NOTE: if you choose to use JSON for your file type, you will not
-    # be able to store binary data, and must either use a different file
-    # type or encode the binary data to hex, base64, or another type of
-    # ASCII-only encoding
+        all_secrets["groups"][f"{group}"] = group_data
 
     return json.dumps(all_secrets).encode()
 
@@ -115,7 +81,7 @@ def parse_args():
     parser.add_argument(
         "groups",
         nargs="+",
-        type=lambda x: int(x, 0),
+        type=lambda x: int(x, 16),
         help="Supported group IDs",
     )
     return parser.parse_args()
@@ -131,19 +97,13 @@ def main():
 
     secrets = gen_secrets(args.groups)
 
-    # Print the generated secrets for your own debugging
-    # Attackers will NOT have access to the output of this, but feel free to remove
-    #
-    # NOTE: Printing sensitive data is generally not good security practice
-    logger.debug(f"Generated secrets: {secrets}")
-
     # Open the file, erroring if the file exists unless the --force arg is provided
     with open(args.secrets_file, "wb" if args.force else "xb") as f:
         # Dump the secrets to the file
         f.write(secrets)
 
     # For your own debugging. Feel free to remove
-    logger.success(f"Wrote secrets to {str(args.secrets_file.absolute())}")
+    logger.success(f"Wrote secrets to {args.secrets_file.absolute()}")
 
 
 if __name__ == "__main__":
