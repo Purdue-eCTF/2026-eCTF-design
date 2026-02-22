@@ -170,13 +170,10 @@ pub fn decrypt_payload_pub<'a>(
     let pubkey = PublicKey::from(*gn);
     let shared = sk.diffie_hellman(&pubkey).to_bytes();
 
-    let mut sym_key = [0u8; 32];
-    let memory = Block::new();
-
-    // TODO: params
-    argon2::Argon2::default()
-        .hash_password_into_with_memory(&shared, &[], &mut sym_key, [memory])
-        .map_err(|_| CryptoError::KDFFailure)?;
+    // use kdf as recommended by rfc
+    // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
+    // TODO: maybe add per key salt
+    let sym_key = blake_hash(&shared, &PUB_ENCRYPT_SALT);
 
     decrypt_payload_symmetric(payload, nonce, tag, &sym_key, associated_data)?;
     Ok(payload)
