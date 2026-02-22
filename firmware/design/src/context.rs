@@ -124,7 +124,13 @@ impl<T: NoUninit> FlashEntry<T> {
 
         flash.write_unprotect(self.location, self.pages * FLASH_PAGE_SIZE as u32);
 
-        for (i, word) in words.iter().enumerate() {
+        let magic_bytes = FLASH_MAGIC.to_le_bytes();
+        for (i, word) in words
+            .iter()
+            // write magic bytes at the end of data
+            .chain(core::iter::once(&magic_bytes))
+            .enumerate()
+        {
             unsafe { flash.write_word(self.location + i as u32 * 8, word)? };
         }
 
