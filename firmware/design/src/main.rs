@@ -69,7 +69,7 @@ fn main() -> ! {
                 Opcode::Receive => handle_receive(&mut ctx, msg),
                 Opcode::Interrogate => handle_interrogate(&mut ctx, msg),
                 Opcode::Listen => handle_listen(&mut ctx),
-                Opcode::Ack => panic!("Ack without sent message"),
+                Opcode::Ack => println!("Ack without sent message"),
                 e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
             }
         });
