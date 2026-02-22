@@ -55,6 +55,7 @@ struct GlobalSecrets {
     t1: SymmetricKey,
     i0: SymmetricKey,
     i1: SymmetricKey,
+    pub_encrypt_salt: SymmetricKey,
 }
 
 fn main() {
@@ -183,7 +184,7 @@ pub const INTERROGATE_SEND: SymmetricKey = SymmetricKey({:?});
 pub const INTERROGATE_RECV: SymmetricKey = SymmetricKey({:?});
 
 // salt for argon derivation
-pub const DERIVE_SALT: &[u8] = &{:?};
+pub const PUB_ENCRYPT_SALT: [u8; 32] = {:?};
 
 // TODO: must be sorted by group
 pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
@@ -203,7 +204,7 @@ pub const COPY_PERM_GROUPS: [u16; {}] = {:?};
         global_keys.t1.0,
         global_keys.i0.0,
         global_keys.i1.0,
-        DERIVE_SALT,
+        global_keys.pub_encrypt_salt.0,
         group_keys.len(),
         encrypted_keys,
         copy_perm_grops.len(),

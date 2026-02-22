@@ -10,6 +10,7 @@ use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::file::File;
 use crate::protocol::ProtocolError;
+use crate::secrets::PUB_ENCRYPT_SALT;
 
 pub const NONCE_SIZE: usize = 24;
 pub const TAG_SIZE: usize = 16;
@@ -205,13 +206,10 @@ pub fn encrypt_payload_pub<'a>(
 
     let shared = n.diffie_hellman(&pk).to_bytes();
 
-    let memory = Block::new();
-    let mut secret = [0; 32];
-
-    // TODO: params
-    argon2::Argon2::default()
-        .hash_password_into_with_memory(&shared, &[], &mut secret, [memory])
-        .map_err(|_| CryptoError::KDFFailure)?;
+    // use kdf as recommended by rfc
+    // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
+    // TODO: maybe add per key salt
+    let secret = blake_hash(&shared, &PUB_ENCRYPT_SALT);
 
     encrypt_payload_symmetric(payload, nonce, tag, &secret, associated_data)?;
     Ok(payload)

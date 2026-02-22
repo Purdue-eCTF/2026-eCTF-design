@@ -63,7 +63,7 @@ fn main() -> ! {
 
         sensitive!(ctx, {
             match msg_info.opcode {
-                Opcode::List => handle_list(&mut ctx),
+                Opcode::List => handle_list(&mut ctx, msg),
                 Opcode::Read => handle_read(&mut ctx, msg),
                 Opcode::Write => handle_write(&mut ctx, msg),
                 Opcode::Receive => handle_receive(&mut ctx, msg),
@@ -76,10 +76,24 @@ fn main() -> ! {
     }
 }
 
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[repr(C, packed)]
+struct ListHeader {
+    pub pin: [u8; 6],
+}
+
 /// List files; requires pin on usage. Sends back a head with total number of
 /// files and length of the message body, and then the data, with the name,
 /// group, and slot of the file.
-fn handle_list(ctx: &mut Context) {
+fn handle_list(ctx: &mut Context, msg: &[u8]) {
+    if msg.len() != size_of::<ListHeader>() {
+        panic!()
+    }
+
+    let ListHeader { pin } = *bytemuck::from_bytes(msg);
+
+    let _k_auth = ctx.k_auth(&pin).expect("incorrect pin");
+
     // 4 bytes at start for total number of files; file slot, name of file, group id, for 8 files
     const METADATA_SIZE: usize = core::mem::size_of::<FileMeta>();
     let mut body = [0u8; 4 + 8 * METADATA_SIZE];
