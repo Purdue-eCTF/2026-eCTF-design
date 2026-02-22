@@ -38,6 +38,7 @@ fn handle_panics(info: &PanicInfo) -> ! {
         eprintln!("{info}");
     }
 
+    // loop {}
     cortex_m::peripheral::SCB::sys_reset();
 }
 
