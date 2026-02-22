@@ -124,6 +124,7 @@ fn main() {
             pk_inter,
         ));
     }
+    encrypted_keys.sort_by_key(|k| k.group);
 
     let secrets_file = generate_secrets(&salts, &global_secrets, &encrypted_keys);
     std::fs::write(
@@ -138,6 +139,8 @@ fn generate_secrets(
     global_keys: &GlobalSecrets,
     group_keys: &[EncryptedGroupKey],
 ) -> String {
+    assert!(group_keys.is_sorted_by_key(|k| k.group));
+
     let encrypted_keys = group_keys
         .iter()
         .map(|group_key| format!("{:?}", group_key))
@@ -172,6 +175,9 @@ pub const INTERROGATE_SEND: SymmetricKey = SymmetricKey({:?});
 // I1
 pub const INTERROGATE_RECV: SymmetricKey = SymmetricKey({:?});
 
+// salt for argon derivation
+pub const DERIVE_SALT: &[u8] = &{:?};
+
 // TODO: must be sorted by group
 pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
 ",
@@ -186,6 +192,7 @@ pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
         global_keys.t1.0,
         global_keys.i0.0,
         global_keys.i1.0,
+        DERIVE_SALT,
         group_keys.len(),
         encrypted_keys,
     )
@@ -245,7 +252,7 @@ fn derive_next_salt(input: &[u8], t_cost: u32) -> Salt {
 
     let mut out: Salt = [0; _];
     argon
-        .hash_password_into(&input, DERIVE_SALT, &mut out)
+        .hash_password_into(input, DERIVE_SALT, &mut out)
         .expect("deriving salt failed");
     out
 }

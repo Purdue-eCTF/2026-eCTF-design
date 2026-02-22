@@ -4,11 +4,14 @@
 use core::fmt;
 
 use bytemuck::{Pod, Zeroable};
-use chacha20poly1305::aead::generic_array::GenericArray;
-use chacha20poly1305::aead::rand_core::{CryptoRng, RngCore};
-use chacha20poly1305::{AeadCore, AeadInPlace, KeyInit, XChaCha20Poly1305};
-use serde::de::Visitor;
-use serde::{Deserialize, de};
+use chacha20poly1305::{
+    AeadCore, AeadInPlace, KeyInit, XChaCha20Poly1305,
+    aead::{
+        generic_array::GenericArray,
+        rand_core::{CryptoRng, RngCore},
+    },
+};
+use serde::{Deserialize, de::{self, Visitor}};
 
 #[derive(Default, Pod, Zeroable, Clone, Copy, Debug)]
 #[repr(transparent)]
