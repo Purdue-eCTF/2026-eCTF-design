@@ -240,7 +240,7 @@ impl UartWriter {
 impl UartWriter {
     fn flush(&mut self) {
         if self.1 != 0 {
-            let _ = Message::write(Opcode::Debug, MessagePort::UART0, &self.0[..self.1]);
+            let _ = Message::write(self.2, MessagePort::UART0, &self.0[..self.1]);
             self.1 = 0;
         }
     }

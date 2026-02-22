@@ -33,7 +33,7 @@ use crate::{
 fn handle_panics(info: &PanicInfo) -> ! {
     // #[cfg(debug_assertions)]
     {
-        eprintln!("panic with info: {info}");
+        eprintln!("{info}");
     }
 
     loop {}
