@@ -119,51 +119,6 @@ struct GlobalSecrets {
     i1: SymmetricKey,
 }
 
-// {
-//   "groups": {
-//     "1234": {
-//       "public_keys": {
-//         "pk_sign": "2d900c390212033cb2de5666b8dc30ecae0c3adeb2d207b7d5e647850d818755",
-//         "pk_read": "08f304d1a9706433ec4b74bbf7172cfa5ee6e2eb25b1b2f72e76ab8212ef573a",
-//         "pk_trans": "5cf0dbd9434029fdef621339d640a704922f3f9145a830a41d2a6fa022610ff7",
-//         "pk_inter": "9ccb1a1a125b5881a2d7a2fb1e221e51a84c9bd8525f4502841687af21b18a1f"
-//       },
-//       "secret_keys": {
-//         "sk_sign": "7768e1605e22fd3a8b0699f7ccf948e9117702839ed3edf5f107589722eb705b",
-//         "sk_read": "ce9c72f91ae263784d24948851364088aa7b1802ffcc89695508c776bd56bff3",
-//         "sk_trans": "d4fc2e581db6a2f79d24bd10d32dcbe08a44af1f03c792ff3116ce1d5918a290",
-//         "sk_inter": "ca7e401a169e335149f420cd3368f8567a79c3d619f6f3bb40919b8d7951d388"
-//       },
-//       "shared_symmetric": {
-//         "T0": "7d334421ec7bb12db1b3445e21aa3ddb01a9fe93bac04475e29590f7d484931f",
-//         "T1": "635186cbc7d78a0a929bc073ab07b6991f9ecfffdcba00f176bb8a2a810ee1fe",
-//         "I0": "c224a0b9778d332193158f0fc988a92ad7bd17e250dc8d8284f7fffde199a31e",
-//         "I1": "0a523fe5a56721050a0c271c0e4c59089e398eafac0e30e5cf2d8d14ae2376a7"
-//       }
-//     },
-//     "5678": {
-//       "public_keys": {
-//         "pk_sign": "e8842c9ecae1a43c98d5030cb0f3892c3a6973d71a82ba152fdb3a379c8fdf92",
-//         "pk_read": "2c8c420ef0823aa7c2c4b94321b378f68a079d84bf453e75de606feb1799613e",
-//         "pk_trans": "d7e3f1635572e3e9f50f308420baa5add33765b07ed0cb6c2ffcbb661d635672",
-//         "pk_inter": "446e1ba2be3b87448b9c38018aea1eac6f6cb63d30d2b85c2e2f7820d64854f7"
-//       },
-//       "secret_keys": {
-//         "sk_sign": "fcd2be23a3356c6845dea1af95818c06b0c7b27cc1c73b7c05fe8c525e9a6fdc",
-//         "sk_read": "1e021b80fd9c2fc659b626c75095299d51569a5ba1d7bfedbd455a7797e41009",
-//         "sk_trans": "94c2448351d2a5251631cd2e05f83c719dc98fca1c8c3ae22f8df57dbe4fe00c",
-//         "sk_inter": "3ae884aabb722bbbaac87e989053238dfafff32531997c231bc251df65b69540"
-//       },
-//       "shared_symmetric": {
-//         "T0": "91117b6f302ed81d8d4b6b2133611934c4106f820df7a597f6c653a43bf85a54",
-//         "T1": "167c7fa9e807680d82a77b119f1d41c81740cde3ce95974451e77abda733697a",
-//         "I0": "dfc3527213c3ec0b68bdd8de969b8c19dc1490935da5c37dd65ab26c93d8fa7b",
-//         "I1": "b43a356d7891d2e15a0789913fb25bb8a476a30684cfe38fb7d124fddb874459"
-//       }
-//     }
-//   }
-// }
-
 fn main() {
     println!("cargo:rerun-if-changed=link.x");
     println!("cargo:rerun-if-changed=memory.x");
