@@ -87,6 +87,7 @@ def main():
 		if not data:
 			print("Process exited without error code")
 			sys.exit(1)
+
 		line = data.decode(errors="ignore")
 		try:
 			exit_code = int(line)
