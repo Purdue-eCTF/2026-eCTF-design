@@ -2,7 +2,7 @@ use core::ops::Index;
 
 use bytemuck::{NoUninit, Pod, Zeroable};
 
-use crate::context;
+use crate::{context, salt::Salt, secrets::BOOT_SALT_1};
 
 pub const CONTENT_SIZE: usize = 8192;
 pub const UUID_SIZE: usize = 16;
@@ -129,3 +129,7 @@ pub static __FILES: [FileSlot; 8] = [FileSlot {
 #[unsafe(link_section = ".filetable.default")]
 #[unsafe(no_mangle)]
 pub static __FAT: ([u8; core::mem::size_of::<FatTable>()], u64) = ([0; _], context::FLASH_MAGIC);
+
+#[unsafe(link_section = ".salt.default")]
+#[unsafe(no_mangle)]
+pub static __SALT: ([u8; core::mem::size_of::<Salt>()], u64) = (BOOT_SALT_1, context::FLASH_MAGIC);

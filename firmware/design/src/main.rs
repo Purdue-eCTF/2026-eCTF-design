@@ -1,6 +1,5 @@
 #![no_std]
 #![no_main]
-#![feature(breakpoint)]
 
 mod context;
 mod crypto;

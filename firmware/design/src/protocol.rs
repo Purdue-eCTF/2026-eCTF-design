@@ -11,9 +11,9 @@ use crate::crypto::{
 
 #[derive(Debug, Error)]
 pub enum ProtocolError {
-    #[error("Cryptography failure")]
+    #[error("Cryptography failure: {0}")]
     Crypto(CryptoError),
-    #[error("Message failure")]
+    #[error("Message failure: {0}")]
     Message(MessageError),
 }
 
