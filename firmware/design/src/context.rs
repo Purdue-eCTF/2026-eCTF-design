@@ -16,10 +16,15 @@ use mspm0l222x_hal::{
 };
 
 use crate::{
+    crypto::blake_hash,
     file::{FatTable, File},
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
+    protocol::ProtocolError,
 };
-use crate::{salt::Salt, secrets::T_COST_K_AUTH};
+use crate::{
+    salt::Salt,
+    secrets::{K_AUTH_HASH, K_AUTH_SALT, T_COST_K_AUTH},
+};
 
 // TODO: glitching prevention or similar
 // TODO: how badly will this hit flash? Can we rotate slots or something?
@@ -224,13 +229,20 @@ impl Context {
         unsafe { self.boot_salt_1.set(&salt).unwrap() };
     }
 
-    pub(crate) fn k_auth(&self, pin: &[u8; 6]) -> [u8; 32] {
-        let mut k = [0; 32];
+    pub(crate) fn k_auth(&self, pin: &[u8; 6]) -> Result<[u8; 32], ProtocolError> {
+        let mut k_auth = [0; 32];
         let mut input = [0; 32 + 6];
         input[..6].copy_from_slice(pin);
         input[6..].copy_from_slice(&self.pin_salt.0);
-        Salt::derive_argon(&input, &mut k, T_COST_K_AUTH);
-        k
+        Salt::derive_argon(&input, &mut k_auth, T_COST_K_AUTH);
+
+        let k_auth_hash = blake_hash(&k_auth, &K_AUTH_HASH);
+        // FIXME FIXME FIXME FIXME FIXME side channel, use constant time eq
+        if k_auth_hash != K_AUTH_HASH {
+            return Err(ProtocolError::InvalidPin);
+        }
+
+        Ok(k_auth)
     }
 
     #[allow(static_mut_refs)]

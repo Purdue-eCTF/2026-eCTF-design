@@ -117,18 +117,20 @@ fn handle_list(ctx: &mut Context) {
 // usage. Since the file is stored on flash encrypted, this function uses the
 // pin to decrypt the file before returning it to the host.
 
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[repr(C, packed)]
+struct ReadFileHeader {
+    pub pin: [u8; 6],
+    pub slot: u8,
+}
+
 fn handle_read(ctx: &mut Context, msg: &[u8]) {
-    if msg.len() != 7 {
+    if msg.len() != size_of::<ReadFileHeader>() {
         panic!()
     }
 
-    // retrieve pin from message
-    // TODO: is pin for sure in first six bytes of msg?
-    let mut pin = [0u8; 6];
-    pin.copy_from_slice(&msg[0..6]);
-
-    let pin = pin;
-    let slot = msg[6] as usize;
+    let ReadFileHeader { pin, slot } = *bytemuck::from_bytes(msg);
+    let slot = slot as usize;
 
     if slot > 7 {
         panic!()
@@ -145,8 +147,8 @@ fn handle_read(ctx: &mut Context, msg: &[u8]) {
     // get group key and verify file hasn't been tampered
     let group = file.protected.group;
     let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
-    let key = get_enc_group_keys(group).unwrap().pk_sign.0;
-    verify_signature(file, &key).unwrap();
+    let pk_sign = get_enc_group_keys(group).unwrap().pk_sign.0;
+    verify_signature(file, &pk_sign).unwrap();
 
     // buf = N || PT
     let mut buf = [0; file::CONTENT_SIZE + file::NAME_SIZE];
@@ -179,6 +181,7 @@ struct WriteFileHeader {
     pub uuid: UUID,
     pub length: u16,
 }
+
 /// Write a file received from host into flash. The file should be encrypted
 /// and signed.
 fn handle_write(ctx: &mut Context, msg: &[u8]) {
@@ -216,12 +219,14 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
     // set file metadata
     let protected = &mut file.protected;
     protected.name = name;
+    protected.uuid = uuid;
     protected.group = group;
 
     // set initial content data
     // we already verified that the data length is correct, so don't check again
     // TODO: do we need to read chunks?
     protected.contents[..data.len()].copy_from_slice(data);
+    protected.contents[data.len()..].fill(0);
     protected.contents_length = data.len() as u16;
 
     // encrypt everything
@@ -258,17 +263,26 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
     Message::write_header(Opcode::Write, 0, MessagePort::UART0);
 }
 
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[repr(C, packed)]
+struct ReceiveFileHeader {
+    pub pin: [u8; 6],
+    pub read_slot: u8,
+    pub write_slot: u8,
+}
+
 fn handle_receive(ctx: &mut Context, msg: &[u8]) {
-    if msg.len() != 8 {
+    if msg.len() != size_of::<WriteFileHeader>() {
         panic!()
     }
 
-    let mut pin = [0u8; 6];
-    pin.copy_from_slice(&msg[0..6]);
+    let ReceiveFileHeader {
+        pin,
+        read_slot,
+        write_slot,
+    } = *bytemuck::from_bytes(msg);
 
-    let pin = pin;
-    let read_slot = msg[6];
-    let write_slot = msg[7];
+    let k_auth = ctx.k_auth(&pin).expect("incorrect pin");
 
     let group = 0u16;
     let enc_group_keys = secrets::get_enc_group_keys(group).unwrap();

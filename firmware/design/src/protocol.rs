@@ -12,9 +12,13 @@ use crate::crypto::{
 #[derive(Debug, Error)]
 pub enum ProtocolError {
     #[error("Cryptography failure: {0}")]
-    Crypto(CryptoError),
+    Crypto(#[from] CryptoError),
     #[error("Message failure: {0}")]
-    Message(MessageError),
+    Message(#[from] MessageError),
+    #[error("Invalid pin")]
+    InvalidPin,
+    #[error("Invalid group")]
+    InvalidGroup,
 }
 
 //TODO: Have other methods use

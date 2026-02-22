@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use argon2::password_hash::rand_core::RngCore;
 // TODO: ASLR for code and files
 use argon2::{Algorithm, Argon2, Params, Version};
+use blake2::{Blake2s256, Digest};
+use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::aead::OsRng;
 use common::{EncryptedGroupKey, GroupKey, SymmetricKey};
 use ed25519_dalek::{SigningKey, VerifyingKey};
@@ -165,6 +167,9 @@ pub const BOOT_SALT_0: [u8; 32] = {:?};
 // TODO: make in special section of flash
 pub const BOOT_SALT_1: [u8; 32] = {:?};
 
+pub const K_AUTH_SALT: [u8; 32] = {:?};
+pub const K_AUTH_HASH: [u8; 32] = {:?};
+
 // T0
 pub const TRANSFER_SEND: SymmetricKey = SymmetricKey({:?});
 // T1
@@ -188,6 +193,8 @@ pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
         T_COST_K_AUTH,
         pin_salts.boot_salt_0,
         pin_salts.boot_salt_1,
+        pin_salts.k_auth_salt,
+        pin_salts.k_auth_hash,
         global_keys.t0.0,
         global_keys.t1.0,
         global_keys.i0.0,
@@ -257,12 +264,21 @@ fn derive_next_salt(input: &[u8], t_cost: u32) -> Salt {
     out
 }
 
+fn blake_hash(input: &[u8], salt: &Salt) -> [u8; 32] {
+    let mut blake_hasher = Blake2s256::new();
+    blake_hasher.update(input);
+    blake_hasher.update(salt);
+    *blake_hasher.finalize().as_array().unwrap()
+}
+
 type Salt = [u8; 32];
 struct PinSalts {
     boot_salt_0: Salt,
     boot_salt_1: Salt,
     pin_salt: Salt,
     k_auth: SymmetricKey,
+    k_auth_salt: Salt,
+    k_auth_hash: [u8; 32],
 }
 
 impl PinSalts {
@@ -278,11 +294,17 @@ impl PinSalts {
         pin_buffer[6..].copy_from_slice(&pin_salt);
         let k_auth = derive_next_salt(&pin_buffer, T_COST_K_AUTH);
 
+        let mut k_auth_salt: Salt = [0; _];
+        OsRng.fill_bytes(&mut k_auth_salt);
+        let k_auth_hash = blake_hash(&k_auth, &k_auth_salt);
+
         PinSalts {
             boot_salt_0,
             boot_salt_1,
             pin_salt,
             k_auth: SymmetricKey(k_auth),
+            k_auth_salt,
+            k_auth_hash,
         }
     }
 }

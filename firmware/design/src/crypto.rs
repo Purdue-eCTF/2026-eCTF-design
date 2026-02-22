@@ -1,4 +1,5 @@
 use argon2::{self, Block};
+use blake2::{Blake2s256, Digest};
 use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::aead::generic_array::GenericArray;
 use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
@@ -166,4 +167,11 @@ pub fn encrypt_payload_symmetric<'a>(
 
     tag_slot.copy_from_slice(tag.as_slice());
     Ok(payload)
+}
+
+pub fn blake_hash(input: &[u8], salt: &[u8; 32]) -> [u8; 32] {
+    let mut blake_hasher = Blake2s256::new();
+    blake_hasher.update(input);
+    blake_hasher.update(salt);
+    *blake_hasher.finalize().as_array().unwrap()
 }
