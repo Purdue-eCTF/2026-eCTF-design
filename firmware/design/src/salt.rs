@@ -1,5 +1,6 @@
-use crate::secrets::DERIVE_SALT;
+use crate::context;
 use crate::secrets::{ARGON_M_COST, ARGON_P_COST, BOOT_SALT_0, T_COST_BOOT, T_COST_PIN};
+use crate::secrets::{BOOT_SALT_1, DERIVE_SALT};
 use argon2::Block;
 use argon2::{Algorithm, Argon2, Params, Version};
 use bytemuck::{Pod, Zeroable};
@@ -42,3 +43,7 @@ impl Salt {
             .expect("Argon Derivation Failed");
     }
 }
+
+#[unsafe(link_section = ".salt.default")]
+#[unsafe(no_mangle)]
+pub static __SALT: ([u8; core::mem::size_of::<Salt>()], u64) = (BOOT_SALT_1, context::FLASH_MAGIC);
