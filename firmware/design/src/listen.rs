@@ -1,7 +1,8 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::{
-    Context, crypto,
+    Context,
+    crypto::{self, PubKeyMetadata, SymmetricMetadata},
     file::{self, File, FileName},
     message::{Message, MessagePort, Opcode},
     protocol::TransferM0Encrypted,
@@ -120,6 +121,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
                     &mut pkm.nonce,
                     &mut pkm.tag,
                     &key,
+                    &[],
                 )
                 .unwrap();
                 count += 1;
@@ -161,76 +163,54 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ListenErro
     let m0 = enc.decrypt().unwrap();
 
     let slot: usize = m0.slot as usize;
-    let group = m0.group;
 
     if slot > 7 {
         return Err(ListenError::InvalidFile);
     }
 
-    let file = ctx.files[slot].get().unwrap();
-    if !file.is_full() || file.protected.group != group {
+    let file_src = ctx.files[slot].get().unwrap();
+    if !file_src.is_full() {
         return Err(ListenError::InvalidFile);
     }
 
     // TODO: check that all instances where we use &PIN are valid
-    let group_keys = secrets::get_enc_group_keys(group).unwrap();
-    if crypto::verify_signature(file, &group_keys.pk_sign.0).is_err() {
+    let group_keys = secrets::get_enc_group_keys(file_src.protected.group).unwrap();
+    if crypto::verify_signature(file_src, &group_keys.pk_sign.0).is_err() {
         return Err(ListenError::InvalidFile);
     }
 
-    let content_length = ctx.fat.get().unwrap().entries[slot].length as usize;
+    let group_id_bytes = file_src.protected.group.to_le_bytes();
 
-    // we will create M1 = Enc_T1(Enc_pk_trans(file) || PKM) || SM
+    // we will create M1 = Enc_T1(Enc_pk_trans(file) || PKM || group id) || SM
     // create a payload buffer of the maximum size
     let mut payload = [0; size_of::<File>()
-        + size_of::<crypto::PubKeyMetadata>()
-        + size_of::<crypto::SymmetricMetadata>()];
+        + size_of::<PubKeyMetadata>()
+        + size_of::<u16>()
+        + size_of::<SymmetricMetadata>()];
+    let payload_len = payload.len();
 
-    let mut payload_end = content_length;
-    {
-        let file_size: usize = file::FILE_METADATA_SIZE + content_length;
+    let (file, rest) = payload.split_at_mut(size_of::<File>());
+    let (pub_key_meta, rest) = rest.split_at_mut(size_of::<PubKeyMetadata>());
+    let pub_key_meta: &mut PubKeyMetadata = bytemuck::from_bytes_mut(pub_key_meta);
+    let group_id = &mut rest[..size_of::<u16>()];
 
-        let (file, rest) = payload.split_at_mut(file_size);
-        let (pkm_bytes, _) = rest.split_at_mut(size_of::<crypto::PubKeyMetadata>());
-        let pkm: &mut crypto::PubKeyMetadata = bytemuck::from_bytes_mut(pkm_bytes);
+    // copy the file to payload
+    file.copy_from_slice(&bytemuck::bytes_of(file_src));
 
-        // copy the file to payload
-        file.copy_from_slice(&bytemuck::bytes_of(ctx.files[slot].get().unwrap())[..file_size]);
+    // encrypt file with pk trans
+    *pub_key_meta = PubKeyMetadata::encrypt(file, &group_keys.pk_trans.0, &group_id_bytes).unwrap();
 
-        // encrypt and write G^n, nonce, tag to PKM after the file
-        let group_keys = secrets::get_enc_group_keys(group).unwrap();
-        let pk_transfer = group_keys.pk_trans.0;
-        let _ = crypto::encrypt_payload_pub(
-            file,
-            &mut pkm.gn,
-            &mut pkm.nonce,
-            &mut pkm.tag,
-            &pk_transfer,
-        )
-        .unwrap();
+    // write associated data
+    group_id.copy_from_slice(&group_id_bytes);
 
-        payload_end += size_of::<crypto::PubKeyMetadata>();
-    }
+    let (data, symmetric_meta) = payload.split_at_mut(payload_len - size_of::<SymmetricMetadata>());
+    let symmetric_meta: &mut SymmetricMetadata = bytemuck::from_bytes_mut(symmetric_meta);
 
-    // encrypt again with T1
-    let (content, rest) = payload.split_at_mut(payload_end);
-    let (sm_bytes, _) = rest.split_at_mut(size_of::<crypto::SymmetricMetadata>());
-    let sm: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(sm_bytes);
+    // encrypt file with T1
+    *symmetric_meta =
+        SymmetricMetadata::encrypt(data, &TRANSFER_RECV.0, &[Opcode::Receive.into()]).unwrap();
 
-    // encrypt the content and write nonce, tag to SM
-    let t1 = TRANSFER_RECV.0;
-    let _ = crypto::encrypt_payload_symmetric(
-        content,
-        &mut sm.nonce,
-        &mut sm.tag,
-        &t1,
-        &[Opcode::Receive.into()],
-    )
-    .unwrap();
-
-    payload_end += size_of::<crypto::SymmetricMetadata>();
-
-    Message::write(Opcode::Receive, MessagePort::UART1, &payload[..payload_end]).unwrap();
+    Message::write(Opcode::Receive, MessagePort::UART1, &payload).unwrap();
 
     Ok(())
 }

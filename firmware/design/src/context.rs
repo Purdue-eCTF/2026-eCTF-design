@@ -236,7 +236,7 @@ impl Context {
         input[6..].copy_from_slice(&self.pin_salt.0);
         Salt::derive_argon(&input, &mut k_auth, T_COST_K_AUTH);
 
-        let k_auth_hash = blake_hash(&k_auth, &K_AUTH_HASH);
+        let k_auth_hash = blake_hash(&k_auth, &K_AUTH_SALT);
         // FIXME FIXME FIXME FIXME FIXME side channel, use constant time eq
         if k_auth_hash != K_AUTH_HASH {
             return Err(ProtocolError::InvalidPin);

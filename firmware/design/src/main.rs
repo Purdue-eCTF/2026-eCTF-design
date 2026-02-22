@@ -19,7 +19,8 @@ use mspm0l222x_hal::Peripherals;
 use crate::{
     crypto::{
         PubKeyMetadata, SymmetricMetadata, decrypt_payload_pub, decrypt_payload_symmetric,
-        encrypt_payload_pub, encrypt_payload_symmetric, sign_file, verify_signature,
+        encrypt_payload_pub, encrypt_payload_symmetric, sign_file, unwrap_pub_message,
+        unwrap_symmetric_message, verify_signature,
     },
     file::{FatEntry, FatTable, File, FileMeta, FileName, UUID},
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
@@ -164,6 +165,7 @@ fn handle_read(ctx: &mut Context, msg: &[u8]) {
         &file.protected.nonce,
         &file.protected.tag,
         &group_key.sk_read.0,
+        &[],
     )
     .unwrap();
 
@@ -236,6 +238,7 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
         &mut protected.nonce,
         &mut protected.tag,
         &pk_read,
+        &[],
     )
     .unwrap();
     sign_file(&mut file, &group_key.sk_sign.0).unwrap();
@@ -284,39 +287,42 @@ fn handle_receive(ctx: &mut Context, msg: &[u8]) {
 
     let k_auth = ctx.k_auth(&pin).expect("incorrect pin");
 
-    let group = 0u16;
-    let enc_group_keys = secrets::get_enc_group_keys(group).unwrap();
-    let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
+    // request file
+    protocol::initiate_transfer(read_slot).unwrap();
 
-    protocol::initiate_transfer(read_slot, group).unwrap();
+    // receive file
     let mut buf = [0u8; protocol::TRANSFER_RECEIVE_MAX_LENGTH];
     let response = Message::read(MessagePort::UART1, &mut buf).unwrap();
-    let data = &mut buf[..response.length as usize];
+    assert!(response.length as usize == buf.len());
 
-    let (outer, skm_bytes) = data.split_at_mut(data.len() - size_of::<SymmetricMetadata>());
-    let sm: &SymmetricMetadata = bytemuck::from_bytes(skm_bytes);
-    let t1 = TRANSFER_RECV.0;
-    decrypt_payload_symmetric(outer, &sm.nonce, &sm.tag, &t1, &[Opcode::Receive.into()]).unwrap();
+    // decrypt with T1
+    let payload =
+        unwrap_symmetric_message(&mut buf, &TRANSFER_RECV.0, &[Opcode::Receive.into()]).unwrap();
 
-    let (inner, pkm_bytes) = outer.split_at_mut(outer.len() - size_of::<PubKeyMetadata>());
-    let pkm: &PubKeyMetadata = bytemuck::from_bytes(pkm_bytes);
-    decrypt_payload_pub(inner, &pkm.gn, &pkm.nonce, &pkm.tag, &group_key.sk_trans.0).unwrap();
+    // parse out group id associated data
+    let (assymetric_payload, group_id_bytes) =
+        payload.split_at_mut(payload.len() - size_of::<u16>());
+    let group_id_bytes: &mut [u8; 2] = group_id_bytes.try_into().unwrap();
+    let group_id = u16::from_le_bytes(*group_id_bytes);
+
+    // decrypt correct keys based on group
+    let enc_group_keys = secrets::get_enc_group_keys(group_id).unwrap();
+    let group_keys = enc_group_keys.decrypt(&k_auth);
+
+    // decrypt assymetrically encrypted part of message
+    let inner =
+        unwrap_pub_message(assymetric_payload, &group_keys.sk_trans.0, group_id_bytes).unwrap();
 
     let file: &mut File = bytemuck::from_bytes_mut(inner);
+    // check earlier associated group id matches
+    assert!(file.protected.group == group_id);
 
     verify_signature(file, &enc_group_keys.pk_sign.0).unwrap();
 
-    let file_size =
-        response.length as usize - size_of::<SymmetricMetadata>() - size_of::<PubKeyMetadata>();
-    let content_length = file_size - file::FILE_METADATA_SIZE;
-
-    // May write over pkm, skm
-    file.protected.contents[content_length..].fill(0);
-
     let new_fat = FatEntry {
         uuid: file.protected.uuid,
-        length: content_length.try_into().unwrap(),
-        padding: ctx.fat.get().unwrap().entries[write_slot as usize].padding, // what is this?
+        length: file.protected.contents_length,
+        padding: 0,
         addr: ctx.fat.get().unwrap().entries[write_slot as usize].addr,
     };
 
@@ -477,6 +483,7 @@ fn handle_interrogate(ctx: &mut Context, msg: &[u8]) {
             &pkm.nonce,
             &pkm.tag,
             &key,
+            &[],
         )
         .unwrap();
 
