@@ -49,5 +49,9 @@ rand = { version = "0.10.0", default-features = false, features = [
 [profile.release]
 lto = "fat"
 opt-level = "s"
-overflow-checks = false
 debug = true
+overflow-checks = true
+
+[profile.release.package."*"]
+overflow-checks = false
+opt-level = 3
