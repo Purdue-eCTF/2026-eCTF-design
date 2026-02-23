@@ -39,8 +39,8 @@ impl TransferM0Encrypted {
 
     pub fn decrypt(&self) -> Result<TransferM0, CryptoError> {
         let t0 = TRANSFER_SEND.0;
-        let mut pt = [0u8; 3];
-        pt.clone_from_slice(&self.ct);
+        let mut pt = self.ct;
+
         decrypt_payload_symmetric(
             &mut pt,
             &self.sm.nonce,
@@ -94,10 +94,8 @@ pub fn initiate_transfer(slot: u8) -> Result<(), ProtocolError> {
     let t0 = TransferM0::new(slot);
     let t0_enc = t0.encrypt().map_err(ProtocolError::Crypto)?;
     let body = bytes_of(&t0_enc);
-    let body_len: u16 = body.len().try_into().unwrap();
 
-    Message::write_header(Opcode::Receive, body_len, MessagePort::UART1);
-    Message::write_block(body, MessagePort::UART1).map_err(ProtocolError::Message)?;
+    Message::write(Opcode::Receive, MessagePort::UART1, body)?;
 
     Ok(())
 }

@@ -292,7 +292,7 @@ struct ReceiveFileHeader {
 }
 
 fn handle_receive(ctx: &mut Context, msg: &[u8]) {
-    if msg.len() != size_of::<WriteFileHeader>() {
+    if msg.len() != size_of::<ReceiveFileHeader>() {
         panic!()
     }
 
