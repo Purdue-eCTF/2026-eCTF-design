@@ -186,7 +186,9 @@ pub const INTERROGATE_SEND: SymmetricKey = SymmetricKey({:?});
 // I1
 pub const INTERROGATE_RECV: SymmetricKey = SymmetricKey({:?});
 
-// salt for argon derivation and blake2 derivation
+// salt for argon derivation
+pub const DERIVE_SALT: &[u8] = &{:?};
+// salt for blake2 derivation
 pub const PUB_ENCRYPT_SALT: [u8; 32] = {:?};
 
 // TODO: must be sorted by group
@@ -207,6 +209,7 @@ pub const COPY_PERM_GROUPS: [u16; {}] = {:?};
         global_keys.t1.0,
         global_keys.i0.0,
         global_keys.i1.0,
+        &DERIVE_SALT,
         global_keys.pub_encrypt_salt.0,
         group_keys.len(),
         encrypted_keys,

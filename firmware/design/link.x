@@ -81,14 +81,6 @@ SECTIONS {
         *(.HardFaultTrampoline);
         *(.HardFault.*);
 
-        /* salt is constantly written, so it needs to be in first 32kb of flash where more writes are allowed */
-        . = ALIGN(1024);
-        _salt = .;
-        KEEP(*(.salt.default));
-        . = ALIGN(1024);
-        _esalt = .;
-        ASSERT(_esalt - _salt == 1024, "boot_salt_1 section has incorrect length");
-
         /* todo: write commit page to prevent partial flash writes */
 
         *(.text .text.*);
@@ -105,6 +97,24 @@ SECTIONS {
         KEEP(*(.files.default));
         _efiles = .;
     } > FILES
+
+    .salt : {
+        . = ALIGN(1024);
+        _salt = .;
+        KEEP(*(.salt.default));
+        . = ALIGN(1024);
+        _esalt = .;
+        ASSERT(_esalt - _salt == 1024, "boot_salt_1 section has incorrect length");
+    } > APP2 /* not enough space to fit in first 32kb of flash where more writes are allowed */
+
+    .filetable : {
+        _filetable = .;
+        KEEP(*(.filetable.default));
+        . = ALIGN(1024);
+        _efiletable = .;
+        ASSERT(_efiletable - _filetable == 1024, "FAT section has incorrect length");
+    } > FILETABLE
+
 
     /* ### .bss */
     .bss (NOLOAD) : ALIGN(8)
@@ -132,14 +142,6 @@ SECTIONS {
     {
         KEEP(*(.got .got.*));
     }
-
-    .filetable : {
-        _filetable = .;
-        KEEP(*(.filetable.default));
-        . = ALIGN(1024);
-        _efiletable = .;
-        ASSERT(_efiletable - _filetable == 1024, "FAT section has incorrect length");
-    } > FILETABLE
 
     .rodata : ALIGN(8) {
         . = ALIGN(8);
