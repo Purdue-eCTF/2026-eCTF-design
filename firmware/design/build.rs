@@ -29,11 +29,11 @@ fn public_signing_key(secret_key: &SymmetricKey) -> SymmetricKey {
 impl From<GroupSecretKeys> for GroupKey {
     fn from(value: GroupSecretKeys) -> Self {
         GroupKey {
-            sk_sign: value.sk_sign,
-            sk_read: value.sk_read,
-            pk_read: public_encryption_key(&value.sk_read),
-            sk_trans: value.sk_trans,
-            sk_inter: value.sk_inter,
+            sk_sign: Some(value.sk_sign),
+            sk_read: Some(value.sk_read),
+            pk_read: Some(public_encryption_key(&value.sk_read)),
+            sk_trans: Some(value.sk_trans),
+            sk_inter: Some(value.sk_inter),
         }
     }
 }
@@ -100,24 +100,24 @@ fn main() {
     for perm in perms.iter() {
         let entry = global_secrets.groups.get_mut(&perm.group).unwrap();
         let mut keys = GroupKey::from(*entry);
-        let pk_sign = public_signing_key(&keys.sk_sign);
-        let pk_trans = public_encryption_key(&keys.sk_trans);
-        let pk_inter = public_encryption_key(&keys.sk_inter);
+        let pk_sign = public_signing_key(&keys.sk_sign.unwrap());
+        let pk_trans = public_encryption_key(&keys.sk_trans.unwrap());
+        let pk_inter = public_encryption_key(&keys.sk_inter.unwrap());
 
         if !perm.read {
-            keys.pk_read = SymmetricKey([0; _]);
+            keys.pk_read = None;
         }
 
         if !perm.write {
-            keys.sk_sign = SymmetricKey([0; _]);
-            keys.pk_read = SymmetricKey([0; _]);
+            keys.sk_sign = None;
+            keys.pk_read = None;
         }
 
         if perm.receive {
             copy_perm_groups.push(perm.group);
         } else {
-            keys.sk_trans = SymmetricKey([0; _]);
-            keys.sk_inter = SymmetricKey([0; _]);
+            keys.sk_trans = None;
+            keys.sk_inter = None;
         }
 
         encrypted_keys.push(EncryptedGroupKey::from_group_keys(

@@ -198,7 +198,7 @@ fn handle_read(ctx: &mut Context, msg: &[u8]) {
         &file.protected.gn,
         &file.protected.nonce,
         &file.protected.tag,
-        &group_key.sk_read.0,
+        &group_key.sk_read.unwrap().0,
         &[],
     )
     .unwrap();
@@ -235,18 +235,18 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
     // the allocated data has incorrect length
     let data_len = length as usize;
     if data_len > file::CONTENT_SIZE || data_len != data.len() {
-        panic!()
+        panic!("got strange file length")
     }
 
     // TODO: check number of file slot requirements
     let slot = slot as usize;
     if slot > 7 {
-        panic!()
+        panic!("slot too large")
     }
 
     // retrieve signing and read encryption keys with pin
     let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
-    let pk_read = group_key.pk_read.0;
+    let pk_read = group_key.pk_read.unwrap().0;
 
     // generate empty file variable
     let mut file = File::empty();
@@ -275,7 +275,7 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
         &[],
     )
     .unwrap();
-    sign_file(&mut file, &group_key.sk_sign.0).unwrap();
+    sign_file(&mut file, &group_key.sk_sign.unwrap().0).unwrap();
 
     // TODO: make sure file/fat can't be partially written
     let new_fat = FatEntry {
@@ -344,8 +344,12 @@ fn handle_receive(ctx: &mut Context, msg: &[u8]) {
     let group_keys = enc_group_keys.decrypt(&k_auth);
 
     // decrypt assymetrically encrypted part of message
-    let inner =
-        unwrap_pub_message(assymetric_payload, &group_keys.sk_trans.0, group_id_bytes).unwrap();
+    let inner = unwrap_pub_message(
+        assymetric_payload,
+        &group_keys.sk_trans.unwrap().0,
+        group_id_bytes,
+    )
+    .unwrap();
 
     let file: &mut File = bytemuck::from_bytes_mut(inner);
     // check earlier associated group id matches
@@ -433,7 +437,7 @@ fn handle_interrogate(ctx: &mut Context, msg: &[u8]) {
             .unwrap()
             .decrypt(&k_auth);
 
-        ifile.decrypt(&group_keys.sk_inter.0).unwrap();
+        ifile.decrypt(&group_keys.sk_inter.unwrap().0).unwrap();
 
         // copy to the correct offset in list
         let list_offset = i * size_of::<listen::InterrogateFile>();

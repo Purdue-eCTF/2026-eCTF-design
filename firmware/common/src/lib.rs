@@ -21,14 +21,26 @@ use serde::{
 pub struct SymmetricKey(pub [u8; 32]);
 
 impl SymmetricKey {
+    pub const fn empty() -> Self {
+        Self([0; _])
+    }
     pub fn is_empty(&self) -> bool {
         self.0.iter().all(|v| *v == 0)
     }
 }
 
+#[derive(Default, Clone)]
+pub struct GroupKey {
+    pub sk_sign: Option<SymmetricKey>,
+    pub sk_read: Option<SymmetricKey>,
+    pub pk_read: Option<SymmetricKey>,
+    pub sk_trans: Option<SymmetricKey>,
+    pub sk_inter: Option<SymmetricKey>,
+}
+
 #[derive(Default, Clone, Copy, Zeroable, Pod)]
 #[repr(C)]
-pub struct GroupKey {
+pub struct GroupKeyBlob {
     pub sk_sign: SymmetricKey,
     pub sk_read: SymmetricKey,
     pub pk_read: SymmetricKey,
@@ -36,10 +48,50 @@ pub struct GroupKey {
     pub sk_inter: SymmetricKey,
 }
 
+impl From<GroupKey> for GroupKeyBlob {
+    fn from(value: GroupKey) -> Self {
+        let GroupKey {
+            sk_sign,
+            sk_read,
+            pk_read,
+            sk_trans,
+            sk_inter,
+        } = value;
+
+        GroupKeyBlob {
+            sk_sign: sk_sign.unwrap_or(SymmetricKey::empty()),
+            sk_read: sk_read.unwrap_or(SymmetricKey::empty()),
+            pk_read: pk_read.unwrap_or(SymmetricKey::empty()),
+            sk_trans: sk_trans.unwrap_or(SymmetricKey::empty()),
+            sk_inter: sk_inter.unwrap_or(SymmetricKey::empty()),
+        }
+    }
+}
+
+impl From<GroupKeyBlob> for GroupKey {
+    fn from(value: GroupKeyBlob) -> Self {
+        let GroupKeyBlob {
+            sk_sign,
+            sk_read,
+            pk_read,
+            sk_trans,
+            sk_inter,
+        } = value;
+
+        GroupKey {
+            sk_sign: Some(sk_sign).filter(|k| !k.is_empty()),
+            sk_read: Some(sk_read).filter(|k| !k.is_empty()),
+            pk_read: Some(pk_read).filter(|k| !k.is_empty()),
+            sk_trans: Some(sk_trans).filter(|k| !k.is_empty()),
+            sk_inter: Some(sk_inter).filter(|k| !k.is_empty()),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct EncryptedGroupKey {
     pub group: u16,
-    pub blob: [u8; core::mem::size_of::<GroupKey>()],
+    pub blob: [u8; core::mem::size_of::<GroupKeyBlob>()],
     pub tag: [u8; 16],
     pub nonce: [u8; 24],
     pub pk_sign: SymmetricKey,
@@ -62,7 +114,8 @@ impl EncryptedGroupKey {
             )
             .unwrap();
 
-        *bytemuck::from_bytes::<GroupKey>(&blob)
+        let group_keys: GroupKeyBlob = *bytemuck::from_bytes::<GroupKeyBlob>(&blob);
+        group_keys.into()
     }
 
     pub fn from_group_keys(
@@ -74,8 +127,9 @@ impl EncryptedGroupKey {
         pk_trans: SymmetricKey,
         pk_inter: SymmetricKey,
     ) -> Self {
-        let mut blob: [u8; core::mem::size_of::<GroupKey>()] = [0; _];
-        blob.copy_from_slice(bytemuck::bytes_of(group_keys));
+        let group_key_blob: GroupKeyBlob = group_keys.clone().into();
+        let mut blob: [u8; core::mem::size_of::<GroupKeyBlob>()] = [0; _];
+        blob.copy_from_slice(bytemuck::bytes_of(&group_key_blob));
 
         let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(&k_auth.0));
         let nonce = XChaCha20Poly1305::generate_nonce(rng);
