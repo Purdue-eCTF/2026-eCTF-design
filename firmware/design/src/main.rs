@@ -296,7 +296,7 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
         ctx.fat.set(&FatTable { entries }).unwrap();
     }
 
-    Message::write_header(Opcode::Write, 0, MessagePort::UART0);
+    Message::write(Opcode::Write, MessagePort::UART0, &[]).unwrap();
 }
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
