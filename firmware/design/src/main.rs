@@ -243,9 +243,13 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
         panic!("slot too large")
     }
 
+    println!("1: {}", ctx.time());
+
     // retrieve signing and read encryption keys with pin
     let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
     let pk_read = group_key.pk_read.unwrap().0;
+
+    println!("2: {}", ctx.time());
 
     // generate empty file variable
     let mut file = File::empty();
@@ -274,7 +278,9 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
         &[],
     )
     .unwrap();
+    println!("3: {}", ctx.time());
     sign_file(&mut file, &group_key.sk_sign.unwrap().0).unwrap();
+    println!("4: {}", ctx.time());
 
     // TODO: make sure file/fat can't be partially written
     let new_fat = FatEntry {
@@ -288,6 +294,7 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
     unsafe {
         ctx.files[slot].set(&file).unwrap();
     }
+    println!("5: {}", ctx.time());
     let current = ctx.fat.get().unwrap();
     // avoid in-place mutation
     let mut entries = current.entries;
@@ -295,6 +302,7 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
     unsafe {
         ctx.fat.set(&FatTable { entries }).unwrap();
     }
+    println!("6: {}", ctx.time());
 
     Message::write_header(Opcode::Write, 0, MessagePort::UART0);
 }
