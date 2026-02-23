@@ -12,7 +12,7 @@ use mspm0l222x_hal::{
     flash::{self, FLASH_PAGE_SIZE, FlashController},
     iomux::Iomux,
     trng::Trng,
-    uart::Uart0,
+    uart::{Uart0, Uart1},
 };
 
 use crate::{
@@ -178,7 +178,7 @@ impl Context {
 
         Uart0::init(&iomux, peripherals.uart0);
         println!("starting!");
-        // Uart1::init(&iomux, peripherals.uart1);
+        Uart1::init(&iomux, peripherals.uart1);
         FlashController::init(peripherals.flashctl);
 
         Trng::init(peripherals.trng);

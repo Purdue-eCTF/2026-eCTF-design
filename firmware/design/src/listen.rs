@@ -171,7 +171,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
                     &mut pkm.nonce,
                     &mut pkm.tag,
                     &key,
-                    &[],
+                    &metadata.group.to_le_bytes(),
                 )
                 .unwrap();
                 count += 1;
@@ -183,12 +183,13 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
 
     let body_size = count * ENTRY_SIZE;
 
-    let (_, sm_bytes) = payload.split_at_mut(body_size);
-    let sm: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(sm_bytes);
+    let (body, sm_bytes) = payload.split_at_mut(body_size);
+    let sm: &mut crypto::SymmetricMetadata =
+        bytemuck::from_bytes_mut(&mut sm_bytes[..size_of::<crypto::SymmetricMetadata>()]);
 
     // encrypt the part of buffer that was used
     let _ = crypto::encrypt_payload_symmetric(
-        &mut body[..body_size],
+        body,
         &mut sm.nonce,
         &mut sm.tag,
         &i1,
@@ -200,7 +201,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
     Message::write(
         Opcode::Interrogate,
         MessagePort::UART1,
-        &body[..payload_size],
+        &payload[..payload_size],
     )
     .unwrap();
 }

@@ -390,7 +390,7 @@ fn handle_interrogate(ctx: &mut Context, msg: &[u8]) {
             .unwrap();
 
     // send message
-    Message::write(Opcode::Interrogate, MessagePort::UART1, &payload).unwrap();
+    Message::write(Opcode::Interrogate, MessagePort::UART1, &buf).unwrap();
 
     // receive interrogate response
     let mut buf = [0u8; size_of::<EncryptedInterrogateInfo>() * 8 + size_of::<SymmetricMetadata>()];
@@ -441,5 +441,5 @@ fn handle_listen(ctx: &mut Context) {
     Message::write_header(Opcode::Listen, 0, MessagePort::UART0);
     let mut body = [0u8; MAX_BODY_SIZE];
     let msg = Message::read(MessagePort::UART1, &mut body).unwrap();
-    listen::recv(ctx, msg.opcode, &mut body).unwrap();
+    listen::recv(ctx, msg.opcode, &mut body[..msg.length as usize]).unwrap();
 }
