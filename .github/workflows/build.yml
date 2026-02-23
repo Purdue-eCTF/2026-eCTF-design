@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout branch
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -38,4 +40,4 @@ jobs:
           ACTOR: ${{ github.actor }}
           BRANCH: ${{ github.head_ref || github.ref_name }} # https://github.com/orgs/community/discussions/30794
           COMMIT_HASH: ${{ github.event.pull_request.head.sha || github.sha }} # https://github.com/orgs/community/discussions/26676  
-        run: python upload.py "$COMMIT_HASH" "$ACTOR" "$(git show -s --format=%s "$COMMIT_HASH")" '${{ github.run_id }}' "$BRANCH"
+        run: python upload.py "$COMMIT_HASH" "$ACTOR" "$(git show -s --format=%s)" '${{ github.run_id }}' "$BRANCH"
