@@ -62,6 +62,9 @@ fn main() {
     println!("cargo:rerun-if-changed=link.x");
     println!("cargo:rerun-if-changed=memory.x");
 
+    println!("cargo:rustc-link-arg=-Xlinker");
+    println!("cargo:rustc-link-arg=--print-memory-usage");
+
     // HSM_PIN='1a2b3c' -e PERMISSIONS='1234=R--:4321=RWC'
     let perms: Vec<Perms> = env!("PERMISSIONS")
         .split(":")
@@ -183,7 +186,7 @@ pub const INTERROGATE_SEND: SymmetricKey = SymmetricKey({:?});
 // I1
 pub const INTERROGATE_RECV: SymmetricKey = SymmetricKey({:?});
 
-// salt for argon derivation
+// salt for argon derivation and blake2 derivation
 pub const PUB_ENCRYPT_SALT: [u8; 32] = {:?};
 
 // TODO: must be sorted by group

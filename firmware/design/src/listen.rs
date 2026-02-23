@@ -5,7 +5,7 @@ use crate::{
     crypto::{
         self, PubKeyMetadata, SymmetricMetadata, decrypt_payload_pub, unwrap_symmetric_message,
     },
-    file::{self, File, FileName},
+    file::{File, FileName},
     message::{Message, MessagePort, Opcode},
     protocol::{ProtocolError, TransferM0Encrypted},
     secrets::{self, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV},

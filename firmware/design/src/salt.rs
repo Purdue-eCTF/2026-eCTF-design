@@ -1,6 +1,6 @@
 use crate::context;
 use crate::secrets::{ARGON_M_COST, ARGON_P_COST, BOOT_SALT_0, T_COST_BOOT, T_COST_PIN};
-use crate::secrets::{BOOT_SALT_1, DERIVE_SALT};
+use crate::secrets::{BOOT_SALT_1, PUB_ENCRYPT_SALT};
 use argon2::Block;
 use argon2::{Algorithm, Argon2, Params, Version};
 use bytemuck::{Pod, Zeroable};
@@ -39,7 +39,7 @@ impl Salt {
         let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
         argon
-            .hash_password_into_with_memory(input, DERIVE_SALT, output, &mut mem)
+            .hash_password_into_with_memory(input, &PUB_ENCRYPT_SALT, output, &mut mem)
             .expect("Argon Derivation Failed");
     }
 }

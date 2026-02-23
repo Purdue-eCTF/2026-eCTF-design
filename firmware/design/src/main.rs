@@ -18,16 +18,14 @@ use mspm0l222x_hal::Peripherals;
 
 use crate::{
     crypto::{
-        PubKeyMetadata, SymmetricMetadata, decrypt_payload_pub, decrypt_payload_symmetric,
-        encrypt_payload_pub, encrypt_payload_symmetric, sign_file, unwrap_pub_message,
+        SymmetricMetadata, decrypt_payload_pub, encrypt_payload_pub, sign_file, unwrap_pub_message,
         unwrap_symmetric_message, verify_signature,
     },
     file::{FatEntry, FatTable, File, FileMeta, FileName, UUID},
     listen::EncryptedInterrogateInfo,
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
     secrets::{
-        COPY_PERM_GROUPS, GROUP_KEYS_ENC, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV,
-        get_enc_group_keys,
+        COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, get_enc_group_keys,
     },
 };
 
@@ -62,6 +60,7 @@ fn main() -> ! {
         println!("Got message {msg_info:?}");
 
         sensitive!(ctx, {
+            let start = ctx.time();
             match msg_info.opcode {
                 Opcode::List => handle_list(&mut ctx, msg),
                 Opcode::Read => handle_read(&mut ctx, msg),
@@ -72,9 +71,27 @@ fn main() -> ! {
                 Opcode::Ack => println!("Ack without sent message"),
                 e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
             }
+
+            let elapsed = ctx.time() - start;
+            // TODO: remove this before submitting
+            if let Some((_, budget)) = TIME_BUDGET_MS
+                .iter()
+                .find(|(opcode, _)| *opcode == msg_info.opcode)
+                && elapsed > *budget
+            {
+                println!("Took {elapsed} ms to run, expected {budget}");
+            }
         });
     }
 }
+
+const TIME_BUDGET_MS: &[(Opcode, u32)] = &[
+    (Opcode::List, 500),
+    (Opcode::Read, 3000),
+    (Opcode::Write, 3000),
+    (Opcode::Receive, 3000),
+    (Opcode::Interrogate, 1000),
+];
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 #[repr(C, packed)]

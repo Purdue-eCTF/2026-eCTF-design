@@ -7,7 +7,6 @@ use crate::context;
 pub const CONTENT_SIZE: usize = 8192;
 pub const UUID_SIZE: usize = 16;
 pub const NAME_SIZE: usize = 32;
-pub const FILE_METADATA_SIZE: usize = size_of::<File>() - CONTENT_SIZE - 6;
 
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
 #[repr(transparent)]

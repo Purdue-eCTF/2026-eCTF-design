@@ -13,5 +13,6 @@ rustflags = [
     "link-arg=-nostartfiles",
     "-C",
     "link-arg=-Tlink.x",
+    "-Wlinker-messages",
 ]
 runner = ["sh", "run.sh"]

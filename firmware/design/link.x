@@ -76,12 +76,22 @@ SECTIONS {
 
         *(.Reset);
 
-        *(.text .text.*);
-
         /* The HardFaultTrampoline uses the `b` instruction to enter `HardFault`,
         so must be placed close to it. */
         *(.HardFaultTrampoline);
         *(.HardFault.*);
+
+        /* salt is constantly written, so it needs to be in first 32kb of flash where more writes are allowed */
+        . = ALIGN(1024);
+        _salt = .;
+        KEEP(*(.salt.default));
+        . = ALIGN(1024);
+        _esalt = .;
+        ASSERT(_esalt - _salt == 1024, "boot_salt_1 section has incorrect length");
+
+        /* todo: write commit page to prevent partial flash writes */
+
+        *(.text .text.*);
 
         . = ALIGN(8); /* Pad .text to the alignment to workaround overlapping load section bug in old lld */
         __etext = .;
@@ -130,14 +140,6 @@ SECTIONS {
         _efiletable = .;
         ASSERT(_efiletable - _filetable == 1024, "FAT section has incorrect length");
     } > FILETABLE
-
-    .salt : {
-        _salt = .;
-        KEEP(*(.salt.default));
-        . = ALIGN(1024);
-        _esalt = .;
-        ASSERT(_esalt - _salt == 1024, "boot_salt_1 section has incorrect length");
-    } > APP2
 
     .rodata : ALIGN(8) {
         . = ALIGN(8);

@@ -1,11 +1,11 @@
-use crate::file::{File, FileName};
+use crate::file::File;
 use crate::message::{Message, MessageError, MessagePort, Opcode};
 use crate::secrets::TRANSFER_SEND;
 use bytemuck::{Pod, Zeroable, bytes_of};
 use thiserror::Error;
 
 use crate::crypto::{
-    CryptoError, PubKeyMetadata, SymmetricMetadata, decrypt_payload_pub, decrypt_payload_symmetric,
+    CryptoError, PubKeyMetadata, SymmetricMetadata, decrypt_payload_symmetric,
     encrypt_payload_symmetric,
 };
 

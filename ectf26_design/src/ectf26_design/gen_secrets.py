@@ -12,11 +12,9 @@ Copyright: Copyright (c) 2026 The MITRE Corporation
 
 import argparse
 import json
-import secrets
 from pathlib import Path
 
 from Crypto.Random import get_random_bytes
-from Crypto.Signature import eddsa
 from loguru import logger
 
 

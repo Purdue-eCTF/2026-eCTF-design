@@ -5,6 +5,7 @@ use core::{
     mem::size_of,
     sync::atomic::{AtomicU32, Ordering},
 };
+use cortex_m::peripheral::SYST;
 use cortex_m_rt::exception;
 
 use mspm0l222x_hal::{
@@ -156,8 +157,6 @@ impl<T: NoUninit> FlashEntry<T> {
 // TODO: move File/FatEntry to FlashEntry abstraction
 pub(crate) struct Context {
     pub files: [FlashEntry<File>; 8],
-    // TODO: add systick initialization
-    // pub systick: mspm0l222x_hal::mspm0l222x_pac::SYST,
     pub fat: FlashEntry<FatTable>,
     pub boot_salt_1: FlashEntry<Salt>,
     pub ram_salt: Option<Salt>,
@@ -172,6 +171,11 @@ unsafe extern "C" {
 
 impl Context {
     pub(crate) fn new(peripherals: Peripherals) -> Self {
+        mspm0l222x_hal::timer::SysTickConfig::enable_with_reload(
+            unsafe { &*(SYST::PTR as *const SYST) },
+            32_000 - 1, // 1 ms timer interval
+        );
+
         // TODO: PIN salt generation + penalty enforcement
         // TODO: check for flash write failure
         let iomux = Iomux::new(&peripherals.iomux);
@@ -207,6 +211,7 @@ impl Context {
         }
         // pin salt always derived
         let pin_salt = boot_salt_1.get().unwrap().derive_pin_salt();
+
         Self {
             files,
             fat,
@@ -246,13 +251,13 @@ impl Context {
     }
 
     #[allow(static_mut_refs)]
-    pub(crate) fn time() -> u32 {
+    pub(crate) fn time(&self) -> u32 {
         // TODO: how long does it take for this to overflow? does that cause any issues?
         unsafe { TICKS.load(Ordering::Relaxed) }
     }
 
     #[allow(static_mut_refs)]
-    pub(crate) fn reset_time() {
+    pub(crate) fn reset_time(&self) {
         unsafe { TICKS.store(0, Ordering::Relaxed) }
     }
 }
