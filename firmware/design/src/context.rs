@@ -7,6 +7,7 @@ use core::{
 };
 use cortex_m::peripheral::SYST;
 use cortex_m_rt::exception;
+use subtle::ConstantTimeEq;
 
 use mspm0l222x_hal::{
     Peripherals,
@@ -242,8 +243,7 @@ impl Context {
         Salt::derive_argon(&input, &mut k_auth, T_COST_K_AUTH);
 
         let k_auth_hash = blake_hash(&k_auth, &K_AUTH_SALT);
-        // FIXME FIXME FIXME FIXME FIXME side channel, use constant time eq
-        if k_auth_hash != K_AUTH_HASH {
+        if K_AUTH_HASH.ct_eq(&k_auth_hash).unwrap_u8() == 0 {
             return Err(ProtocolError::InvalidPin);
         }
 
