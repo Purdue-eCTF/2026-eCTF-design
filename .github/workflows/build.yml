@@ -36,5 +36,6 @@ jobs:
           BUILD_LOG_PORT: ${{ secrets.BUILD_LOG_PORT }}
           TEST_LOG_PORT: ${{ secrets.TEST_LOG_PORT }}
           ACTOR: ${{ github.actor }}
-          BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: python upload.py "$GITHUB_SHA" "$ACTOR" "$(git show -s --format=%s)" '${{ github.run_id }}' "$BRANCH"
+          BRANCH: ${{ github.head_ref || github.ref_name }} # https://github.com/orgs/community/discussions/30794
+          COMMIT_HASH: ${{ github.event.pull_request.head.sha || github.sha }} # https://github.com/orgs/community/discussions/26676  
+        run: python upload.py "$COMMIT_HASH" "$ACTOR" "$(git show -s --format=%s)" '${{ github.run_id }}' "$BRANCH"
