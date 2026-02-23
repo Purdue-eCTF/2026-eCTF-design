@@ -59,8 +59,8 @@ fn main() -> ! {
 
         println!("Got message {msg_info:?}");
 
+        let start = ctx.time();
         sensitive!(ctx, {
-            let start = ctx.time();
             match msg_info.opcode {
                 Opcode::List => handle_list(&mut ctx, msg),
                 Opcode::Read => handle_read(&mut ctx, msg),
@@ -71,17 +71,16 @@ fn main() -> ! {
                 Opcode::Ack => println!("Ack without sent message"),
                 e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
             }
-
-            let elapsed = ctx.time() - start;
-            // TODO: remove this before submitting
-            if let Some((_, budget)) = TIME_BUDGET_MS
-                .iter()
-                .find(|(opcode, _)| *opcode == msg_info.opcode)
-            // && elapsed > *budget
-            {
-                println!("Took {elapsed} ms to run, expected {budget}");
-            }
         });
+        let elapsed = ctx.time() - start;
+        // TODO: remove this before submitting
+        if let Some((_, budget)) = TIME_BUDGET_MS
+            .iter()
+            .find(|(opcode, _)| *opcode == msg_info.opcode)
+        // && elapsed > *budget
+        {
+            println!("Took {elapsed} ms to run, expected {budget}");
+        }
     }
 }
 
