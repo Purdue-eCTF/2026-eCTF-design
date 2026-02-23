@@ -3,7 +3,9 @@ use core::{
     fmt::{self, Write},
     marker::PhantomData,
     mem::size_of,
+    sync::atomic::{AtomicU32, Ordering},
 };
+use cortex_m_rt::exception;
 
 use mspm0l222x_hal::{
     Peripherals,
@@ -149,6 +151,8 @@ impl<T: NoUninit> FlashEntry<T> {
 // TODO: move File/FatEntry to FlashEntry abstraction
 pub(crate) struct Context {
     pub files: [FlashEntry<File>; 8],
+    // TODO: add systick initialization
+    // pub systick: mspm0l222x_hal::mspm0l222x_pac::SYST,
     pub fat: FlashEntry<FatTable>,
     pub boot_salt_1: FlashEntry<Salt>,
     pub ram_salt: Option<Salt>,
@@ -227,6 +231,29 @@ impl Context {
         input[6..].copy_from_slice(&self.pin_salt.0);
         Salt::derive_argon(&input, &mut k, T_COST_K_AUTH);
         k
+    }
+
+    #[allow(static_mut_refs)]
+    pub(crate) fn time() -> u32 {
+        // TODO: how long does it take for this to overflow? does that cause any issues?
+        unsafe { TICKS.load(Ordering::Relaxed) }
+    }
+
+    #[allow(static_mut_refs)]
+    pub(crate) fn reset_time() {
+        unsafe { TICKS.store(0, Ordering::Relaxed) }
+    }
+}
+
+static mut TICKS: AtomicU32 = AtomicU32::new(0);
+const CYCLES_PER_TICK: u32 = mspm0l222x_hal::SYSOSC_FREQUENCY / 10_000;
+#[allow(static_mut_refs)]
+#[exception]
+fn SysTick() {
+    // All access must be atomic, so this should be safe.
+    let current = unsafe { TICKS.load(Ordering::Relaxed) };
+    unsafe {
+        TICKS.store(current + 1, Ordering::Relaxed);
     }
 }
 
