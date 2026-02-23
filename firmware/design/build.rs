@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use argon2::password_hash::rand_core::RngCore;
 // TODO: ASLR for code and files
 use argon2::{Algorithm, Argon2, Params, Version};
+use blake2::{Blake2s256, Digest};
+use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::aead::OsRng;
 use common::{EncryptedGroupKey, GroupKey, SymmetricKey};
 use ed25519_dalek::{SigningKey, VerifyingKey};
@@ -53,6 +55,7 @@ struct GlobalSecrets {
     t1: SymmetricKey,
     i0: SymmetricKey,
     i1: SymmetricKey,
+    pub_encrypt_salt: SymmetricKey,
 }
 
 fn main() {
@@ -77,22 +80,26 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
 
     // Ignore all secrets we don't have a group for
-    global_secrets
-        .groups
-        .retain(|k, _| perms.iter().find(|perm| perm.group == *k).is_some());
+    global_secrets.groups.retain(|k, _| {
+        perms
+            .iter()
+            .find(|perm| (perm.group == *k) && perm.has_any_perms())
+            .is_some()
+    });
 
     let pin = Pin::from_string(env!("HSM_PIN"));
     let salts = PinSalts::new(&pin);
 
     let mut encrypted_keys = Vec::new();
+    let mut copy_perm_groups = Vec::new();
 
     // remove secrets we don't have permissions for
     for perm in perms.iter() {
         let entry = global_secrets.groups.get_mut(&perm.group).unwrap();
         let mut keys = GroupKey::from(*entry);
-        let mut pk_sign = public_signing_key(&keys.sk_sign);
-        let mut pk_trans = public_encryption_key(&keys.sk_trans);
-        let mut pk_inter = public_encryption_key(&keys.sk_inter);
+        let pk_sign = public_signing_key(&keys.sk_sign);
+        let pk_trans = public_encryption_key(&keys.sk_trans);
+        let pk_inter = public_encryption_key(&keys.sk_inter);
 
         if !perm.read {
             keys.pk_read = SymmetricKey([0; _]);
@@ -103,15 +110,11 @@ fn main() {
             keys.pk_read = SymmetricKey([0; _]);
         }
 
-        if !perm.receive {
+        if perm.receive {
+            copy_perm_groups.push(perm.group);
+        } else {
             keys.sk_trans = SymmetricKey([0; _]);
             keys.sk_inter = SymmetricKey([0; _]);
-        }
-
-        if !(perm.receive || perm.read || perm.write) {
-            pk_sign = SymmetricKey([0; _]);
-            pk_trans = SymmetricKey([0; _]);
-            pk_inter = SymmetricKey([0; _]);
         }
 
         encrypted_keys.push(EncryptedGroupKey::from_group_keys(
@@ -126,7 +129,8 @@ fn main() {
     }
     encrypted_keys.sort_by_key(|k| k.group);
 
-    let secrets_file = generate_secrets(&salts, &global_secrets, &encrypted_keys);
+    let secrets_file =
+        generate_secrets(&salts, &global_secrets, &encrypted_keys, &copy_perm_groups);
     std::fs::write(
         out_dir.join("secrets_generated.rs"),
         secrets_file.as_bytes(),
@@ -138,6 +142,7 @@ fn generate_secrets(
     pin_salts: &PinSalts,
     global_keys: &GlobalSecrets,
     group_keys: &[EncryptedGroupKey],
+    copy_perm_grops: &[u16],
 ) -> String {
     assert!(group_keys.is_sorted_by_key(|k| k.group));
 
@@ -165,6 +170,9 @@ pub const BOOT_SALT_0: [u8; 32] = {:?};
 // TODO: make in special section of flash
 pub const BOOT_SALT_1: [u8; 32] = {:?};
 
+pub const K_AUTH_SALT: [u8; 32] = {:?};
+pub const K_AUTH_HASH: [u8; 32] = {:?};
+
 // T0
 pub const TRANSFER_SEND: SymmetricKey = SymmetricKey({:?});
 // T1
@@ -176,10 +184,12 @@ pub const INTERROGATE_SEND: SymmetricKey = SymmetricKey({:?});
 pub const INTERROGATE_RECV: SymmetricKey = SymmetricKey({:?});
 
 // salt for argon derivation
-pub const DERIVE_SALT: &[u8] = &{:?};
+pub const PUB_ENCRYPT_SALT: [u8; 32] = {:?};
 
 // TODO: must be sorted by group
 pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
+
+pub const COPY_PERM_GROUPS: [u16; {}] = {:?};
 ",
         ARGON_M_COST,
         ARGON_P_COST,
@@ -188,16 +198,21 @@ pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
         T_COST_K_AUTH,
         pin_salts.boot_salt_0,
         pin_salts.boot_salt_1,
+        pin_salts.k_auth_salt,
+        pin_salts.k_auth_hash,
         global_keys.t0.0,
         global_keys.t1.0,
         global_keys.i0.0,
         global_keys.i1.0,
-        DERIVE_SALT,
+        global_keys.pub_encrypt_salt.0,
         group_keys.len(),
         encrypted_keys,
+        copy_perm_grops.len(),
+        copy_perm_grops,
     )
 }
 
+#[derive(Debug)]
 struct Perms {
     group: u16,
     read: bool,
@@ -211,9 +226,13 @@ impl Perms {
         Self {
             group: u16::from_str_radix(group, 16).unwrap(),
             read: perms.chars().nth(0) == Some('R'),
-            write: perms.chars().nth(0) == Some('W'),
-            receive: perms.chars().nth(0) == Some('C'),
+            write: perms.chars().nth(1) == Some('W'),
+            receive: perms.chars().nth(2) == Some('C'),
         }
+    }
+
+    fn has_any_perms(&self) -> bool {
+        self.read || self.write || self.receive
     }
 }
 
@@ -257,12 +276,21 @@ fn derive_next_salt(input: &[u8], t_cost: u32) -> Salt {
     out
 }
 
+fn blake_hash(input: &[u8], salt: &Salt) -> [u8; 32] {
+    let mut blake_hasher = Blake2s256::new();
+    blake_hasher.update(input);
+    blake_hasher.update(salt);
+    *blake_hasher.finalize().as_array().unwrap()
+}
+
 type Salt = [u8; 32];
 struct PinSalts {
     boot_salt_0: Salt,
     boot_salt_1: Salt,
     pin_salt: Salt,
     k_auth: SymmetricKey,
+    k_auth_salt: Salt,
+    k_auth_hash: [u8; 32],
 }
 
 impl PinSalts {
@@ -278,11 +306,17 @@ impl PinSalts {
         pin_buffer[6..].copy_from_slice(&pin_salt);
         let k_auth = derive_next_salt(&pin_buffer, T_COST_K_AUTH);
 
+        let mut k_auth_salt: Salt = [0; _];
+        OsRng.fill_bytes(&mut k_auth_salt);
+        let k_auth_hash = blake_hash(&k_auth, &k_auth_salt);
+
         PinSalts {
             boot_salt_0,
             boot_salt_1,
             pin_salt,
             k_auth: SymmetricKey(k_auth),
+            k_auth_salt,
+            k_auth_hash,
         }
     }
 }

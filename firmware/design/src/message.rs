@@ -160,6 +160,12 @@ impl Message {
         let reader = MessageUart::new(port);
         let message = Self::read_header(port)?;
 
+        // early return for ack
+        // matches reference design, and if we don't do this we end up sending ack for ack
+        if message.opcode == Opcode::Ack {
+            return Ok(message);
+        }
+
         Self::send_ack(port);
         if (message.length as usize) > buf.len() {
             return Err(MessageError::BodyLengthError);

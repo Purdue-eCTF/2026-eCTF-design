@@ -1,4 +1,5 @@
 use argon2::{self, Block};
+use blake2::{Blake2s256, Digest};
 use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::aead::generic_array::GenericArray;
 use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
@@ -8,6 +9,8 @@ use thiserror::Error;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::file::File;
+use crate::protocol::ProtocolError;
+use crate::secrets::PUB_ENCRYPT_SALT;
 
 pub const NONCE_SIZE: usize = 24;
 pub const TAG_SIZE: usize = 16;
@@ -19,6 +22,59 @@ pub struct PubKeyMetadata {
     pub gn: [u8; GN_SIZE],
     pub nonce: [u8; NONCE_SIZE],
     pub tag: [u8; TAG_SIZE],
+}
+
+impl PubKeyMetadata {
+    pub fn empty() -> Self {
+        Self {
+            gn: [0u8; _],
+            nonce: [0u8; _],
+            tag: [0u8; _],
+        }
+    }
+
+    pub fn encrypt(
+        msg: &mut [u8],
+        public_key: &[u8; 32],
+        associated_data: &[u8],
+    ) -> Result<Self, ProtocolError> {
+        let mut out = Self::empty();
+
+        encrypt_payload_pub(
+            msg,
+            &mut out.gn,
+            &mut out.nonce,
+            &mut out.tag,
+            public_key,
+            associated_data,
+        )?;
+
+        Ok(out)
+    }
+}
+
+/// Given a message like msg || SymmetricMetadata, decrypts and validates the message, and returns msg
+pub fn unwrap_pub_message<'a>(
+    msg: &'a mut [u8],
+    secret_key: &[u8; 32],
+    associated_data: &[u8],
+) -> Result<&'a mut [u8], ProtocolError> {
+    if msg.len() < size_of::<PubKeyMetadata>() {
+        return Err(CryptoError::InvalidDecryptionPayload.into());
+    }
+
+    let (msg_inner, metadata) = msg.split_at_mut(msg.len() - size_of::<PubKeyMetadata>());
+    let metadata: &PubKeyMetadata = bytemuck::from_bytes(metadata);
+    decrypt_payload_pub(
+        msg_inner,
+        &metadata.gn,
+        &metadata.nonce,
+        &metadata.tag,
+        secret_key,
+        associated_data,
+    )?;
+
+    Ok(msg_inner)
 }
 
 #[repr(C)]
@@ -35,6 +91,41 @@ impl SymmetricMetadata {
             tag: [0u8; _],
         }
     }
+
+    pub fn encrypt(
+        msg: &mut [u8],
+        key: &[u8; 32],
+        associated_data: &[u8],
+    ) -> Result<Self, ProtocolError> {
+        let mut out = Self::empty();
+
+        encrypt_payload_symmetric(msg, &mut out.nonce, &mut out.tag, key, associated_data)?;
+
+        Ok(out)
+    }
+}
+
+/// Given a message like msg || SymmetricMetadata, decrypts and validates the message, and returns msg
+pub fn unwrap_symmetric_message<'a>(
+    msg: &'a mut [u8],
+    key: &[u8; 32],
+    associated_data: &[u8],
+) -> Result<&'a mut [u8], ProtocolError> {
+    if msg.len() < size_of::<SymmetricMetadata>() {
+        return Err(CryptoError::InvalidDecryptionPayload.into());
+    }
+
+    let (msg_inner, metadata) = msg.split_at_mut(msg.len() - size_of::<SymmetricMetadata>());
+    let metadata: &SymmetricMetadata = bytemuck::from_bytes(metadata);
+    decrypt_payload_symmetric(
+        msg_inner,
+        &metadata.nonce,
+        &metadata.tag,
+        key,
+        associated_data,
+    )?;
+
+    Ok(msg_inner)
 }
 
 // TODO: Tests
@@ -73,20 +164,18 @@ pub fn decrypt_payload_pub<'a>(
     nonce: &'a [u8; NONCE_SIZE],
     tag: &'a [u8; TAG_SIZE],
     secret_key: &[u8; 32],
+    associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
     let sk = StaticSecret::from(*secret_key);
     let pubkey = PublicKey::from(*gn);
     let shared = sk.diffie_hellman(&pubkey).to_bytes();
 
-    let mut sym_key = [0u8; 32];
-    let memory = Block::new();
+    // use kdf as recommended by rfc
+    // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
+    // TODO: maybe add per key salt
+    let sym_key = blake_hash(&shared, &PUB_ENCRYPT_SALT);
 
-    // TODO: params
-    argon2::Argon2::default()
-        .hash_password_into_with_memory(&shared, &[], &mut sym_key, [memory])
-        .map_err(|_| CryptoError::KDFFailure)?;
-
-    decrypt_payload_symmetric(payload, nonce, tag, &sym_key, &[])?;
+    decrypt_payload_symmetric(payload, nonce, tag, &sym_key, associated_data)?;
     Ok(payload)
 }
 
@@ -97,6 +186,7 @@ pub fn encrypt_payload_pub<'a>(
     nonce: &'a mut [u8; NONCE_SIZE],
     tag: &'a mut [u8; TAG_SIZE],
     public_key: &[u8; 32],
+    associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
     let pk = PublicKey::from(*public_key);
     let mut n_bytes = [0; 32];
@@ -113,15 +203,12 @@ pub fn encrypt_payload_pub<'a>(
 
     let shared = n.diffie_hellman(&pk).to_bytes();
 
-    let memory = Block::new();
-    let mut secret = [0; 32];
+    // use kdf as recommended by rfc
+    // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
+    // TODO: maybe add per key salt
+    let secret = blake_hash(&shared, &PUB_ENCRYPT_SALT);
 
-    // TODO: params
-    argon2::Argon2::default()
-        .hash_password_into_with_memory(&shared, &[], &mut secret, [memory])
-        .map_err(|_| CryptoError::KDFFailure)?;
-
-    encrypt_payload_symmetric(payload, nonce, tag, &secret, &[])?;
+    encrypt_payload_symmetric(payload, nonce, tag, &secret, associated_data)?;
     Ok(payload)
 }
 
@@ -166,4 +253,11 @@ pub fn encrypt_payload_symmetric<'a>(
 
     tag_slot.copy_from_slice(tag.as_slice());
     Ok(payload)
+}
+
+pub fn blake_hash(input: &[u8], salt: &[u8; 32]) -> [u8; 32] {
+    let mut blake_hasher = Blake2s256::new();
+    blake_hasher.update(input);
+    blake_hasher.update(salt);
+    *blake_hasher.finalize().as_array().unwrap()
 }

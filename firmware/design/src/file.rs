@@ -20,9 +20,9 @@ pub struct UUID(pub [u8; UUID_SIZE]);
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
 #[repr(C, packed)]
 pub struct FileMeta {
-    pub name: FileName,
-    pub group: u16,
     pub slot: u8,
+    pub group: u16,
+    pub name: FileName,
 }
 
 #[repr(C)]

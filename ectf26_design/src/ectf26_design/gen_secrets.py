@@ -42,6 +42,7 @@ def gen_secrets(groups: list[int]) -> bytes:
         "t1": get_random_bytes(32).hex(),
         "i0": get_random_bytes(32).hex(),
         "i1": get_random_bytes(32).hex(),
+        "pub_encrypt_salt": get_random_bytes(32).hex(),
     }
 
     for group in groups:
