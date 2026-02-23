@@ -1,4 +1,6 @@
+use crate::context;
 use crate::secrets::{ARGON_M_COST, ARGON_P_COST, BOOT_SALT_0, T_COST_BOOT, T_COST_PIN};
+use crate::secrets::{BOOT_SALT_1, DERIVE_SALT};
 use argon2::Block;
 use argon2::{Algorithm, Argon2, Params, Version};
 use bytemuck::{Pod, Zeroable};
@@ -30,10 +32,9 @@ impl Salt {
     pub fn derive_argon(input: &[u8], output: &mut [u8], t_cost: u32) {
         // TODO: prevent this from overflowing the stack
         let mut mem = [Block::new(); ARGON_M_COST_USIZE];
-        const DERIVE_SALT: &[u8] = b"ectf-deriv";
 
         let params = Params::new(ARGON_M_COST, t_cost, ARGON_P_COST, Some(output.len()))
-            .expect("Argon Params Invalid");
+            .expect("Argon params invalid");
 
         let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
@@ -42,3 +43,7 @@ impl Salt {
             .expect("Argon Derivation Failed");
     }
 }
+
+#[unsafe(link_section = ".salt.default")]
+#[unsafe(no_mangle)]
+pub static __SALT: ([u8; core::mem::size_of::<Salt>()], u64) = (BOOT_SALT_1, context::FLASH_MAGIC);

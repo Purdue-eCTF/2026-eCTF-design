@@ -11,9 +11,9 @@ use crate::crypto::{
 
 #[derive(Debug, Error)]
 pub enum ProtocolError {
-    #[error("Cryptography failure")]
+    #[error("Cryptography failure: {0}")]
     Crypto(CryptoError),
-    #[error("Message failure")]
+    #[error("Message failure: {0}")]
     Message(MessageError),
 }
 
@@ -35,7 +35,7 @@ impl TransferM0Encrypted {
 
     pub fn decrypt(&self) -> Result<TransferM0, CryptoError> {
         let t0 = TRANSFER_SEND.0;
-        let mut pt = [0u8, 3];
+        let mut pt = [0u8; 3];
         pt.clone_from_slice(&self.ct);
         decrypt_payload_symmetric(
             &mut pt,

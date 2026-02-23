@@ -1,6 +1,5 @@
 #![no_std]
 #![no_main]
-#![feature(breakpoint)]
 
 mod context;
 mod crypto;
@@ -36,8 +35,7 @@ fn handle_panics(info: &PanicInfo) -> ! {
         eprintln!("{info}");
     }
 
-    loop {}
-    // cortex_m::peripheral::SCB::sys_reset();
+    cortex_m::peripheral::SCB::sys_reset();
 }
 
 #[entry]
@@ -208,7 +206,6 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
     }
 
     // retrieve signing and read encryption keys with pin
-    let pin = pin.try_into().unwrap();
     let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
     let pk_read = group_key.pk_read.0;
 

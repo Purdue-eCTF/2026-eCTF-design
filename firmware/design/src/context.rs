@@ -275,17 +275,20 @@ impl UartWriter {
 
 impl Write for UartWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
+        let raw = s.as_bytes();
         let slice = &mut self.0[self.1..];
         let remaining = slice.len();
 
-        if remaining >= s.len() {
-            slice[..s.len()].copy_from_slice(s.as_bytes());
-            self.1 += s.len();
+        if remaining >= raw.len() {
+            slice[..raw.len()].copy_from_slice(raw);
+            self.1 += raw.len();
         } else {
-            slice.copy_from_slice(&s.as_bytes()[..remaining]);
+            // flush previously buffer bytes + `remaining` bytes from input
+            slice.copy_from_slice(&raw[..remaining]);
             self.flush();
 
-            for chunk in s[remaining..].as_bytes().chunks(MAX_BODY_SIZE) {
+            // print or buffer the remaining bytes from input, ignoring errors
+            for chunk in raw[remaining..].chunks(MAX_BODY_SIZE) {
                 if chunk.len() >= MAX_BODY_SIZE {
                     let _ = Message::write(self.2, MessagePort::UART0, chunk);
                 } else {

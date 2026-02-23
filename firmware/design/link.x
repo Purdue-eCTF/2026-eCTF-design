@@ -128,12 +128,15 @@ SECTIONS {
         KEEP(*(.filetable.default));
         . = ALIGN(1024);
         _efiletable = .;
-        ASSERT(_efiletable - _filetable == 0x400, "FAT section has incorrect length");
+        ASSERT(_efiletable - _filetable == 1024, "FAT section has incorrect length");
     } > FILETABLE
 
     .salt : {
         _salt = .;
-        . += 1024;
+        KEEP(*(.salt.default));
+        . = ALIGN(1024);
+        _esalt = .;
+        ASSERT(_esalt - _salt == 1024, "boot_salt_1 section has incorrect length");
     } > APP2
 
     .rodata : ALIGN(8) {

@@ -1,5 +1,3 @@
-#![feature(int_from_ascii)]
-
 use core::fmt;
 use std::collections::HashMap;
 use std::env;
@@ -8,19 +6,11 @@ use std::path::PathBuf;
 use argon2::password_hash::rand_core::RngCore;
 // TODO: ASLR for code and files
 use argon2::{Algorithm, Argon2, Params, Version};
-use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::aead::OsRng;
-use chacha20poly1305::aead::generic_array::GenericArray;
-use chacha20poly1305::{AeadCore, AeadInPlace, KeyInit, XChaCha20Poly1305};
+use common::{EncryptedGroupKey, GroupKey, SymmetricKey};
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use serde::{Deserialize, de, de::Visitor};
+use serde::Deserialize;
 use x25519_dalek::{PublicKey, StaticSecret};
-
-// TODO: don't have all this stuff copy pasted in build.rs
-
-#[derive(Debug, Copy, Clone, Default, Pod, Zeroable)]
-#[repr(transparent)]
-struct SymmetricKey(pub [u8; 32]);
 
 fn public_encryption_key(secret_key: &SymmetricKey) -> SymmetricKey {
     let secret_key = StaticSecret::from(secret_key.0);
@@ -34,16 +24,6 @@ fn public_signing_key(secret_key: &SymmetricKey) -> SymmetricKey {
     SymmetricKey(public_key.to_bytes())
 }
 
-#[derive(Default, Clone, Copy, Deserialize, Pod, Zeroable)]
-#[repr(C)]
-struct GroupKey {
-    pub sk_sign: SymmetricKey,
-    pub sk_read: SymmetricKey,
-    pub pk_read: SymmetricKey,
-    pub sk_trans: SymmetricKey,
-    pub sk_inter: SymmetricKey,
-}
-
 impl From<GroupSecretKeys> for GroupKey {
     fn from(value: GroupSecretKeys) -> Self {
         GroupKey {
@@ -52,50 +32,6 @@ impl From<GroupSecretKeys> for GroupKey {
             pk_read: public_encryption_key(&value.sk_read),
             sk_trans: value.sk_trans,
             sk_inter: value.sk_inter,
-        }
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Debug)]
-struct EncryptedGroupKey {
-    pub group: u16,
-    pub blob: [u8; core::mem::size_of::<GroupKey>()],
-    pub tag: [u8; 16],
-    pub nonce: [u8; 24],
-    pub pk_sign: SymmetricKey,
-    pub pk_trans: SymmetricKey,
-    pub pk_inter: SymmetricKey,
-}
-
-impl EncryptedGroupKey {
-    fn from_group_keys(
-        group: u16,
-        group_keys: &GroupKey,
-        k_auth: &SymmetricKey,
-        pk_sign: SymmetricKey,
-        pk_trans: SymmetricKey,
-        pk_inter: SymmetricKey,
-    ) -> Self {
-        let mut blob: [u8; core::mem::size_of::<GroupKey>()] = [0; _];
-        blob.copy_from_slice(bytemuck::bytes_of(group_keys));
-
-        let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(&k_auth.0));
-        let nonce = XChaCha20Poly1305::generate_nonce(OsRng);
-
-        let group_bytes = group.to_le_bytes();
-        let tag = cipher
-            .encrypt_in_place_detached(&nonce, &group_bytes, &mut blob)
-            .expect("failed to encrypt group keys");
-
-        EncryptedGroupKey {
-            group,
-            blob,
-            tag: *tag.as_array().unwrap(),
-            nonce: *nonce.as_array().unwrap(),
-            pk_sign,
-            pk_trans,
-            pk_inter,
         }
     }
 }
@@ -179,6 +115,7 @@ fn main() {
         }
 
         encrypted_keys.push(EncryptedGroupKey::from_group_keys(
+            &mut OsRng,
             perm.group,
             &keys,
             &salts.k_auth,
@@ -187,6 +124,7 @@ fn main() {
             pk_inter,
         ));
     }
+    encrypted_keys.sort_by_key(|k| k.group);
 
     let secrets_file = generate_secrets(&salts, &global_secrets, &encrypted_keys);
     std::fs::write(
@@ -201,6 +139,8 @@ fn generate_secrets(
     global_keys: &GlobalSecrets,
     group_keys: &[EncryptedGroupKey],
 ) -> String {
+    assert!(group_keys.is_sorted_by_key(|k| k.group));
+
     let encrypted_keys = group_keys
         .iter()
         .map(|group_key| format!("{:?}", group_key))
@@ -235,6 +175,9 @@ pub const INTERROGATE_SEND: SymmetricKey = SymmetricKey({:?});
 // I1
 pub const INTERROGATE_RECV: SymmetricKey = SymmetricKey({:?});
 
+// salt for argon derivation
+pub const DERIVE_SALT: &[u8] = &{:?};
+
 // TODO: must be sorted by group
 pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
 ",
@@ -249,6 +192,7 @@ pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
         global_keys.t1.0,
         global_keys.i0.0,
         global_keys.i1.0,
+        DERIVE_SALT,
         group_keys.len(),
         encrypted_keys,
     )
@@ -308,7 +252,7 @@ fn derive_next_salt(input: &[u8], t_cost: u32) -> Salt {
 
     let mut out: Salt = [0; _];
     argon
-        .hash_password_into(&input, DERIVE_SALT, &mut out)
+        .hash_password_into(input, DERIVE_SALT, &mut out)
         .expect("deriving salt failed");
     out
 }
@@ -343,57 +287,8 @@ impl PinSalts {
     }
 }
 
-// The rest of the file is traits to parse/format everything
-
 impl fmt::Debug for Pin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("{:?}", self.0))
-    }
-}
-
-struct SymmetricKeyParser;
-impl SymmetricKeyParser {
-    fn fromhex(s: &str) -> Option<SymmetricKey> {
-        if s.len() != 64 {
-            return None;
-        }
-
-        let mut value = [0; 32];
-
-        for (i, pair) in s.as_bytes().chunks(2).enumerate() {
-            let Ok(hex) = u8::from_ascii_radix(pair, 16) else {
-                return None;
-            };
-            value[i] = hex;
-        }
-
-        Some(SymmetricKey(value))
-    }
-}
-
-impl<'de> Visitor<'de> for SymmetricKeyParser {
-    type Value = SymmetricKey;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("64-character (32-byte) hex string")
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<SymmetricKey, E>
-    where
-        E: de::Error,
-    {
-        SymmetricKeyParser::fromhex(value).ok_or(de::Error::invalid_value(
-            de::Unexpected::Str(value),
-            &"A hex string",
-        ))
-    }
-}
-
-impl<'de> Deserialize<'de> for SymmetricKey {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        deserializer.deserialize_str(SymmetricKeyParser)
     }
 }
