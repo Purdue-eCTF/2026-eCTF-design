@@ -77,7 +77,7 @@ fn main() -> ! {
             if let Some((_, budget)) = TIME_BUDGET_MS
                 .iter()
                 .find(|(opcode, _)| *opcode == msg_info.opcode)
-                && elapsed > *budget
+            // && elapsed > *budget
             {
                 println!("Took {elapsed} ms to run, expected {budget}");
             }
