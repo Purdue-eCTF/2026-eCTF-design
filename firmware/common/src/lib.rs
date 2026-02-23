@@ -11,7 +11,10 @@ use chacha20poly1305::{
         rand_core::{CryptoRng, RngCore},
     },
 };
-use serde::{Deserialize, de::{self, Visitor}};
+use serde::{
+    Deserialize,
+    de::{self, Visitor},
+};
 
 #[derive(Default, Pod, Zeroable, Clone, Copy, Debug)]
 #[repr(transparent)]
@@ -48,15 +51,20 @@ impl EncryptedGroupKey {
     pub fn decrypt(&self, k_auth: &[u8; 32]) -> GroupKey {
         let mut blob = self.blob.clone();
         let cipher = XChaCha20Poly1305::new(k_auth.into());
+
+        let group_bytes = self.group.to_le_bytes();
         cipher
-            .decrypt_in_place_detached(&self.nonce.into(), &[], &mut blob, &self.tag.into())
+            .decrypt_in_place_detached(
+                &self.nonce.into(),
+                &group_bytes,
+                &mut blob,
+                &self.tag.into(),
+            )
             .unwrap();
 
         *bytemuck::from_bytes::<GroupKey>(&blob)
     }
-}
 
-impl EncryptedGroupKey {
     pub fn from_group_keys(
         rng: &mut (impl CryptoRng + RngCore),
         group: u16,
