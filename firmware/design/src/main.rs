@@ -23,7 +23,7 @@ use crate::{
     },
     file::{FatEntry, FatTable, File, FileMeta, FileName, UUID},
     listen::EncryptedInterrogateInfo,
-    message::{MAX_BODY_SIZE, HEADER_SIZE, Message, MessagePort, Opcode},
+    message::{CHUNK_SIZE, HEADER_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
     secrets::{
         COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, get_enc_group_keys,
     },
@@ -104,9 +104,9 @@ fn handle_list(ctx: &mut Context, msg_len: usize) {
         panic!()
     }
 
-    let mut msg = [0; msg_len];
+    let mut msg = [0; size_of::<ListHeader>()];
     Message::read_body(MessagePort::UART0, &mut msg).unwrap();
-    
+
     let ListHeader { pin } = *bytemuck::from_bytes(&msg);
 
     let _k_auth = ctx.k_auth(&pin).expect("incorrect pin");
@@ -162,7 +162,7 @@ fn handle_read(ctx: &mut Context, msg_len: usize) {
         panic!()
     }
 
-    let mut msg = [0; msg_len];
+    let mut msg = [0; size_of::<ReadFileHeader>()];
     Message::read_body(MessagePort::UART0, &mut msg).unwrap();
 
     let ReadFileHeader { pin, slot } = *bytemuck::from_bytes(&msg);
@@ -276,7 +276,11 @@ fn handle_write(ctx: &mut Context, msg_len: usize) {
     // TODO: do we need to read chunks?
     protected.contents[..data.len()].copy_from_slice(data);
     if data.len() < data_len {
-        Message::read_body(MessagePort::UART0, &mut protected.contents[data.len()..data_len]).unwrap();
+        Message::read_body(
+            MessagePort::UART0,
+            &mut protected.contents[data.len()..data_len],
+        )
+        .unwrap();
     }
 
     protected.contents[data_len..].fill(0);
@@ -334,7 +338,7 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) {
         panic!()
     }
 
-    let mut msg = [0; msg_len];
+    let mut msg = [0; size_of::<ReceiveFileHeader>()];
     Message::read_body(MessagePort::UART0, &mut msg).unwrap();
 
     let ReceiveFileHeader {
@@ -351,13 +355,14 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) {
     // receive file
     let mut buf = [0u8; protocol::TRANSFER_RECEIVE_MAX_LENGTH];
     let response = Message::read(MessagePort::UART1, &mut buf).unwrap();
+    assert!(response.length as usize == buf.len());
 
     // decrypt with T1
     let payload =
         unwrap_symmetric_message(&mut buf, &TRANSFER_RECV.0, &[Opcode::Receive.into()]).unwrap();
 
     // parse out group id associated data
-    let (asymmetric_payload, group_id_bytes) =
+    let (assymetric_payload, group_id_bytes) =
         payload.split_at_mut(payload.len() - size_of::<u16>());
     let group_id_bytes: &mut [u8; 2] = group_id_bytes.try_into().unwrap();
     let group_id = u16::from_le_bytes(*group_id_bytes);
@@ -415,7 +420,7 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) {
         panic!()
     }
 
-    let mut msg = [0; msg_len];
+    let mut msg = [0; size_of::<InterrogateHeader>()];
     Message::read_body(MessagePort::UART0, &mut msg).unwrap();
 
     let InterrogateHeader { pin } = *bytemuck::from_bytes(&msg);

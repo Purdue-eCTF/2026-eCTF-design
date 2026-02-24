@@ -151,7 +151,7 @@ impl Message {
         let length = u16::from_le_bytes(length);
 
         if !NACKS.contains(&opcode) {
-            Self::read_ack(port)?;
+            Self::send_ack(port);
         }
 
         Ok(Self {
@@ -174,12 +174,11 @@ impl Message {
 
     /// Reads a complete message from UART.
     pub fn read(port: MessagePort, buf: &mut [u8]) -> Result<Self, MessageError> {
-        let reader = MessageUart::new(port);
         let message = Self::read_header(port)?;
         if message.length as usize > buf.len() {
             return Err(MessageError::BodyLengthError);
         }
-        Self::read_body(port, buf)?;
+        Self::read_body(port, &mut buf[..message.length as usize])?;
         Ok(message)
     }
 
