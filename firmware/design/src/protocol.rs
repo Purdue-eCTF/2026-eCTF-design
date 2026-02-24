@@ -21,7 +21,7 @@ pub enum ProtocolError {
     InvalidGroup,
 }
 
-//TODO: Have other methods use
+/// Represents an encrypted Transfer
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct TransferM0Encrypted {
@@ -37,6 +37,7 @@ impl TransferM0Encrypted {
         }
     }
 
+    /// Decrypts this message and makes the underlying request available
     pub fn decrypt(&self) -> Result<TransferM0, CryptoError> {
         let t0 = TRANSFER_SEND.0;
         let mut pt = self.ct;
@@ -55,7 +56,10 @@ impl TransferM0Encrypted {
     }
 }
 
+/// Represents the unencrypted contents of the message used to initiate
+/// a file transfer from another HSM
 pub struct TransferM0 {
+    /// File slot containing the file the HSM should send
     pub slot: u8,
 }
 
@@ -64,9 +68,11 @@ pub struct TransferM0 {
 // TODO: Should error if T0 doesn't exist
 
 impl TransferM0 {
+    /// Generates a transfer request for slot 0
     pub fn empty() -> Self {
         Self { slot: 0 }
     }
+    /// Prepare this message for transmission by encrypting it with Transfer Key 0
     pub fn encrypt(&self) -> Result<TransferM0Encrypted, CryptoError> {
         let mut r = TransferM0Encrypted::empty();
         r.ct[0] = self.slot;
@@ -87,9 +93,8 @@ impl TransferM0 {
     }
 }
 
-// Initiates a transfer over UART1 using the protocol described in [5.3.4]
-// Requested slot and group is encrypted with T0 and sent to adjacent HSM
-
+/// Initiates a transfer over UART1 using the protocol described in [5.3.4]
+/// Requested slot and group is encrypted with T0 and sent to adjacent HSM
 pub fn initiate_transfer(slot: u8) -> Result<(), ProtocolError> {
     let t0 = TransferM0::new(slot);
     let t0_enc = t0.encrypt().map_err(ProtocolError::Crypto)?;
