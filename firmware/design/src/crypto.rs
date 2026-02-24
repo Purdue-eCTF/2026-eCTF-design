@@ -16,6 +16,8 @@ pub const NONCE_SIZE: usize = 24;
 pub const TAG_SIZE: usize = 16;
 pub const GN_SIZE: usize = 32;
 
+/// The public key has generated metadata for cryptographic purposes, with a signature
+/// for asymmetric enc/decryption and a nonce and tag for symmetric enc/decryption.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct PubKeyMetadata {
@@ -25,6 +27,7 @@ pub struct PubKeyMetadata {
 }
 
 impl PubKeyMetadata {
+    /// Clear all fields to 0.
     pub fn empty() -> Self {
         Self {
             gn: [0u8; _],
@@ -33,11 +36,13 @@ impl PubKeyMetadata {
         }
     }
 
+    /// Encrypt a message with a public key and associated data.
     pub fn encrypt(
         msg: &mut [u8],
         public_key: &[u8; 32],
         associated_data: &[u8],
     ) -> Result<Self, ProtocolError> {
+        // Reset self to be used as blocks of storage during cryptographic processes.
         let mut out = Self::empty();
 
         encrypt_payload_pub(
@@ -63,6 +68,7 @@ pub fn unwrap_pub_message<'a>(
         return Err(CryptoError::InvalidDecryptionPayload.into());
     }
 
+    // Differentiate between message data and it's encryption metadata and decrypt
     let (msg_inner, metadata) = msg.split_at_mut(msg.len() - size_of::<PubKeyMetadata>());
     let metadata: &PubKeyMetadata = bytemuck::from_bytes(metadata);
     decrypt_payload_pub(
@@ -77,6 +83,8 @@ pub fn unwrap_pub_message<'a>(
     Ok(msg_inner)
 }
 
+/// The metadata for symmetric encryption consists of a random nonce from the TRNG
+/// and a tag that is generated during encryption.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct SymmetricMetadata {
@@ -85,6 +93,7 @@ pub struct SymmetricMetadata {
 }
 
 impl SymmetricMetadata {
+    /// Clears all fields to 0.
     pub fn empty() -> Self {
         Self {
             nonce: [0u8; _],
@@ -92,6 +101,7 @@ impl SymmetricMetadata {
         }
     }
 
+    /// Encrypt data and its associated data with a symmetric key.
     pub fn encrypt(
         msg: &mut [u8],
         key: &[u8; 32],
@@ -105,7 +115,7 @@ impl SymmetricMetadata {
     }
 }
 
-/// Given a message like msg || SymmetricMetadata, decrypts and validates the message, and returns msg
+/// Given a message like msg || SymmetricMetadata, decrypts and validates the message, and returns msg.
 pub fn unwrap_symmetric_message<'a>(
     msg: &'a mut [u8],
     key: &[u8; 32],
@@ -115,6 +125,7 @@ pub fn unwrap_symmetric_message<'a>(
         return Err(CryptoError::InvalidDecryptionPayload.into());
     }
 
+    // Differentiate between message data and it's encryption metadata and decrypt
     let (msg_inner, metadata) = msg.split_at_mut(msg.len() - size_of::<SymmetricMetadata>());
     let metadata: &SymmetricMetadata = bytemuck::from_bytes(metadata);
     decrypt_payload_symmetric(
@@ -129,6 +140,8 @@ pub fn unwrap_symmetric_message<'a>(
 }
 
 // TODO: Tests
+/// The errors that happen on a failed cryptography process, usually to do with
+/// an invalid key or pin.
 #[derive(Debug, Error)]
 pub enum CryptoError {
     #[error("Invalid decrypt payload")]
@@ -142,6 +155,7 @@ pub enum CryptoError {
 // TODO: Have these keys use a reference to the type instead of a byte array
 // so we don't accidently pass in a pubkey to a function that expects a sym_key
 // and vice versa
+/// Verify a file's contents with it's signature using a corresponding asymmetric encryption key
 pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> {
     let pk_sign = VerifyingKey::from_bytes(key).unwrap();
     let expected_signature = Signature::from_bytes(&file.signature);
@@ -151,6 +165,7 @@ pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> 
     Ok(())
 }
 
+/// Sign a file in place using a corresponding asymmetric encryption key.
 pub fn sign_file(file: &mut File, key: &[u8; 32]) -> Result<(), CryptoError> {
     let sk_sign = SigningKey::from_bytes(key);
     let signature = sk_sign.sign(bytemuck::bytes_of(&file.protected));
@@ -158,6 +173,10 @@ pub fn sign_file(file: &mut File, key: &[u8; 32]) -> Result<(), CryptoError> {
     Ok(())
 }
 
+/// Decrypt an asymmetrically encrypted payload.
+///
+/// Since the asymmetrically encryption of the payload is layered on top of a symmetric encryption,
+/// the symmetric encryption is decrypted first before the asymmetric encryption.
 pub fn decrypt_payload_pub<'a>(
     payload: &'a mut [u8],
     gn: &[u8; GN_SIZE],
@@ -179,7 +198,12 @@ pub fn decrypt_payload_pub<'a>(
     Ok(payload)
 }
 
-//TODO, make gn slot requirement more explicit
+/// Asymmetrically encrypt data.
+///
+/// A corresponding group and function key is used to asymmetrically encrypt data before 
+/// it (and its associated data) is also encrypted symmetrically. The resulting payload is
+/// returned. The parameters are present to ensure that there are empty blocks dedicated to
+/// the generated metadata.
 pub fn encrypt_payload_pub<'a>(
     payload: &'a mut [u8],
     gn: &'a mut [u8; GN_SIZE],
@@ -191,6 +215,7 @@ pub fn encrypt_payload_pub<'a>(
     let pk = PublicKey::from(*public_key);
     let mut n_bytes = [0; 32];
 
+    // TODO Generate random bytes from which new asymmetric keys will be made
     let trng = trng::trng();
     for chunk in n_bytes.chunks_exact_mut(4) {
         chunk.copy_from_slice(&trng.word().to_le_bytes());
@@ -201,6 +226,7 @@ pub fn encrypt_payload_pub<'a>(
     let new_pk = PublicKey::from(&n);
     gn.copy_from_slice(&new_pk.to_bytes());
 
+    // Generate shared/common secret from the diffie hellman key exchange.
     let shared = n.diffie_hellman(&pk).to_bytes();
 
     // use kdf as recommended by rfc
@@ -212,6 +238,11 @@ pub fn encrypt_payload_pub<'a>(
     Ok(payload)
 }
 
+/// Decrypt a symmetrically encrypted payload.
+///
+/// A cipherstream is derived from the key using the ChaCha20Poly1305 algorithm and is used with the
+/// provided nonce to decrypt the payload and generate a verification tag that is compared with the
+/// provided tag. On success, the decrypted data is returned.
 pub fn decrypt_payload_symmetric<'a>(
     payload: &'a mut [u8],
     nonce: &'a [u8; NONCE_SIZE],
@@ -231,6 +262,13 @@ pub fn decrypt_payload_symmetric<'a>(
     Ok(payload)
 }
 
+/// Symmetrically encrypt data; empty blocks should be provided for the generated metadata (nonce
+/// and tag).
+///
+/// A cipherstream is derived from the symmetric encryption key using the ChaCha20Poly1305 
+/// algorithm and is used with a generated nonce to encrypt the payload and generate a tag.
+/// The tag and nonce are then copied into their respective slots and the encrypted payload is
+/// returned.
 pub fn encrypt_payload_symmetric<'a>(
     payload: &'a mut [u8],
     nonce_slot: &'a mut [u8; NONCE_SIZE],
@@ -255,6 +293,7 @@ pub fn encrypt_payload_symmetric<'a>(
     Ok(payload)
 }
 
+/// Implement the blake hash on data with a salt and return the resulting hash.
 pub fn blake_hash(input: &[u8], salt: &[u8; 32]) -> [u8; 32] {
     let mut blake_hasher = Blake2s256::new();
     blake_hasher.update(input);
