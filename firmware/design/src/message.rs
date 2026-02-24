@@ -184,6 +184,7 @@ impl Message {
 
     /// Writes an ack to UART.
     fn send_ack(port: MessagePort) {
+        crate::println!("send ack");
         Self::write_header(Opcode::Ack, 0, port);
     }
 
