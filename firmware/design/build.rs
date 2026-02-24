@@ -126,6 +126,10 @@ fn main() {
             keys.sk_inter = None;
         }
 
+        if !(perm.write || perm.receive) {
+            keys.k_uuid = None;
+        }
+
         encrypted_keys.push(EncryptedGroupKey::from_group_keys(
             &mut OsRng,
             perm.group,
