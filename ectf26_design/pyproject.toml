@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-secrets = "ectf26_design.gen_secrets:main"
+secrets = "gen_secrets:main"
 
 [tool.ruff]
 target-version = "py312"
