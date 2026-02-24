@@ -231,7 +231,7 @@ fn handle_write(ctx: &mut Context, msg_len: usize) {
     // sizeof WriteFileHeader < CHUNK_SIZE
     let mut msg = [0; CHUNK_SIZE];
     Message::send_ack(MessagePort::UART0);
-    Message::read_body_no_ack(MessagePort::UART0, &mut msg).unwrap();
+    Message::read_body_no_ack(MessagePort::UART0, &mut msg[..msg_len]).unwrap();
 
     let (header, data) = msg.split_at(core::mem::size_of::<WriteFileHeader>());
     let WriteFileHeader {
