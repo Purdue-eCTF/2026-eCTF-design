@@ -36,6 +36,7 @@ pub struct GroupKey {
     pub pk_read: Option<SymmetricKey>,
     pub sk_trans: Option<SymmetricKey>,
     pub sk_inter: Option<SymmetricKey>,
+    pub k_uuid: Option<SymmetricKey>,
 }
 
 #[derive(Default, Clone, Copy, Zeroable, Pod)]
@@ -46,6 +47,7 @@ pub struct GroupKeyBlob {
     pub pk_read: SymmetricKey,
     pub sk_trans: SymmetricKey,
     pub sk_inter: SymmetricKey,
+    pub k_uuid: SymmetricKey,
 }
 
 impl From<GroupKey> for GroupKeyBlob {
@@ -56,6 +58,7 @@ impl From<GroupKey> for GroupKeyBlob {
             pk_read,
             sk_trans,
             sk_inter,
+            k_uuid,
         } = value;
 
         GroupKeyBlob {
@@ -64,6 +67,7 @@ impl From<GroupKey> for GroupKeyBlob {
             pk_read: pk_read.unwrap_or(SymmetricKey::empty()),
             sk_trans: sk_trans.unwrap_or(SymmetricKey::empty()),
             sk_inter: sk_inter.unwrap_or(SymmetricKey::empty()),
+            k_uuid: k_uuid.unwrap_or(SymmetricKey::empty()),
         }
     }
 }
@@ -76,6 +80,7 @@ impl From<GroupKeyBlob> for GroupKey {
             pk_read,
             sk_trans,
             sk_inter,
+            k_uuid,
         } = value;
 
         GroupKey {
@@ -84,6 +89,7 @@ impl From<GroupKeyBlob> for GroupKey {
             pk_read: Some(pk_read).filter(|k| !k.is_empty()),
             sk_trans: Some(sk_trans).filter(|k| !k.is_empty()),
             sk_inter: Some(sk_inter).filter(|k| !k.is_empty()),
+            k_uuid: Some(k_uuid).filter(|k| !k.is_empty()),
         }
     }
 }

@@ -296,6 +296,7 @@ fn handle_write(ctx: &mut Context, msg_len: usize) {
     protected.contents_length = data_len as u16;
 
     // encrypt everything
+    // FIXME FIXME FIXME: associated data for file data and uuid
     encrypt_payload_pub(
         &mut protected.contents[..data_len],
         &mut protected.gn,
@@ -305,6 +306,14 @@ fn handle_write(ctx: &mut Context, msg_len: usize) {
         &[],
     )
     .unwrap();
+
+    protected.uuid_ct_metadata = SymmetricMetadata::encrypt(
+        bytemuck::bytes_of_mut(&mut protected.uuid),
+        &group_key.k_uuid.unwrap().0,
+        &[],
+    )
+    .unwrap();
+
     println!("3: {}", ctx.time());
     sign_file(&mut file, &group_key.sk_sign.unwrap().0).unwrap();
     println!("4: {}", ctx.time());
@@ -395,8 +404,19 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) {
 
     verify_signature(file, &enc_group_keys.pk_sign.0).unwrap();
 
+    // decrypt uuid
+    let mut uuid = file.protected.uuid;
+    file.protected
+        .uuid_ct_metadata
+        .decrypt(
+            bytemuck::bytes_of_mut(&mut uuid),
+            &group_keys.k_uuid.unwrap().0,
+            &[],
+        )
+        .unwrap();
+
     let new_fat = FatEntry {
-        uuid: file.protected.uuid,
+        uuid,
         length: file.protected.contents_length,
         padding: 0,
         addr: ctx.fat.get().unwrap().entries[write_slot as usize].addr,

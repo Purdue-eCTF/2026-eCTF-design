@@ -2,7 +2,7 @@ use core::ops::Index;
 
 use bytemuck::{NoUninit, Pod, Zeroable};
 
-use crate::context;
+use crate::{context, crypto::SymmetricMetadata};
 
 pub const CONTENT_SIZE: usize = 8192;
 pub const UUID_SIZE: usize = 16;
@@ -32,10 +32,10 @@ pub struct ProtectedFileData {
     pub gn: [u8; 32],
     pub name: FileName,
     pub uuid: UUID,
+    pub uuid_ct_metadata: SymmetricMetadata,
     pub group: u16,
     pub contents_length: u16,
     pub contents: [u8; CONTENT_SIZE],
-    _pad: [u8; 4],
 }
 
 impl ProtectedFileData {
@@ -46,10 +46,10 @@ impl ProtectedFileData {
             gn: [0; 32],
             name: FileName([0; NAME_SIZE]),
             uuid: UUID([0; UUID_SIZE]),
+            uuid_ct_metadata: SymmetricMetadata::empty(),
             group: 0,
             contents_length: 0,
             contents: [0; CONTENT_SIZE],
-            _pad: [0; 4],
         }
     }
 }

@@ -7,7 +7,6 @@ use argon2::password_hash::rand_core::RngCore;
 // TODO: ASLR for code and files
 use argon2::{Algorithm, Argon2, Params, Version};
 use blake2::{Blake2s256, Digest};
-use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::aead::OsRng;
 use common::{EncryptedGroupKey, GroupKey, SymmetricKey};
 use ed25519_dalek::{SigningKey, VerifyingKey};
@@ -34,6 +33,7 @@ impl From<GroupSecretKeys> for GroupKey {
             pk_read: Some(public_encryption_key(&value.sk_read)),
             sk_trans: Some(value.sk_trans),
             sk_inter: Some(value.sk_inter),
+            k_uuid: Some(value.k_uuid),
         }
     }
 }
@@ -46,6 +46,7 @@ struct GroupSecretKeys {
     pub sk_read: SymmetricKey,
     pub sk_trans: SymmetricKey,
     pub sk_inter: SymmetricKey,
+    pub k_uuid: SymmetricKey,
 }
 
 #[derive(Deserialize)]

@@ -25,7 +25,7 @@ pub struct PubKeyMetadata {
 }
 
 impl PubKeyMetadata {
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             gn: [0u8; _],
             nonce: [0u8; _],
@@ -51,6 +51,24 @@ impl PubKeyMetadata {
 
         Ok(out)
     }
+
+    pub fn decrypt(
+        &self,
+        ct: &mut [u8],
+        secret_key: &[u8; 32],
+        associated_data: &[u8],
+    ) -> Result<(), ProtocolError> {
+        decrypt_payload_pub(
+            ct,
+            &self.gn,
+            &self.nonce,
+            &self.tag,
+            secret_key,
+            associated_data,
+        )?;
+
+        Ok(())
+    }
 }
 
 /// Given a message like msg || SymmetricMetadata, decrypts and validates the message, and returns msg
@@ -65,14 +83,7 @@ pub fn unwrap_pub_message<'a>(
 
     let (msg_inner, metadata) = msg.split_at_mut(msg.len() - size_of::<PubKeyMetadata>());
     let metadata: &PubKeyMetadata = bytemuck::from_bytes(metadata);
-    decrypt_payload_pub(
-        msg_inner,
-        &metadata.gn,
-        &metadata.nonce,
-        &metadata.tag,
-        secret_key,
-        associated_data,
-    )?;
+    metadata.decrypt(msg_inner, secret_key, associated_data)?;
 
     Ok(msg_inner)
 }
@@ -85,7 +96,7 @@ pub struct SymmetricMetadata {
 }
 
 impl SymmetricMetadata {
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             nonce: [0u8; _],
             tag: [0u8; _],
@@ -103,6 +114,17 @@ impl SymmetricMetadata {
 
         Ok(out)
     }
+
+    pub fn decrypt(
+        &self,
+        ct: &mut [u8],
+        key: &[u8; 32],
+        associated_data: &[u8],
+    ) -> Result<(), ProtocolError> {
+        decrypt_payload_symmetric(ct, &self.nonce, &self.tag, key, associated_data)?;
+
+        Ok(())
+    }
 }
 
 /// Given a message like msg || SymmetricMetadata, decrypts and validates the message, and returns msg
@@ -117,13 +139,7 @@ pub fn unwrap_symmetric_message<'a>(
 
     let (msg_inner, metadata) = msg.split_at_mut(msg.len() - size_of::<SymmetricMetadata>());
     let metadata: &SymmetricMetadata = bytemuck::from_bytes(metadata);
-    decrypt_payload_symmetric(
-        msg_inner,
-        &metadata.nonce,
-        &metadata.tag,
-        key,
-        associated_data,
-    )?;
+    metadata.decrypt(msg_inner, key, associated_data)?;
 
     Ok(msg_inner)
 }
