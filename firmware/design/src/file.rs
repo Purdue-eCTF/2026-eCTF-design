@@ -24,6 +24,22 @@ pub struct FileMeta {
     pub name: FileName,
 }
 
+#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+#[repr(C, packed)]
+pub struct Encrypted {
+    pub uuid: UUID,
+    pub contents: [u8; CONTENT_SIZE],
+}
+
+impl Encrypted {
+    pub const fn empty() -> Self {
+        Self {
+            uuid: UUID([0; UUID_SIZE]),
+            contents: [0; CONTENT_SIZE],
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct ProtectedFileData {
@@ -31,10 +47,9 @@ pub struct ProtectedFileData {
     pub tag: [u8; 16],
     pub gn: [u8; 32],
     pub name: FileName,
-    pub uuid: UUID,
     pub group: u16,
     pub contents_length: u16,
-    pub contents: [u8; CONTENT_SIZE],
+    pub encrypted: Encrypted,
     _pad: [u8; 4],
 }
 
@@ -45,14 +60,14 @@ impl ProtectedFileData {
             tag: [0; 16],
             gn: [0; 32],
             name: FileName([0; NAME_SIZE]),
-            uuid: UUID([0; UUID_SIZE]),
             group: 0,
             contents_length: 0,
-            contents: [0; CONTENT_SIZE],
+            encrypted: Encrypted::empty(),
             _pad: [0; 4],
         }
     }
 }
+
 unsafe impl Zeroable for ProtectedFileData {
     fn zeroed() -> Self {
         Self::empty()
