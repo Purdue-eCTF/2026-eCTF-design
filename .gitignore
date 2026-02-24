@@ -5,3 +5,4 @@ __pycache__/
 global.secrets
 build/
 .idea
+*.egg-info
