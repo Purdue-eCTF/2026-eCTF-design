@@ -4,7 +4,6 @@
 mod context;
 mod crypto;
 mod file;
-mod flash;
 mod listen;
 mod message;
 mod protocol;

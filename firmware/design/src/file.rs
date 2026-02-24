@@ -122,10 +122,9 @@ pub struct FileSlot {
 #[unsafe(no_mangle)]
 pub static __FILES: [FileSlot; 8] = [FileSlot {
     file: File::empty(),
-    magic: crate::flash::FLASH_MAGIC,
+    magic: context::FLASH_MAGIC,
 }; 8];
 
 #[unsafe(link_section = ".filetable.default")]
 #[unsafe(no_mangle)]
-pub static __FAT: ([u8; core::mem::size_of::<FatTable>()], u64) =
-    ([0; _], crate::flash::FLASH_MAGIC);
+pub static __FAT: ([u8; core::mem::size_of::<FatTable>()], u64) = ([0; _], context::FLASH_MAGIC);
