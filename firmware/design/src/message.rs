@@ -32,12 +32,14 @@ pub enum Opcode {
     Debug,       // D
 }
 
+/// Represents a port used to send/receive messages
 #[derive(Debug, Clone, Copy)]
 pub enum MessagePort {
     UART0,
     UART1,
 }
 
+/// Interface for reading/writing to a port given a MessagePort
 #[derive(Debug)]
 pub struct MessageUart {
     port: MessagePort,
@@ -50,6 +52,7 @@ impl MessageUart {
         Self { port }
     }
 
+    /// Write bytes over UART
     pub fn write_bytes(&self, bytes: &[u8]) {
         match self.port {
             MessagePort::UART0 => uart0().write_bytes(bytes),
@@ -57,6 +60,7 @@ impl MessageUart {
         }
     }
 
+    /// Read bytes into a buffer over UART
     pub fn read_bytes(&self, bytes: &mut [u8]) -> Result<(), HalError> {
         match self.port {
             MessagePort::UART0 => uart0().read_bytes(bytes),
@@ -111,6 +115,7 @@ pub const CHUNK_SIZE: usize = 256;
 /// Opcodes that don't require an ack response.
 const NACKS: [Opcode; 2] = [Opcode::Debug, Opcode::Ack];
 
+/// Message header
 #[derive(Debug)]
 pub struct Message {
     pub opcode: Opcode,
@@ -155,7 +160,9 @@ impl Message {
         })
     }
 
-    /// Reads a complete message from UART.
+    /// Reads a complete message from UART into a buffer
+    /// Self is returned as a header
+    /// Errors if message is too large for buffer
     pub fn read(port: MessagePort, buf: &mut [u8]) -> Result<Self, MessageError> {
         let reader = MessageUart::new(port);
         let message = Self::read_header(port)?;
@@ -206,13 +213,14 @@ impl Message {
         }
     }
 
+    /// Writes a header indicating incoming message with given opcode and length
     pub fn write_header(opcode: Opcode, length: u16, port: MessagePort) {
         let writer = MessageUart::new(port);
         writer.write_bytes(&[MAGIC, opcode.into()]);
         writer.write_bytes(&length.to_le_bytes());
     }
 
-    /// Writes a message from a slice
+    /// Writes a message from an opcode and slice (header + body)
     /// This will fail if the buffer is too large (u16 limit)
     pub fn write(opcode: Opcode, port: MessagePort, buf: &[u8]) -> Result<(), MessageError> {
         Self::write_header(opcode, buf.len().try_into().unwrap(), port);
@@ -222,6 +230,8 @@ impl Message {
         Self::write_slice(buf, port, &opcode)
     }
 
+    /// Write an entire slice over UART via chunking
+    /// Opcode is needed to determine whether or not to send ACKs
     pub fn write_slice(
         data: &[u8],
         port: MessagePort,
