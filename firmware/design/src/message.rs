@@ -150,10 +150,6 @@ impl Message {
         reader.read_bytes(&mut length).unwrap();
         let length = u16::from_le_bytes(length);
 
-        if !NACKS.contains(&opcode) {
-            Self::send_ack(port);
-        }
-
         Ok(Self {
             opcode,
             length,
@@ -172,9 +168,22 @@ impl Message {
         Ok(())
     }
 
+    /// Reads buf.len() bytes from UART.
+    pub fn read_body_no_ack(port: MessagePort, buf: &mut [u8]) -> Result<(), MessageError> {
+        let reader = MessageUart::new(port);
+
+        for chunk in buf.chunks_mut(CHUNK_SIZE) {
+            reader.read_bytes(chunk).unwrap();
+        }
+        Ok(())
+    }
+
     /// Reads a complete message from UART.
     pub fn read(port: MessagePort, buf: &mut [u8]) -> Result<Self, MessageError> {
         let message = Self::read_header(port)?;
+        if !NACKS.contains(&message.opcode) {
+            Self::send_ack(port);
+        }
         if message.length as usize > buf.len() {
             return Err(MessageError::BodyLengthError);
         }
@@ -183,8 +192,7 @@ impl Message {
     }
 
     /// Writes an ack to UART.
-    fn send_ack(port: MessagePort) {
-        crate::println!("send ack");
+    pub fn send_ack(port: MessagePort) {
         Self::write_header(Opcode::Ack, 0, port);
     }
 
@@ -212,14 +220,10 @@ impl Message {
         if !NACKS.contains(&opcode) {
             Self::read_ack(port)?;
         }
-        Self::write_slice(buf, port, &opcode)
+        Self::write_body(buf, port, &opcode)
     }
 
-    pub fn write_slice(
-        data: &[u8],
-        port: MessagePort,
-        opcode: &Opcode,
-    ) -> Result<(), MessageError> {
+    pub fn write_body(data: &[u8], port: MessagePort, opcode: &Opcode) -> Result<(), MessageError> {
         let writer = MessageUart::new(port);
         if !data.is_empty() {
             for chunk in data.chunks(CHUNK_SIZE) {
@@ -231,18 +235,4 @@ impl Message {
         }
         Ok(())
     }
-
-    /// Writes up to CHUNK_SIZE bytes to UART without sending a header.
-    pub fn write_block(data: &[u8], port: MessagePort) -> Result<(), MessageError> {
-        if data.len() > CHUNK_SIZE {
-            return Err(MessageError::BodyLengthError);
-        }
-
-        let writer = MessageUart::new(port);
-        writer.write_bytes(data);
-        Self::read_ack(port)?;
-        Ok(())
-    }
 }
-
-// TODO: inter-device messaging over UART1

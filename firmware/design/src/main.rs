@@ -105,6 +105,7 @@ fn handle_list(ctx: &mut Context, msg_len: usize) {
     }
 
     let mut msg = [0; size_of::<ListHeader>()];
+    Message::send_ack(MessagePort::UART0);
     Message::read_body(MessagePort::UART0, &mut msg).unwrap();
 
     let ListHeader { pin } = *bytemuck::from_bytes(&msg);
@@ -163,6 +164,7 @@ fn handle_read(ctx: &mut Context, msg_len: usize) {
     }
 
     let mut msg = [0; size_of::<ReadFileHeader>()];
+    Message::send_ack(MessagePort::UART0);
     Message::read_body(MessagePort::UART0, &mut msg).unwrap();
 
     let ReadFileHeader { pin, slot } = *bytemuck::from_bytes(&msg);
@@ -228,7 +230,8 @@ fn handle_write(ctx: &mut Context, msg_len: usize) {
 
     // sizeof WriteFileHeader < CHUNK_SIZE
     let mut msg = [0; CHUNK_SIZE];
-    Message::read_body(MessagePort::UART0, &mut msg).unwrap();
+    Message::send_ack(MessagePort::UART0);
+    Message::read_body_no_ack(MessagePort::UART0, &mut msg).unwrap();
 
     let (header, data) = msg.split_at(core::mem::size_of::<WriteFileHeader>());
     let WriteFileHeader {
@@ -275,6 +278,7 @@ fn handle_write(ctx: &mut Context, msg_len: usize) {
     // we already verified that the data length is correct, so don't check again
     // TODO: do we need to read chunks?
     protected.contents[..data.len()].copy_from_slice(data);
+    Message::send_ack(MessagePort::UART0);
     if data.len() < data_len {
         Message::read_body(
             MessagePort::UART0,
@@ -339,6 +343,7 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) {
     }
 
     let mut msg = [0; size_of::<ReceiveFileHeader>()];
+    Message::send_ack(MessagePort::UART0);
     Message::read_body(MessagePort::UART0, &mut msg).unwrap();
 
     let ReceiveFileHeader {
@@ -421,6 +426,7 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) {
     }
 
     let mut msg = [0; size_of::<InterrogateHeader>()];
+    Message::send_ack(MessagePort::UART0);
     Message::read_body(MessagePort::UART0, &mut msg).unwrap();
 
     let InterrogateHeader { pin } = *bytemuck::from_bytes(&msg);
@@ -490,8 +496,10 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) {
 /// Listens for any Receive or Interrogate command from an adjacent board to
 /// process before sending back the corresponding data.
 fn handle_listen(ctx: &mut Context) {
+    Message::send_ack(MessagePort::UART0);
     Message::write_header(Opcode::Listen, 0, MessagePort::UART0);
     let mut body = [0u8; MAX_BODY_SIZE];
     let msg = Message::read(MessagePort::UART1, &mut body).unwrap();
+    println!("listen: got message: {:?}", msg.opcode);
     listen::recv(ctx, msg.opcode, &mut body[..msg.length as usize]).unwrap();
 }
