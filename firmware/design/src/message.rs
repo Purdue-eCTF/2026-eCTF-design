@@ -102,6 +102,7 @@ impl From<Opcode> for u8 {
 /// Value required at the start of every message
 pub const MAGIC: u8 = b'%';
 
+pub const HEADER_SIZE: usize = 4;
 // TODO: how to chunk files for sending? 8kb is like 1/4 of RAM
 /// Maximum body size for a message: 4.5 KiB
 pub const MAX_BODY_SIZE: usize = 1024; // TODO: this seems far too large
@@ -148,6 +149,11 @@ impl Message {
         let mut length = [0, 0];
         reader.read_bytes(&mut length).unwrap();
         let length = u16::from_le_bytes(length);
+
+        if !NACKS.contains(&opcode) {
+            Self::send_ack(port);
+        }
+
         Ok(Self {
             opcode,
             length,
@@ -155,39 +161,25 @@ impl Message {
         })
     }
 
-    /// Reads a complete message from UART.
-    pub fn read(port: MessagePort, buf: &mut [u8]) -> Result<Self, MessageError> {
+    /// Reads buf.len() bytes from UART.
+    pub fn read_body(port: MessagePort, buf: &mut [u8]) -> Result<(), MessageError> {
         let reader = MessageUart::new(port);
-        let message = Self::read_header(port)?;
 
-        // early return for ack
-        // matches reference design, and if we don't do this we end up sending ack for ack
-        if message.opcode == Opcode::Ack {
-            return Ok(message);
+        for chunk in buf.chunks_mut(CHUNK_SIZE) {
+            reader.read_bytes(chunk).unwrap();
+            Self::send_ack(port);
         }
-
-        Self::send_ack(port);
-        if (message.length as usize) > buf.len() {
-            return Err(MessageError::BodyLengthError);
-        }
-
-        if message.length != 0 {
-            for chunk in buf[..message.length.into()].chunks_mut(CHUNK_SIZE) {
-                reader.read_bytes(chunk).unwrap();
-                Self::send_ack(port);
-            }
-        }
-        Ok(message)
+        Ok(())
     }
 
-    /// Reads up to CHUNK_SIZE bytes from UART, skipping the header.
-    pub fn read_block(port: MessagePort) -> Result<[u8; CHUNK_SIZE], MessageError> {
-        let mut content: [u8; CHUNK_SIZE] = [0; CHUNK_SIZE];
-        let reader = MessageUart::new(port);
-        reader.read_bytes(&mut content).unwrap();
-        Self::send_ack(port);
-
-        Ok(content)
+    /// Reads a complete message from UART.
+    pub fn read(port: MessagePort, buf: &mut [u8]) -> Result<Self, MessageError> {
+        let message = Self::read_header(port)?;
+        if message.length as usize > buf.len() {
+            return Err(MessageError::BodyLengthError);
+        }
+        Self::read_body(port, &mut buf[..message.length as usize])?;
+        Ok(message)
     }
 
     /// Writes an ack to UART.
