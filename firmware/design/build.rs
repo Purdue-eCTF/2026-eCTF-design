@@ -39,7 +39,7 @@ impl From<GroupSecretKeys> for GroupKey {
 }
 
 // structs which represent format of global secrets
-#[derive(Default, Clone, Copy, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, Deserialize)]
 #[repr(C)]
 struct GroupSecretKeys {
     pub sk_sign: SymmetricKey,
@@ -49,7 +49,7 @@ struct GroupSecretKeys {
     pub k_uuid: SymmetricKey,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct GlobalSecrets {
     groups: HashMap<u16, GroupSecretKeys>,
     t0: SymmetricKey,
@@ -102,6 +102,7 @@ fn main() {
         // TODO: permissions for nonexistent groups? how does this happen?
         let Some(entry) = global_secrets.groups.get_mut(&perm.group) else {
             println!("wanted permissions for {perm:?}, but did not find in global secrets");
+            println!("{:?}", global_secrets);
             continue;
         };
         let mut keys = GroupKey::from(*entry);
