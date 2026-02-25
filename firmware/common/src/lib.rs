@@ -3,6 +3,7 @@
 
 use core::fmt;
 
+use blake2::{Blake2b512, Digest};
 use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::{
     AeadCore, AeadInPlace, KeyInit, XChaCha20Poly1305,
@@ -11,6 +12,7 @@ use chacha20poly1305::{
         rand_core::{CryptoRng, RngCore},
     },
 };
+use ed25519_dalek::hazmat::ExpandedSecretKey;
 use serde::{
     Deserialize,
     de::{self, Visitor},
@@ -149,6 +151,18 @@ impl EncryptedGroupKey {
             k_inter,
         }
     }
+}
+
+pub fn expand_private_key(key: &[u8; 32]) -> ExpandedSecretKey {
+    // expand secret key with blake2b
+    // this is pretty much copied what ed25519_dalek does, just with blake2b instead
+    let mut hasher = Blake2b512::new();
+    hasher.update(key);
+    let expanded_array = hasher.finalize();
+    // unwrap should never fail
+    let expanded_bytes = expanded_array.as_array().unwrap();
+
+    ExpandedSecretKey::from_bytes(expanded_bytes)
 }
 
 // traitslop

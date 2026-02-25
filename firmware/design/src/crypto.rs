@@ -183,15 +183,7 @@ pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> 
 pub fn sign_file(file: &mut File, key: &[u8; 32]) -> Result<(), CryptoError> {
     // rand_ops!(trng::trng());
 
-    // expand secret key with blake2b
-    // this is pretty much copied what ed25519_dalek does, just with blake2b instead
-    let mut hasher = Blake2b512::new();
-    hasher.update(key);
-    let expanded_array = hasher.finalize();
-    // unwrap should never fail
-    let expanded_bytes = expanded_array.as_array().unwrap();
-
-    let expanded_key = ExpandedSecretKey::from_bytes(expanded_bytes);
+    let expanded_key = common::expand_private_key(key);
     let public_key = VerifyingKey::from(&expanded_key);
 
     let mut file_hasher = Blake2b512::new();

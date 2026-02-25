@@ -9,7 +9,7 @@ use argon2::{Algorithm, Argon2, Params, Version};
 use blake2::{Blake2s256, Digest};
 use chacha20poly1305::aead::OsRng;
 use common::{EncryptedGroupKey, GroupKey, SymmetricKey};
-use ed25519_dalek::{SigningKey, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
 use serde::Deserialize;
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -20,7 +20,7 @@ fn public_encryption_key(secret_key: &SymmetricKey) -> SymmetricKey {
 }
 
 fn public_signing_key(secret_key: &SymmetricKey) -> SymmetricKey {
-    let secret_key = SigningKey::from_bytes(&secret_key.0);
+    let secret_key = common::expand_private_key(&secret_key.0);
     let public_key = VerifyingKey::from(&secret_key);
     SymmetricKey(public_key.to_bytes())
 }
@@ -249,7 +249,8 @@ impl Perms {
     }
 
     fn has_any_perms(&self) -> bool {
-        self.read || self.write || self.receive
+        // read perm is useless without write or receive, so discard if only read
+        self.write || self.receive
     }
 }
 
