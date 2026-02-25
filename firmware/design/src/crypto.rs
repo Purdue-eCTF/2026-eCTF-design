@@ -1,10 +1,12 @@
 use argon2::{self, Block};
-use blake2::{Blake2s256, Digest};
+use blake2::digest::{FixedOutputReset, Output, OutputSizeUser, Reset};
+use blake2::{Blake2b512, Blake2s256, Digest as BlakeDigest};
 use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::aead::generic_array::GenericArray;
 use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
 use design_macros::rand_ops;
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::hazmat::{ExpandedSecretKey, raw_sign_prehashed, raw_verify_prehashed};
+use ed25519_dalek::{Digest as DalekDigest, Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use mspm0l222x_hal::trng;
 use thiserror::Error;
 use x25519_dalek::{PublicKey, StaticSecret};
@@ -164,10 +166,13 @@ pub enum CryptoError {
 pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> {
     // rand_ops!(trng::trng());
 
-    let pk_sign = VerifyingKey::from_bytes(key).map_err(|_| CryptoError::InvalidSignature)?;
+    let mut hasher = Blake2b512::new();
+    hasher.update(bytemuck::bytes_of(&file.protected));
+
+    // key bytes should never be invalid
+    let pk_sign = VerifyingKey::from_bytes(key).unwrap();
     let expected_signature = Signature::from_bytes(&file.signature);
-    pk_sign
-        .verify(bytemuck::bytes_of(&file.protected), &expected_signature)
+    raw_verify_prehashed::<Blake2b512, Blake2b512>(&pk_sign, hasher, None, &expected_signature)
         .map_err(|_| CryptoError::InvalidSignature)?;
 
     // rand_ops!(trng::trng());
@@ -178,9 +183,25 @@ pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> 
 pub fn sign_file(file: &mut File, key: &[u8; 32]) -> Result<(), CryptoError> {
     // rand_ops!(trng::trng());
 
-    let sk_sign = SigningKey::from_bytes(key);
-    let signature = sk_sign.sign(bytemuck::bytes_of(&file.protected));
-    file.signature = signature.to_bytes();
+    // expand secret key with blake2b
+    // this is pretty much copied what ed25519_dalek does, just with blake2b instead
+    let mut hasher = Blake2b512::new();
+    hasher.update(key);
+    let expanded_array = hasher.finalize();
+    // unwrap should never fail
+    let expanded_bytes = expanded_array.as_array().unwrap();
+
+    let expanded_key = ExpandedSecretKey::from_bytes(expanded_bytes);
+    let public_key = VerifyingKey::from(&expanded_key);
+
+    let mut file_hasher = Blake2b512::new();
+    file_hasher.update(bytemuck::bytes_of(&file.protected));
+
+    // shouldn't fail, context is None
+    file.signature =
+        raw_sign_prehashed::<Blake2b512, Blake2b512>(&expanded_key, file_hasher, &public_key, None)
+            .unwrap()
+            .to_bytes();
 
     // rand_ops!(trng::trng());
 
