@@ -100,6 +100,10 @@ impl Context {
 
         Trng::init(peripherals.trng);
 
+        // protect all flash except for FlashEntry-s
+        let flash = mspm0l222x_hal::flash::flash();
+        flash.write_protect(0, 256 * FLASH_PAGE_SIZE as u32);
+
         let file_size =
             core::mem::size_of::<FileSlot>().div_ceil(FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE;
         let files = unsafe {
@@ -118,6 +122,7 @@ impl Context {
         let fat = unsafe { FlashEntry::new(&_filetable as *const u8 as u32) };
 
         let boot_salt_1: FlashEntry<Salt> = unsafe { FlashEntry::new(&_salt as *const u8 as u32) };
+
         // if salt isn't set, then the device was restarted during an operation
         if !boot_salt_1.is_set() {
             let derived = Salt::derive_boot_salt_1();
