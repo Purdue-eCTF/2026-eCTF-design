@@ -47,6 +47,7 @@ rand = { version = "0.10.0", default-features = false, features = [
 ] }
 
 [profile.release]
+codegen-units = 1
 lto = "fat"
 opt-level = "s"
 debug = true

@@ -4,6 +4,7 @@
 mod context;
 mod crypto;
 mod file;
+mod flash;
 mod listen;
 mod message;
 mod protocol;
@@ -23,7 +24,7 @@ use crate::{
     },
     file::{FatEntry, FatTable, File, FileMeta, FileName, UUID},
     listen::EncryptedInterrogateInfo,
-    message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
+    message::{CHUNK_SIZE, HEADER_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
     secrets::{
         COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, get_enc_group_keys,
     },
@@ -56,22 +57,19 @@ fn main() -> ! {
         assert!(file.state == File::EMPTY || file.state == File::FULL);
     }
 
-    // Handle messages from host.
-    let mut message_body = [0u8; MAX_BODY_SIZE];
     loop {
-        let msg_info = Message::read(MessagePort::UART0, &mut message_body).unwrap();
-        let msg = &message_body[..msg_info.length as usize];
+        let msg_info = Message::read_header(MessagePort::UART0).unwrap();
 
         println!("Got message {msg_info:?}");
 
         let start = ctx.time();
         sensitive!(ctx, {
             match msg_info.opcode {
-                Opcode::List => handle_list(&mut ctx, msg),
-                Opcode::Read => handle_read(&mut ctx, msg),
-                Opcode::Write => handle_write(&mut ctx, msg),
-                Opcode::Receive => handle_receive(&mut ctx, msg),
-                Opcode::Interrogate => handle_interrogate(&mut ctx, msg),
+                Opcode::List => handle_list(&mut ctx, msg_info.length as usize),
+                Opcode::Read => handle_read(&mut ctx, msg_info.length as usize),
+                Opcode::Write => handle_write(&mut ctx, msg_info.length as usize),
+                Opcode::Receive => handle_receive(&mut ctx, msg_info.length as usize),
+                Opcode::Interrogate => handle_interrogate(&mut ctx, msg_info.length as usize),
                 Opcode::Listen => handle_listen(&mut ctx),
                 Opcode::Ack => println!("Ack without sent message"),
                 e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
@@ -106,12 +104,16 @@ struct ListHeader {
 
 /// List all files currently on the board with their metadata; requires pin on usage. In this
 /// process, the file signature is verified before the metadata is sent back to host.
-fn handle_list(ctx: &mut Context, msg: &[u8]) {
-    if msg.len() != size_of::<ListHeader>() {
+fn handle_list(ctx: &mut Context, msg_len: usize) {
+    if msg_len != size_of::<ListHeader>() {
         panic!()
     }
 
-    let ListHeader { pin } = *bytemuck::from_bytes(msg);
+    let mut msg = [0; size_of::<ListHeader>()];
+    Message::send_ack(MessagePort::UART0);
+    Message::read_body(MessagePort::UART0, &mut msg).unwrap();
+
+    let ListHeader { pin } = *bytemuck::from_bytes(&msg);
 
     let _k_auth = ctx.k_auth(&pin).expect("incorrect pin");
 
@@ -152,8 +154,6 @@ fn handle_list(ctx: &mut Context, msg: &[u8]) {
     let actual_body = &body[..4 + counter * METADATA_SIZE];
     Message::write(Opcode::List, MessagePort::UART0, actual_body).unwrap();
 }
-
-
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 #[repr(C, packed)]
 struct ReadFileHeader {
@@ -165,12 +165,16 @@ struct ReadFileHeader {
 /// usage. The pin is also used to decrypt the file from flash.
 ///
 /// See the protocol document for more detailed information on the cryptographic measures implemented.
-fn handle_read(ctx: &mut Context, msg: &[u8]) {
-    if msg.len() != size_of::<ReadFileHeader>() {
+fn handle_read(ctx: &mut Context, msg_len: usize) {
+    if msg_len != size_of::<ReadFileHeader>() {
         panic!()
     }
 
-    let ReadFileHeader { pin, slot } = *bytemuck::from_bytes(msg);
+    let mut msg = [0; size_of::<ReadFileHeader>()];
+    Message::send_ack(MessagePort::UART0);
+    Message::read_body(MessagePort::UART0, &mut msg).unwrap();
+
+    let ReadFileHeader { pin, slot } = *bytemuck::from_bytes(&msg);
     let slot = slot as usize;
 
     if slot > 7 {
@@ -228,7 +232,16 @@ struct WriteFileHeader {
 /// encrypted and signed.
 ///
 /// See the protocol document for more detailed information on the cryptographic measures implemented.
-fn handle_write(ctx: &mut Context, msg: &[u8]) {
+fn handle_write(ctx: &mut Context, msg_len: usize) {
+    if msg_len < size_of::<WriteFileHeader>() {
+        panic!()
+    }
+
+    // sizeof WriteFileHeader < CHUNK_SIZE
+    let mut msg = [0; CHUNK_SIZE];
+    Message::send_ack(MessagePort::UART0);
+    Message::read_body_no_ack(MessagePort::UART0, &mut msg).unwrap();
+
     let (header, data) = msg.split_at(core::mem::size_of::<WriteFileHeader>());
     let WriteFileHeader {
         pin,
@@ -242,7 +255,7 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
     // Check if the data from message is larger than allocated data/content area in fat, or whether
     // the allocated data has incorrect length
     let data_len = length as usize;
-    if data_len > file::CONTENT_SIZE || data_len != data.len() {
+    if data_len > file::CONTENT_SIZE {
         panic!("got strange file length")
     }
 
@@ -272,10 +285,18 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
 
     // Set initial content data
     // The data length is alreayd verified to be correct, so don't check again
-    // TODO: do we need to read chunks?
     protected.contents[..data.len()].copy_from_slice(data);
-    protected.contents[data.len()..].fill(0);
-    protected.contents_length = data.len() as u16;
+    Message::send_ack(MessagePort::UART0);
+    if data.len() < data_len {
+        Message::read_body(
+            MessagePort::UART0,
+            &mut protected.contents[data.len()..data_len],
+        )
+        .unwrap();
+    }
+
+    protected.contents[data_len..].fill(0);
+    protected.contents_length = data_len as u16;
 
     // Encrypt everything
     encrypt_payload_pub(
@@ -329,16 +350,20 @@ struct ReceiveFileHeader {
 /// flash.
 ///
 /// See the protocol document for more detailed information on the cryptographic measures implemented.
-fn handle_receive(ctx: &mut Context, msg: &[u8]) {
-    if msg.len() != size_of::<ReceiveFileHeader>() {
+fn handle_receive(ctx: &mut Context, msg_len: usize) {
+    if msg_len != size_of::<ReceiveFileHeader>() {
         panic!()
     }
+
+    let mut msg = [0; size_of::<ReceiveFileHeader>()];
+    Message::send_ack(MessagePort::UART0);
+    Message::read_body(MessagePort::UART0, &mut msg).unwrap();
 
     let ReceiveFileHeader {
         pin,
         read_slot,
         write_slot,
-    } = *bytemuck::from_bytes(msg);
+    } = *bytemuck::from_bytes(&msg);
 
     let k_auth = ctx.k_auth(&pin).expect("incorrect pin");
 
@@ -408,13 +433,17 @@ struct InterrogateHeader {
 ///
 /// See the protocol document for more detailed information on the cryptographic
 /// measures implemented.
-fn handle_interrogate(ctx: &mut Context, msg: &[u8]) {
+fn handle_interrogate(ctx: &mut Context, msg_len: usize) {
     // Command contains just the PIN
-    if msg.len() != size_of::<InterrogateHeader>() {
+    if msg_len != size_of::<InterrogateHeader>() {
         panic!()
     }
 
-    let InterrogateHeader { pin } = *bytemuck::from_bytes(msg);
+    let mut msg = [0; size_of::<InterrogateHeader>()];
+    Message::send_ack(MessagePort::UART0);
+    Message::read_body(MessagePort::UART0, &mut msg).unwrap();
+
+    let InterrogateHeader { pin } = *bytemuck::from_bytes(&msg);
 
     let k_auth = ctx.k_auth(&pin).expect("incorrect pin");
 
@@ -484,8 +513,10 @@ fn handle_interrogate(ctx: &mut Context, msg: &[u8]) {
 /// See the protocol document for more detailed information on the cryptographic
 /// measures implemented.
 fn handle_listen(ctx: &mut Context) {
+    Message::send_ack(MessagePort::UART0);
     Message::write_header(Opcode::Listen, 0, MessagePort::UART0);
     let mut body = [0u8; MAX_BODY_SIZE];
     let msg = Message::read(MessagePort::UART1, &mut body).unwrap();
+    println!("listen: got message: {:?}", msg.opcode);
     listen::recv(ctx, msg.opcode, &mut body[..msg.length as usize]).unwrap();
 }

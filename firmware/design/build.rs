@@ -112,7 +112,11 @@ fn main() {
 
     // Remove secrets that there aren't permissions for
     for perm in perms.iter() {
-        let entry = global_secrets.groups.get_mut(&perm.group).unwrap();
+        // TODO: permissions for nonexistent groups? how does this happen?
+        let Some(entry) = global_secrets.groups.get_mut(&perm.group) else {
+            println!("wanted permissions for {perm:?}, but did not find in global secrets");
+            continue;
+        };
         let mut keys = GroupKey::from(*entry);
         let pk_sign = public_signing_key(&keys.sk_sign.unwrap());
         let pk_trans = public_encryption_key(&keys.sk_trans.unwrap());
