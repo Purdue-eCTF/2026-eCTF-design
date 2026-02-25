@@ -13,7 +13,7 @@ This repo now includes a helper script to randomize `.text.*` section order:
 ```bash
 cd firmware/design
 CARGO_TARGET_DIR=/tmp/target \
-RUSTFLAGS="-C function-sections=yes -C data-sections=yes" \
+RUSTFLAGS="-Z function-settings=yes" \
 cargo build --profile randomized
 ```
 
