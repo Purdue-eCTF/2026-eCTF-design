@@ -1,5 +1,8 @@
+use bytemuck::{NoUninit, bytes_of};
 use core::{
     fmt::{self, Write},
+    marker::PhantomData,
+    mem::size_of,
     sync::atomic::{AtomicU32, Ordering},
 };
 use cortex_m::peripheral::SYST;
@@ -8,7 +11,7 @@ use subtle::ConstantTimeEq;
 
 use mspm0l222x_hal::{
     Peripherals,
-    flash::{FLASH_PAGE_SIZE, FlashController},
+    flash::{self, FLASH_PAGE_SIZE, FlashController},
     iomux::Iomux,
     trng::Trng,
     uart::{Uart0, Uart1},
@@ -16,7 +19,7 @@ use mspm0l222x_hal::{
 
 use crate::{
     crypto::blake_hash,
-    file::{FatTable, File},
+    file::{FatTable, File, FileSlot},
     flash::FlashEntry,
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
     protocol::ProtocolError,
@@ -96,7 +99,8 @@ impl Context {
 
         Trng::init(peripherals.trng);
 
-        let file_size = core::mem::size_of::<File>().div_ceil(FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE;
+        let file_size =
+            core::mem::size_of::<FileSlot>().div_ceil(FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE;
         let files = unsafe {
             [
                 FlashEntry::new(((&_files as *const u8).add(0 * file_size)) as u32),

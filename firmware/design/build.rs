@@ -7,10 +7,9 @@ use argon2::password_hash::rand_core::RngCore;
 // TODO: ASLR for code and files
 use argon2::{Algorithm, Argon2, Params, Version};
 use blake2::{Blake2s256, Digest};
-use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::aead::OsRng;
 use common::{EncryptedGroupKey, GroupKey, SymmetricKey};
-use ed25519_dalek::{SigningKey, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
 use serde::Deserialize;
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -21,7 +20,7 @@ fn public_encryption_key(secret_key: &SymmetricKey) -> SymmetricKey {
 }
 
 fn public_signing_key(secret_key: &SymmetricKey) -> SymmetricKey {
-    let secret_key = SigningKey::from_bytes(&secret_key.0);
+    let secret_key = common::expand_private_key(&secret_key.0);
     let public_key = VerifyingKey::from(&secret_key);
     SymmetricKey(public_key.to_bytes())
 }
@@ -33,22 +32,23 @@ impl From<GroupSecretKeys> for GroupKey {
             sk_read: Some(value.sk_read),
             pk_read: Some(public_encryption_key(&value.sk_read)),
             sk_trans: Some(value.sk_trans),
-            sk_inter: Some(value.sk_inter),
+            k_uuid: Some(value.k_uuid),
         }
     }
 }
 
 // structs which represent format of global secrets
-#[derive(Default, Clone, Copy, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, Deserialize)]
 #[repr(C)]
 struct GroupSecretKeys {
     pub sk_sign: SymmetricKey,
     pub sk_read: SymmetricKey,
     pub sk_trans: SymmetricKey,
-    pub sk_inter: SymmetricKey,
+    pub k_inter: SymmetricKey,
+    pub k_uuid: SymmetricKey,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct GlobalSecrets {
     groups: HashMap<u16, GroupSecretKeys>,
     t0: SymmetricKey,
@@ -101,17 +101,21 @@ fn main() {
         // TODO: permissions for nonexistent groups? how does this happen?
         let Some(entry) = global_secrets.groups.get_mut(&perm.group) else {
             println!("wanted permissions for {perm:?}, but did not find in global secrets");
+            println!("{:?}", global_secrets);
             continue;
         };
         let mut keys = GroupKey::from(*entry);
         let pk_sign = public_signing_key(&keys.sk_sign.unwrap());
         let pk_trans = public_encryption_key(&keys.sk_trans.unwrap());
-        let pk_inter = public_encryption_key(&keys.sk_inter.unwrap());
+        let k_inter = entry.k_inter;
 
+        // Read permission gates access to the read-decryption private key.
         if !perm.read {
-            keys.pk_read = None;
+            keys.sk_read = None;
         }
 
+        // Write permission gates signing and the public read-encryption key used
+        // to encrypt file contents at write time.
         if !perm.write {
             keys.sk_sign = None;
             keys.pk_read = None;
@@ -121,7 +125,10 @@ fn main() {
             copy_perm_groups.push(perm.group);
         } else {
             keys.sk_trans = None;
-            keys.sk_inter = None;
+        }
+
+        if !(perm.write || perm.receive) {
+            keys.k_uuid = None;
         }
 
         encrypted_keys.push(EncryptedGroupKey::from_group_keys(
@@ -131,7 +138,7 @@ fn main() {
             &salts.k_auth,
             pk_sign,
             pk_trans,
-            pk_inter,
+            k_inter,
         ));
     }
     encrypted_keys.sort_by_key(|k| k.group);
@@ -242,7 +249,8 @@ impl Perms {
     }
 
     fn has_any_perms(&self) -> bool {
-        self.read || self.write || self.receive
+        // read perm is useless without write or receive, so discard if only read
+        self.write || self.receive
     }
 }
 

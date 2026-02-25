@@ -1,4 +1,6 @@
 use bytemuck::bytes_of_mut;
+use design_macros::rand_ops;
+use mspm0l222x_hal::trng;
 use mspm0l222x_hal::{
     HalError,
     uart::{uart0, uart1},
@@ -150,6 +152,8 @@ impl Message {
         reader.read_bytes(&mut length).unwrap();
         let length = u16::from_le_bytes(length);
 
+        // rand_ops!(trng::trng());
+
         Ok(Self {
             opcode,
             length,
@@ -165,6 +169,9 @@ impl Message {
             reader.read_bytes(chunk).unwrap();
             Self::send_ack(port);
         }
+
+        // rand_ops!(trng::trng());
+
         Ok(())
     }
 
@@ -175,6 +182,9 @@ impl Message {
         for chunk in buf.chunks_mut(CHUNK_SIZE) {
             reader.read_bytes(chunk).unwrap();
         }
+
+        // rand_ops!(trng::trng());
+
         Ok(())
     }
 
@@ -211,6 +221,8 @@ impl Message {
         let writer = MessageUart::new(port);
         writer.write_bytes(&[MAGIC, opcode.into()]);
         writer.write_bytes(&length.to_le_bytes());
+
+        // rand_ops!(trng::trng());
     }
 
     /// Writes a message from a slice
@@ -220,6 +232,7 @@ impl Message {
         if !NACKS.contains(&opcode) {
             Self::read_ack(port)?;
         }
+        // trailing rand ops in write_body
         Self::write_body(buf, port, &opcode)
     }
 
@@ -233,6 +246,9 @@ impl Message {
                 }
             }
         }
+
+        // rand_ops!(trng::trng());
+
         Ok(())
     }
 }

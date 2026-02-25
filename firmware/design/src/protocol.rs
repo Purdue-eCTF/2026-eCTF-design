@@ -19,6 +19,18 @@ pub enum ProtocolError {
     InvalidPin,
     #[error("Invalid group")]
     InvalidGroup,
+    #[error("Invalid message length")]
+    InvalidMessageLength,
+    #[error("Invalid slot")]
+    InvalidSlot,
+    #[error("Invalid file")]
+    InvalidFile,
+    #[error("Invalid opcode")]
+    InvalidOpcode,
+    #[error("Peer board returned error packet")]
+    PeerBoardError,
+    #[error("Storage failure")]
+    StorageFailure,
 }
 
 //TODO: Have other methods use
