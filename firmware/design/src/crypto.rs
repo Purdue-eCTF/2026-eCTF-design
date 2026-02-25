@@ -155,7 +155,7 @@ pub enum CryptoError {
 // TODO: Have these keys use a reference to the type instead of a byte array
 // so we don't accidently pass in a pubkey to a function that expects a sym_key
 // and vice versa
-/// Verify a file's contents with it's signature using a corresponding asymmetric encryption key
+/// Verify a file's contents with it's signature using a corresponding asymmetric encryption key.
 pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> {
     let pk_sign = VerifyingKey::from_bytes(key).unwrap();
     let expected_signature = Signature::from_bytes(&file.signature);
@@ -175,8 +175,7 @@ pub fn sign_file(file: &mut File, key: &[u8; 32]) -> Result<(), CryptoError> {
 
 /// Decrypt an asymmetrically encrypted payload.
 ///
-/// Since the asymmetrically encryption of the payload is layered on top of a symmetric encryption,
-/// the symmetric encryption is decrypted first before the asymmetric encryption.
+/// A corresponding group's private key is used along 
 pub fn decrypt_payload_pub<'a>(
     payload: &'a mut [u8],
     gn: &[u8; GN_SIZE],
@@ -187,6 +186,7 @@ pub fn decrypt_payload_pub<'a>(
 ) -> Result<&'a mut [u8], CryptoError> {
     let sk = StaticSecret::from(*secret_key);
     let pubkey = PublicKey::from(*gn);
+    // Regenerate shared/common secret from diffie hellman key exchange.
     let shared = sk.diffie_hellman(&pubkey).to_bytes();
 
     // use kdf as recommended by rfc
@@ -195,15 +195,14 @@ pub fn decrypt_payload_pub<'a>(
     let sym_key = blake_hash(&shared, &PUB_ENCRYPT_SALT);
 
     decrypt_payload_symmetric(payload, nonce, tag, &sym_key, associated_data)?;
+    
     Ok(payload)
 }
 
-/// Asymmetrically encrypt data.
-///
-/// A corresponding group and function key is used to asymmetrically encrypt data before 
-/// it (and its associated data) is also encrypted symmetrically. The resulting payload is
-/// returned. The parameters are present to ensure that there are empty blocks dedicated to
-/// the generated metadata.
+/// Asymmetrically encrypt data and return the resulting payload. The TRNG, diffie hellman key
+/// exchange, and blake hash are used to make a unique symmetric encryption. The parameters are
+/// present to ensure that there are empty blocks in the stored file dedicated to the generated
+/// metadata.
 pub fn encrypt_payload_pub<'a>(
     payload: &'a mut [u8],
     gn: &'a mut [u8; GN_SIZE],
@@ -212,26 +211,32 @@ pub fn encrypt_payload_pub<'a>(
     public_key: &[u8; 32],
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
+    // Abstract the group's public key into the PublicKey struct
     let pk = PublicKey::from(*public_key);
-    let mut n_bytes = [0; 32];
 
     // TODO Generate random bytes from which new asymmetric keys will be made
+    // Generate nonce bytes with the TRNG
+    let mut n_bytes = [0; 32];
     let trng = trng::trng();
     for chunk in n_bytes.chunks_exact_mut(4) {
         chunk.copy_from_slice(&trng.word().to_le_bytes());
     }
 
+    // Use nonce bytes to generate file private key
     let n = StaticSecret::from(n_bytes);
 
+    // Use file secret key to generate file public key and copy it into the encrypted file metadata
     let new_pk = PublicKey::from(&n);
     gn.copy_from_slice(&new_pk.to_bytes());
 
-    // Generate shared/common secret from the diffie hellman key exchange.
+    // Generate shared secret by the diffie hellman key exchange with file and group public
+    // keys
     let shared = n.diffie_hellman(&pk).to_bytes();
 
     // use kdf as recommended by rfc
     // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
     // TODO: maybe add per key salt
+    // Hash the shared secret with a salt
     let secret = blake_hash(&shared, &PUB_ENCRYPT_SALT);
 
     encrypt_payload_symmetric(payload, nonce, tag, &secret, associated_data)?;
@@ -240,9 +245,9 @@ pub fn encrypt_payload_pub<'a>(
 
 /// Decrypt a symmetrically encrypted payload.
 ///
-/// A cipherstream is derived from the key using the ChaCha20Poly1305 algorithm and is used with the
-/// provided nonce to decrypt the payload and generate a verification tag that is compared with the
-/// provided tag. On success, the decrypted data is returned.
+/// ChaCha20Poly1305 is used to derive a cipherstream with the provided key, which is combined with
+/// the nonce to XOR the ciphertext to retrieve the plaintext. The provided tag and associated data are
+/// used to authenticate the results before the results are returned.
 pub fn decrypt_payload_symmetric<'a>(
     payload: &'a mut [u8],
     nonce: &'a [u8; NONCE_SIZE],
@@ -250,9 +255,14 @@ pub fn decrypt_payload_symmetric<'a>(
     key: &[u8; 32],
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
+    // Derive a cipherstream using the ChaCha20Poly1305 algorithm from the key
     let cipher = XChaCha20Poly1305::new_from_slice(key)
         .map_err(|_| CryptoError::InvalidDecryptionPayload)?;
 
+    // Retrieve the nonce and use it to (symmetrically) decrypt the payload, during with a
+    // verification tag is generated. The resulting decryption is authenticated by comparing the
+    // decrypted associated data with the provided associated data and the new verification tag with
+    // the old tag.
     let nonce_ga = GenericArray::from_slice(nonce);
     let tag_ga = GenericArray::from_slice(tag);
     cipher
@@ -265,10 +275,9 @@ pub fn decrypt_payload_symmetric<'a>(
 /// Symmetrically encrypt data; empty blocks should be provided for the generated metadata (nonce
 /// and tag).
 ///
-/// A cipherstream is derived from the symmetric encryption key using the ChaCha20Poly1305 
-/// algorithm and is used with a generated nonce to encrypt the payload and generate a tag.
-/// The tag and nonce are then copied into their respective slots and the encrypted payload is
-/// returned.
+/// ChaCha20Poly1305 is used to derive a cipherstream with the provided key, which is combined with
+/// a nonce generated by the TRNG encrypt the payload and generate a tag. The tag and nonce are then
+/// copied into their respective slots and the encrypted payload is returned.
 pub fn encrypt_payload_symmetric<'a>(
     payload: &'a mut [u8],
     nonce_slot: &'a mut [u8; NONCE_SIZE],
@@ -276,19 +285,23 @@ pub fn encrypt_payload_symmetric<'a>(
     key: &[u8; 32],
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
+    // Generate the nonce into the provided file's nonce slot
     let trng = trng::trng();
     for chunk in nonce_slot.chunks_exact_mut(4) {
         chunk.copy_from_slice(&trng.word().to_le_bytes());
     }
 
+    // Derive a cipherstream using the ChaCha20Poly1305 algorithm from the key
     let cipher = XChaCha20Poly1305::new_from_slice(key)
         .map_err(|_| CryptoError::InvalidEncryptionPayload)?;
 
+    // Use the nonce and the cipherstream to XOR the plaintext and retrieve a tag
     let nonce_ga = GenericArray::from_slice(nonce_slot);
     let tag = cipher
         .encrypt_in_place_detached(nonce_ga, associated_data, payload)
         .map_err(|_| CryptoError::InvalidEncryptionPayload)?;
 
+    // Copy tag into file
     tag_slot.copy_from_slice(tag.as_slice());
     Ok(payload)
 }
