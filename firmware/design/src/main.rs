@@ -137,10 +137,6 @@ fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
         let group_keys = secrets::get_enc_group_keys(file.protected.group)?;
         let key = group_keys.pk_sign.0;
 
-        if verify_signature(file, &key).is_err() {
-            continue;
-        }
-
         let metadata = FileMeta {
             name: file.protected.name,
             group: file.protected.group,
@@ -541,7 +537,7 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
         ifile.decrypt(&group_keys.sk_inter.ok_or(ProtocolError::InvalidGroup)?.0)?;
 
         // copy to the correct offset in list
-        let list_offset = i * size_of::<listen::InterrogateFile>();
+        let list_offset = i * size_of::<listen::handle_list>();
         let list_entry = &mut list[list_offset..list_offset + size_of::<listen::InterrogateFile>()];
         list_entry[0] = ifile.file.protected.slot;
         list_entry[1..3].copy_from_slice(&u16::to_le_bytes(ifile.file.group()));
