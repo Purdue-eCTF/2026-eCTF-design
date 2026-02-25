@@ -154,6 +154,8 @@ pub enum CryptoError {
     InvalidEncryptionPayload,
     #[error("Failed to derive key")]
     KDFFailure,
+    #[error("Invalid signature")]
+    InvalidSignature,
 }
 
 // TODO: Have these keys use a reference to the type instead of a byte array
@@ -162,11 +164,11 @@ pub enum CryptoError {
 pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> {
     // rand_ops!(trng::trng());
 
-    let pk_sign = VerifyingKey::from_bytes(key).unwrap();
+    let pk_sign = VerifyingKey::from_bytes(key).map_err(|_| CryptoError::InvalidSignature)?;
     let expected_signature = Signature::from_bytes(&file.signature);
     pk_sign
         .verify(bytemuck::bytes_of(&file.protected), &expected_signature)
-        .unwrap();
+        .map_err(|_| CryptoError::InvalidSignature)?;
 
     // rand_ops!(trng::trng());
 
