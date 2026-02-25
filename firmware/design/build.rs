@@ -110,10 +110,13 @@ fn main() {
         let pk_trans = public_encryption_key(&keys.sk_trans.unwrap());
         let pk_inter = public_encryption_key(&keys.sk_inter.unwrap());
 
+        // Read permission gates access to the read-decryption private key.
         if !perm.read {
-            keys.pk_read = None;
+            keys.sk_read = None;
         }
 
+        // Write permission gates signing and the public read-encryption key used
+        // to encrypt file contents at write time.
         if !perm.write {
             keys.sk_sign = None;
             keys.pk_read = None;
