@@ -14,12 +14,15 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde::Deserialize;
 use x25519_dalek::{PublicKey, StaticSecret};
 
+/// From a private key, generate it's public key with x25519_dalek. This is for asymmetric
+/// encryption.
 fn public_encryption_key(secret_key: &SymmetricKey) -> SymmetricKey {
     let secret_key = StaticSecret::from(secret_key.0);
     let public_key = PublicKey::from(&secret_key);
     SymmetricKey(public_key.to_bytes())
 }
 
+/// From a private signing key, generate it's public key. This is for signature generation.
 fn public_signing_key(secret_key: &SymmetricKey) -> SymmetricKey {
     let secret_key = SigningKey::from_bytes(&secret_key.0);
     let public_key = VerifyingKey::from(&secret_key);
@@ -27,6 +30,7 @@ fn public_signing_key(secret_key: &SymmetricKey) -> SymmetricKey {
 }
 
 impl From<GroupSecretKeys> for GroupKey {
+    /// Retrieve (decrypt) the set of a group keys that are stored encrypted on flash.
     fn from(value: GroupSecretKeys) -> Self {
         GroupKey {
             sk_sign: Some(value.sk_sign),
@@ -39,15 +43,22 @@ impl From<GroupSecretKeys> for GroupKey {
 }
 
 // structs which represent format of global secrets
+/// Struct that contains a group's secret keys.
 #[derive(Default, Clone, Copy, Deserialize)]
 #[repr(C)]
 struct GroupSecretKeys {
+    /// The private key for signature generation.
     pub sk_sign: SymmetricKey,
+    /// The private key used in the read function.
     pub sk_read: SymmetricKey,
+    /// The private key used in the transfer function.
     pub sk_trans: SymmetricKey,
+    /// The private key used in the interrogate function.
     pub sk_inter: SymmetricKey,
 }
 
+/// Struct abstracting all the group keys, symmetric keys, and a salt for asymmetric encryption,
+/// that are on the board.
 #[derive(Deserialize)]
 struct GlobalSecrets {
     groups: HashMap<u16, GroupSecretKeys>,
@@ -58,6 +69,7 @@ struct GlobalSecrets {
     pub_encrypt_salt: SymmetricKey,
 }
 
+/// Retrieve all groups, generate all of their private and public keys, and remove the unnecessary keys. Write the keys into a file.
 fn main() {
     println!("cargo:rerun-if-changed=link.x");
     println!("cargo:rerun-if-changed=memory.x");
@@ -66,11 +78,13 @@ fn main() {
     println!("cargo:rustc-link-arg=--print-memory-usage");
 
     // HSM_PIN='1a2b3c' -e PERMISSIONS='1234=R--:4321=RWC'
+    // Retrieve all groups and their permissions.
     let perms: Vec<Perms> = env!("PERMISSIONS")
         .split(":")
         .map(Perms::from_string)
         .collect();
 
+    // Retrieve all secrets (keys) from the pregenerated file.
     let secrets_file =
         &std::env::var("LOCAL_SECRETS_FILE").unwrap_or("/secrets/global.secrets".to_string());
     let mut global_secrets: GlobalSecrets = serde_json::from_str(
@@ -82,7 +96,7 @@ fn main() {
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
 
-    // Ignore all secrets we don't have a group for
+    // Ignore all secrets that there isn't a group for
     global_secrets.groups.retain(|k, _| {
         perms
             .iter()
@@ -90,13 +104,14 @@ fn main() {
             .is_some()
     });
 
+    // Retrieve pin to generate pin salts
     let pin = Pin::from_string(env!("HSM_PIN"));
     let salts = PinSalts::new(&pin);
 
     let mut encrypted_keys = Vec::new();
     let mut copy_perm_groups = Vec::new();
 
-    // remove secrets we don't have permissions for
+    // Remove secrets that there aren't permissions for
     for perm in perms.iter() {
         let entry = global_secrets.groups.get_mut(&perm.group).unwrap();
         let mut keys = GroupKey::from(*entry);
@@ -141,6 +156,7 @@ fn main() {
     .expect("failed to write generated secrets");
 }
 
+/// Using the generated secrets, return a formatted String with all of the information ready for use in the firmware.
 fn generate_secrets(
     pin_salts: &PinSalts,
     global_keys: &GlobalSecrets,
@@ -218,6 +234,7 @@ pub const COPY_PERM_GROUPS: [u16; {}] = {:?};
     )
 }
 
+/// Container for a group and its permissions.
 #[derive(Debug)]
 struct Perms {
     group: u16,
@@ -227,6 +244,7 @@ struct Perms {
 }
 
 impl Perms {
+    /// Retrieve permissions for a group from a string input.
     fn from_string(s: &str) -> Self {
         let (group, perms) = s.split_once("=").unwrap();
         Self {
@@ -242,9 +260,11 @@ impl Perms {
     }
 }
 
+/// Container for the pin.
 #[repr(transparent)]
 struct Pin([u8; 6]);
 impl Pin {
+    /// Retrieve the pin from a string input.
     fn from_string(s: &str) -> Self {
         assert!(s.len() == 6);
         let mut arr = [0; 6];
@@ -264,6 +284,8 @@ const T_COST_K_AUTH: u32 = 1;
 // TODO: emit this in secrets_generated
 const DERIVE_SALT: &[u8] = b"ectf-deriv";
 
+/// Tunes and uses Argon2id to generate a new hash for a specified cost that changes the amount of
+/// time the hashing process will take.
 fn derive_next_salt(input: &[u8], t_cost: u32) -> Salt {
     let params = Params::new(
         ARGON_M_COST,
@@ -282,6 +304,7 @@ fn derive_next_salt(input: &[u8], t_cost: u32) -> Salt {
     out
 }
 
+/// Blake hash implementation with a single salt.
 fn blake_hash(input: &[u8], salt: &Salt) -> [u8; 32] {
     let mut blake_hasher = Blake2s256::new();
     blake_hasher.update(input);
@@ -290,16 +313,25 @@ fn blake_hash(input: &[u8], salt: &Salt) -> [u8; 32] {
 }
 
 type Salt = [u8; 32];
+/// TODO (is this necessary) A struct containing all salts and keys associated with the pin.
 struct PinSalts {
+    /// Random bytes stored in flash, to be used to create boot salt 1.
     boot_salt_0: Salt,
+    /// The hashed boot salt 0. TODO (should this be included) Stored in flash, wiped before every
+    /// operation and restored after.
     boot_salt_1: Salt,
+    /// The hashed boot salt 1, which should only be stored in RAM.
     pin_salt: Salt,
+    /// A key created by hashing a provided pin with the pin salt.
     k_auth: SymmetricKey,
+    /// Random bytes stored in flash.
     k_auth_salt: Salt,
+    /// A hash created with k_auth and k_auth_salt used to verify a generated k_auth.
     k_auth_hash: [u8; 32],
 }
 
 impl PinSalts {
+    /// Generate the pin salts to populate the struct fields, one after the other.
     fn new(pin: &Pin) -> Self {
         let mut boot_salt_0: Salt = [0; _];
         OsRng.fill_bytes(&mut boot_salt_0);
@@ -328,6 +360,7 @@ impl PinSalts {
 }
 
 impl fmt::Debug for Pin {
+    /// Format to write pin.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("{:?}", self.0))
     }
