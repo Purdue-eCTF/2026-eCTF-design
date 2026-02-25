@@ -56,3 +56,11 @@ overflow-checks = true
 [profile.release.package."*"]
 overflow-checks = false
 opt-level = 3
+
+[profile.randomized]
+inherits = "release"
+lto = false
+
+[profile.randomized.package."*"]
+overflow-checks = false
+opt-level = 3
