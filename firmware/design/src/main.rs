@@ -300,6 +300,8 @@ fn handle_write(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> 
     protected.contents_length = data_len as u16;
     let ad = protected.associated_data();
 
+    println!("2.5: {}", ctx.time());
+
     // encrypt everything
     encrypt_payload_pub(
         &mut protected.contents.0[..data_len],

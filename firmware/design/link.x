@@ -7,17 +7,19 @@ Offset  | Size    | Name                  | Description
 0x3A400 | 0x5c00  | APP2                  | Flash region that may be used by your design however you see fit.
 */
 
-__file_size = 8*(9 * 1024);
+__file_app1_size = 6*(9 * 1024);
+__file_app2_size = 2*(9 * 1024);
 
 MEMORY {
     BOOTLOADER(r) : ORIGIN = 0x0, LENGTH = 0x6000
-    APP1(rx) : ORIGIN = 0x6000, LENGTH = 0x34000 - __file_size
-    FILES(rw) : ORIGIN = (0x3A000 - __file_size), LENGTH = __file_size
+    APP1(rx) : ORIGIN = 0x6000, LENGTH = 0x34000 - __file_app1_size
+    FILES_APP1(rw) : ORIGIN = (0x3A000 - __file_app1_size), LENGTH = __file_app1_size
     FILETABLE(rw) : ORIGIN = 0x3A000, LENGTH = 0x400
-    APP2(rw) : ORIGIN = 0x3A400, LENGTH = 0x5c00
+    FILES_APP2(rw) : ORIGIN = 0x3A400, LENGTH = __file_app2_size
+    APP2(rw) : ORIGIN = (0x3A400 + __file_app2_size), LENGTH = (0x5c00 - __file_app2_size)
 }
 
-ASSERT(ORIGIN(APP1) + LENGTH(APP1) <= ORIGIN(FILES), "APP1 overlaps with FILES")
+ASSERT(ORIGIN(APP1) + LENGTH(APP1) <= ORIGIN(FILES_APP1), "APP1 overlaps with FILES")
 
 INCLUDE memory.x
 INCLUDE device.x
@@ -89,14 +91,28 @@ SECTIONS {
         __etext = .;
     } > APP1
 
+    .rodata : ALIGN(8) {
+        . = ALIGN(8);
+        *(.rodata .rodata.*);
+
+        . = ALIGN(8);
+    } > APP1
+
     __sidata = LOADADDR(.data);
 
-    .files : {
-        _files = .;
+    .files_app1 : {
+        _files_app1 = .;
         /* store default contents so that flash isn't empty on boot */
-        KEEP(*(.files.default));
-        _efiles = .;
-    } > FILES
+        KEEP(*(.files_app1.default));
+        _efiles_app1 = .;
+    } > FILES_APP1
+
+    .files_app2 : {
+        _files_app2 = .;
+        /* store default contents so that flash isn't empty on boot */
+        KEEP(*(.files_app2.default));
+        _efiles_app2 = .;
+    } > FILES_APP2
 
     .salt : {
         . = ALIGN(1024);
@@ -142,13 +158,6 @@ SECTIONS {
     {
         KEEP(*(.got .got.*));
     }
-
-    .rodata : ALIGN(8) {
-        . = ALIGN(8);
-        *(.rodata .rodata.*);
-
-        . = ALIGN(8);
-    } > APP2
 
     .data : {
         . = ALIGN(8);

@@ -127,12 +127,21 @@ pub struct FileSlot {
 }
 
 // Force "filled" files and FAT to appear in flash on first boot
-#[unsafe(link_section = ".files.default")]
+// first 6 files fit after end of app1
+#[unsafe(link_section = ".files_app1.default")]
 #[unsafe(no_mangle)]
-pub static __FILES: [FileSlot; 8] = [FileSlot {
+pub static __FILES_APP1: [FileSlot; 6] = [FileSlot {
     file: File::empty(),
     magic: flash::FLASH_MAGIC,
-}; 8];
+}; 6];
+
+// last 2 files go after file table before app2
+#[unsafe(link_section = ".files_app2.default")]
+#[unsafe(no_mangle)]
+pub static __FILES_APP2: [FileSlot; 2] = [FileSlot {
+    file: File::empty(),
+    magic: flash::FLASH_MAGIC,
+}; 2];
 
 #[unsafe(link_section = ".filetable.default")]
 #[unsafe(no_mangle)]
