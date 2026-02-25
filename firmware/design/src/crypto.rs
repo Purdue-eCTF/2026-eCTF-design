@@ -173,9 +173,10 @@ pub fn sign_file(file: &mut File, key: &[u8; 32]) -> Result<(), CryptoError> {
     Ok(())
 }
 
-/// Decrypt an asymmetrically encrypted payload.
+/// Decrypt an asymmetrically encrypted payload and return the resulting data.
 ///
-/// A corresponding group's private key is used along 
+/// Use the diffie hellman key exchange with the file's stored public key and the group's private
+/// key to regenerate the shared secret, which is then used in symmetric decryption.
 pub fn decrypt_payload_pub<'a>(
     payload: &'a mut [u8],
     gn: &[u8; GN_SIZE],
@@ -199,10 +200,11 @@ pub fn decrypt_payload_pub<'a>(
     Ok(payload)
 }
 
-/// Asymmetrically encrypt data and return the resulting payload. The TRNG, diffie hellman key
-/// exchange, and blake hash are used to make a unique symmetric encryption. The parameters are
-/// present to ensure that there are empty blocks in the stored file dedicated to the generated
-/// metadata.
+/// Asymmetrically encrypt data and return the resulting payload.
+///
+/// The TRNG, diffie hellman key exchange, and blake hash are used to make a unique symmetric
+/// encryption. The parameters are present to ensure that there are empty blocks in the stored
+/// file dedicated to the generated metadata.
 pub fn encrypt_payload_pub<'a>(
     payload: &'a mut [u8],
     gn: &'a mut [u8; GN_SIZE],
