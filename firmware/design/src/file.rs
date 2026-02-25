@@ -52,6 +52,13 @@ impl ProtectedFileData {
             contents: [0; CONTENT_SIZE],
         }
     }
+
+    pub fn associated_data(&self) -> [u8; NAME_SIZE + 2] {
+        let mut ad = [0u8; NAME_SIZE + 2];
+        ad[..NAME_SIZE].copy_from_slice(&self.name.0);
+        ad[NAME_SIZE..].copy_from_slice(&self.group.to_le_bytes());
+        ad
+    }
 }
 unsafe impl Zeroable for ProtectedFileData {
     fn zeroed() -> Self {

@@ -194,6 +194,7 @@ fn handle_read(ctx: &mut Context, msg_len: usize) {
 
     name.copy_from_slice(&file.protected.name.0);
     pt[..file_length].copy_from_slice(&file.protected.contents[..file_length]);
+    let ad = file.protected.associated_data();
 
     // decrypt the file into buffer
     decrypt_payload_pub(
@@ -202,7 +203,7 @@ fn handle_read(ctx: &mut Context, msg_len: usize) {
         &file.protected.nonce,
         &file.protected.tag,
         &group_key.sk_read.unwrap().0,
-        &[],
+        &ad,
     )
     .unwrap();
 
@@ -294,23 +295,23 @@ fn handle_write(ctx: &mut Context, msg_len: usize) {
 
     protected.contents[data_len..].fill(0);
     protected.contents_length = data_len as u16;
+    let ad = protected.associated_data();
 
     // encrypt everything
-    // FIXME FIXME FIXME: associated data for file data and uuid
     encrypt_payload_pub(
         &mut protected.contents[..data_len],
         &mut protected.gn,
         &mut protected.nonce,
         &mut protected.tag,
         &pk_read,
-        &[],
+        &ad,
     )
     .unwrap();
 
     protected.uuid_ct_metadata = SymmetricMetadata::encrypt(
         bytemuck::bytes_of_mut(&mut protected.uuid),
         &group_key.k_uuid.unwrap().0,
-        &[],
+        &ad,
     )
     .unwrap();
 
@@ -406,12 +407,13 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) {
 
     // decrypt uuid
     let mut uuid = file.protected.uuid;
+    let ad = file.protected.associated_data();
     file.protected
         .uuid_ct_metadata
         .decrypt(
             bytemuck::bytes_of_mut(&mut uuid),
             &group_keys.k_uuid.unwrap().0,
-            &[],
+            &ad,
         )
         .unwrap();
 
