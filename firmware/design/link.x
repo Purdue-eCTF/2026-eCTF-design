@@ -107,15 +107,6 @@ SECTIONS {
         ASSERT(_esalt - _salt == 1024, "boot_salt_1 section has incorrect length");
     } > APP2
 
-
-    /* flash transaction committing, should be empty by default */
-    .commit (NOLOAD) : {
-        . = ALIGN(1024);
-        _commit = .;
-        . = ALIGN(1024);
-        _ecommit = .;
-    } > APP2
-
     .filetable : {
         _filetable = .;
         KEEP(*(.filetable.default));
