@@ -29,5 +29,5 @@ TODO: integrate w/ infra
   - `secrets.rs`: secrets and helpers for obtaining secrets
 - `openocd/run.cfg`:
 - `build.rs`: build script to include generated secrets in the firmware
-- `link.x`:
-- `memory.x`:
+- `link.x`: flash layout as described by functional requirements
+- `memory.x`: locations of flash + memory
