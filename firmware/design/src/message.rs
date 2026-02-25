@@ -152,7 +152,7 @@ impl Message {
         reader.read_bytes(&mut length).unwrap();
         let length = u16::from_le_bytes(length);
 
-        rand_ops!(trng::trng());
+        // rand_ops!(trng::trng());
 
         Ok(Self {
             opcode,
@@ -170,7 +170,7 @@ impl Message {
             Self::send_ack(port);
         }
 
-        rand_ops!(trng::trng());
+        // rand_ops!(trng::trng());
 
         Ok(())
     }
@@ -183,7 +183,7 @@ impl Message {
             reader.read_bytes(chunk).unwrap();
         }
 
-        rand_ops!(trng::trng());
+        // rand_ops!(trng::trng());
 
         Ok(())
     }
@@ -222,7 +222,7 @@ impl Message {
         writer.write_bytes(&[MAGIC, opcode.into()]);
         writer.write_bytes(&length.to_le_bytes());
 
-        rand_ops!(trng::trng());
+        // rand_ops!(trng::trng());
     }
 
     /// Writes a message from a slice
@@ -247,7 +247,7 @@ impl Message {
             }
         }
 
-        rand_ops!(trng::trng());
+        // rand_ops!(trng::trng());
 
         Ok(())
     }

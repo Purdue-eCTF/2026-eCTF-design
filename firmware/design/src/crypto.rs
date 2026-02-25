@@ -160,7 +160,7 @@ pub enum CryptoError {
 // so we don't accidently pass in a pubkey to a function that expects a sym_key
 // and vice versa
 pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> {
-    rand_ops!(trng::trng());
+    // rand_ops!(trng::trng());
 
     let pk_sign = VerifyingKey::from_bytes(key).unwrap();
     let expected_signature = Signature::from_bytes(&file.signature);
@@ -168,19 +168,19 @@ pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> 
         .verify(bytemuck::bytes_of(&file.protected), &expected_signature)
         .unwrap();
 
-    rand_ops!(trng::trng());
+    // rand_ops!(trng::trng());
 
     Ok(())
 }
 
 pub fn sign_file(file: &mut File, key: &[u8; 32]) -> Result<(), CryptoError> {
-    rand_ops!(trng::trng());
+    // rand_ops!(trng::trng());
 
     let sk_sign = SigningKey::from_bytes(key);
     let signature = sk_sign.sign(bytemuck::bytes_of(&file.protected));
     file.signature = signature.to_bytes();
 
-    rand_ops!(trng::trng());
+    // rand_ops!(trng::trng());
 
     Ok(())
 }
@@ -193,13 +193,13 @@ pub fn decrypt_payload_pub<'a>(
     secret_key: &[u8; 32],
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
-    rand_ops!(trng::trng());
+    // rand_ops!(trng::trng());
 
     let sk = StaticSecret::from(*secret_key);
     let pubkey = PublicKey::from(*gn);
     let shared = sk.diffie_hellman(&pubkey).to_bytes();
 
-    rand_ops!(trng::trng());
+    // rand_ops!(trng::trng());
 
     // use kdf as recommended by rfc
     // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
@@ -220,7 +220,7 @@ pub fn encrypt_payload_pub<'a>(
     public_key: &[u8; 32],
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
-    rand_ops!(trng::trng());
+    // rand_ops!(trng::trng());
 
     let pk = PublicKey::from(*public_key);
     let mut n_bytes = [0; 32];
@@ -237,7 +237,7 @@ pub fn encrypt_payload_pub<'a>(
 
     let shared = n.diffie_hellman(&pk).to_bytes();
 
-    rand_ops!(trng::trng());
+    // rand_ops!(trng::trng());
 
     // use kdf as recommended by rfc
     // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
@@ -255,7 +255,7 @@ pub fn decrypt_payload_symmetric<'a>(
     key: &[u8; 32],
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
-    rand_ops!(trng::trng());
+    // rand_ops!(trng::trng());
 
     let cipher = XChaCha20Poly1305::new_from_slice(key)
         .map_err(|_| CryptoError::InvalidDecryptionPayload)?;
@@ -266,7 +266,7 @@ pub fn decrypt_payload_symmetric<'a>(
         .decrypt_in_place_detached(nonce_ga, associated_data, payload, tag_ga)
         .map_err(|_| CryptoError::InvalidDecryptionPayload)?;
 
-    rand_ops!(trng::trng());
+    // rand_ops!(trng::trng());
 
     Ok(payload)
 }
@@ -278,7 +278,7 @@ pub fn encrypt_payload_symmetric<'a>(
     key: &[u8; 32],
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
-    rand_ops!(trng::trng());
+    // rand_ops!(trng::trng());
 
     let trng = trng::trng();
     for chunk in nonce_slot.chunks_exact_mut(4) {
@@ -295,20 +295,20 @@ pub fn encrypt_payload_symmetric<'a>(
 
     tag_slot.copy_from_slice(tag.as_slice());
 
-    rand_ops!(trng::trng());
+    // rand_ops!(trng::trng());
 
     Ok(payload)
 }
 
 pub fn blake_hash(input: &[u8], salt: &[u8; 32]) -> [u8; 32] {
-    rand_ops!(trng::trng());
+    // rand_ops!(trng::trng());
 
     let mut blake_hasher = Blake2s256::new();
     blake_hasher.update(input);
     blake_hasher.update(salt);
     let result = *blake_hasher.finalize().as_array().unwrap();
 
-    rand_ops!(trng::trng());
+    // rand_ops!(trng::trng());
 
     result
 }

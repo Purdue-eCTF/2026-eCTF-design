@@ -61,7 +61,7 @@ fn main() -> ! {
 
         let start = ctx.time();
         sensitive!(ctx, {
-            rand_ops!(trng::trng());
+            // rand_ops!(trng::trng());
 
             match msg_info.opcode {
                 Opcode::List => handle_list(&mut ctx, msg_info.length as usize),
