@@ -16,6 +16,17 @@ pub struct FileName(pub [u8; NAME_SIZE]);
 #[repr(transparent)]
 pub struct UUID(pub [u8; UUID_SIZE]);
 
+#[derive(Debug, Copy, Clone)]
+pub struct FileContents(pub [u8; CONTENT_SIZE]);
+
+// pod macro does not support [u8; 8192], so manually implement
+unsafe impl Pod for FileContents {}
+unsafe impl Zeroable for FileContents {
+    fn zeroed() -> Self {
+        FileContents([0; _])
+    }
+}
+
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
 #[repr(C, packed)]
 pub struct FileMeta {
@@ -25,7 +36,7 @@ pub struct FileMeta {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct ProtectedFileData {
     pub nonce: [u8; 24],
     pub tag: [u8; 16],
@@ -35,7 +46,7 @@ pub struct ProtectedFileData {
     pub uuid_ct_metadata: SymmetricMetadata,
     pub group: u16,
     pub contents_length: u16,
-    pub contents: [u8; CONTENT_SIZE],
+    pub contents: FileContents,
 }
 
 impl ProtectedFileData {
@@ -49,7 +60,7 @@ impl ProtectedFileData {
             uuid_ct_metadata: SymmetricMetadata::empty(),
             group: 0,
             contents_length: 0,
-            contents: [0; CONTENT_SIZE],
+            contents: FileContents([0; _]),
         }
     }
 
@@ -60,18 +71,14 @@ impl ProtectedFileData {
         ad
     }
 }
-unsafe impl Zeroable for ProtectedFileData {
-    fn zeroed() -> Self {
-        Self::empty()
-    }
-}
-unsafe impl Pod for ProtectedFileData {}
+
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct File {
     pub state: u64,
     pub signature: [u8; 64],
     pub protected: ProtectedFileData,
+    _padding: [u8; 4],
 }
 
 impl File {
@@ -82,18 +89,13 @@ impl File {
             state: File::EMPTY,
             signature: [0; _],
             protected: ProtectedFileData::empty(),
+            _padding: [0; _],
         }
     }
     pub(crate) fn is_full(&self) -> bool {
         self.state == File::FULL
     }
 }
-unsafe impl Zeroable for File {
-    fn zeroed() -> Self {
-        Self::empty()
-    }
-}
-unsafe impl Pod for File {}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]

@@ -193,7 +193,7 @@ fn handle_read(ctx: &mut Context, msg_len: usize) {
     let (name, pt) = buf.split_at_mut(file::NAME_SIZE);
 
     name.copy_from_slice(&file.protected.name.0);
-    pt[..file_length].copy_from_slice(&file.protected.contents[..file_length]);
+    pt[..file_length].copy_from_slice(&file.protected.contents.0[..file_length]);
     let ad = file.protected.associated_data();
 
     // decrypt the file into buffer
@@ -283,23 +283,23 @@ fn handle_write(ctx: &mut Context, msg_len: usize) {
     // set initial content data
     // we already verified that the data length is correct, so don't check again
     // TODO: do we need to read chunks?
-    protected.contents[..data.len()].copy_from_slice(data);
+    protected.contents.0[..data.len()].copy_from_slice(data);
     Message::send_ack(MessagePort::UART0);
     if data.len() < data_len {
         Message::read_body(
             MessagePort::UART0,
-            &mut protected.contents[data.len()..data_len],
+            &mut protected.contents.0[data.len()..data_len],
         )
         .unwrap();
     }
 
-    protected.contents[data_len..].fill(0);
+    protected.contents.0[data_len..].fill(0);
     protected.contents_length = data_len as u16;
     let ad = protected.associated_data();
 
     // encrypt everything
     encrypt_payload_pub(
-        &mut protected.contents[..data_len],
+        &mut protected.contents.0[..data_len],
         &mut protected.gn,
         &mut protected.nonce,
         &mut protected.tag,
