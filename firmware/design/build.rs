@@ -32,7 +32,6 @@ impl From<GroupSecretKeys> for GroupKey {
             sk_read: Some(value.sk_read),
             pk_read: Some(public_encryption_key(&value.sk_read)),
             sk_trans: Some(value.sk_trans),
-            sk_inter: Some(value.sk_inter),
             k_uuid: Some(value.k_uuid),
         }
     }
@@ -45,7 +44,7 @@ struct GroupSecretKeys {
     pub sk_sign: SymmetricKey,
     pub sk_read: SymmetricKey,
     pub sk_trans: SymmetricKey,
-    pub sk_inter: SymmetricKey,
+    pub k_inter: SymmetricKey,
     pub k_uuid: SymmetricKey,
 }
 
@@ -108,7 +107,7 @@ fn main() {
         let mut keys = GroupKey::from(*entry);
         let pk_sign = public_signing_key(&keys.sk_sign.unwrap());
         let pk_trans = public_encryption_key(&keys.sk_trans.unwrap());
-        let pk_inter = public_encryption_key(&keys.sk_inter.unwrap());
+        let k_inter = entry.k_inter;
 
         // Read permission gates access to the read-decryption private key.
         if !perm.read {
@@ -126,7 +125,6 @@ fn main() {
             copy_perm_groups.push(perm.group);
         } else {
             keys.sk_trans = None;
-            keys.sk_inter = None;
         }
 
         if !(perm.write || perm.receive) {
@@ -140,7 +138,7 @@ fn main() {
             &salts.k_auth,
             pk_sign,
             pk_trans,
-            pk_inter,
+            k_inter,
         ));
     }
     encrypted_keys.sort_by_key(|k| k.group);

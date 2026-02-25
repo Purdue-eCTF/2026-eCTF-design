@@ -35,7 +35,6 @@ pub struct GroupKey {
     pub sk_read: Option<SymmetricKey>,
     pub pk_read: Option<SymmetricKey>,
     pub sk_trans: Option<SymmetricKey>,
-    pub sk_inter: Option<SymmetricKey>,
     pub k_uuid: Option<SymmetricKey>,
 }
 
@@ -46,7 +45,6 @@ pub struct GroupKeyBlob {
     pub sk_read: SymmetricKey,
     pub pk_read: SymmetricKey,
     pub sk_trans: SymmetricKey,
-    pub sk_inter: SymmetricKey,
     pub k_uuid: SymmetricKey,
 }
 
@@ -57,7 +55,6 @@ impl From<GroupKey> for GroupKeyBlob {
             sk_read,
             pk_read,
             sk_trans,
-            sk_inter,
             k_uuid,
         } = value;
 
@@ -66,7 +63,6 @@ impl From<GroupKey> for GroupKeyBlob {
             sk_read: sk_read.unwrap_or(SymmetricKey::empty()),
             pk_read: pk_read.unwrap_or(SymmetricKey::empty()),
             sk_trans: sk_trans.unwrap_or(SymmetricKey::empty()),
-            sk_inter: sk_inter.unwrap_or(SymmetricKey::empty()),
             k_uuid: k_uuid.unwrap_or(SymmetricKey::empty()),
         }
     }
@@ -79,7 +75,6 @@ impl From<GroupKeyBlob> for GroupKey {
             sk_read,
             pk_read,
             sk_trans,
-            sk_inter,
             k_uuid,
         } = value;
 
@@ -88,7 +83,6 @@ impl From<GroupKeyBlob> for GroupKey {
             sk_read: Some(sk_read).filter(|k| !k.is_empty()),
             pk_read: Some(pk_read).filter(|k| !k.is_empty()),
             sk_trans: Some(sk_trans).filter(|k| !k.is_empty()),
-            sk_inter: Some(sk_inter).filter(|k| !k.is_empty()),
             k_uuid: Some(k_uuid).filter(|k| !k.is_empty()),
         }
     }
@@ -102,7 +96,7 @@ pub struct EncryptedGroupKey {
     pub nonce: [u8; 24],
     pub pk_sign: SymmetricKey,
     pub pk_trans: SymmetricKey,
-    pub pk_inter: SymmetricKey,
+    pub k_inter: SymmetricKey,
 }
 
 impl EncryptedGroupKey {
@@ -131,7 +125,7 @@ impl EncryptedGroupKey {
         k_auth: &SymmetricKey,
         pk_sign: SymmetricKey,
         pk_trans: SymmetricKey,
-        pk_inter: SymmetricKey,
+        k_inter: SymmetricKey,
     ) -> Self {
         let group_key_blob: GroupKeyBlob = group_keys.clone().into();
         let mut blob: [u8; core::mem::size_of::<GroupKeyBlob>()] = [0; _];
@@ -152,7 +146,7 @@ impl EncryptedGroupKey {
             nonce: *nonce.as_array().unwrap(),
             pk_sign,
             pk_trans,
-            pk_inter,
+            k_inter,
         }
     }
 }

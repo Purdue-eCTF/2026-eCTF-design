@@ -39,11 +39,11 @@ pub struct InterrogateFileProtected {
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct EncryptedInterrogateInfo {
     pub file: InterrogateFile,
-    pub metadata: PubKeyMetadata,
+    pub metadata: SymmetricMetadata,
 }
 
 impl EncryptedInterrogateInfo {
-    pub fn encrypt(&mut self, public_key: &[u8; 32]) -> Result<(), ProtocolError> {
+    pub fn encrypt(&mut self, key: &[u8; 32]) -> Result<(), ProtocolError> {
         let Self {
             file:
                 InterrogateFile {
@@ -55,12 +55,12 @@ impl EncryptedInterrogateInfo {
         } = self;
 
         *metadata =
-            PubKeyMetadata::encrypt(bytemuck::bytes_of_mut(protected), public_key, group_bytes)?;
+            SymmetricMetadata::encrypt(bytemuck::bytes_of_mut(protected), key, group_bytes)?;
 
         Ok(())
     }
 
-    pub fn decrypt(&mut self, secret_key: &[u8; 32]) -> Result<(), ProtocolError> {
+    pub fn decrypt(&mut self, key: &[u8; 32]) -> Result<(), ProtocolError> {
         let Self {
             file:
                 InterrogateFile {
@@ -71,14 +71,7 @@ impl EncryptedInterrogateInfo {
             ..
         } = self;
 
-        decrypt_payload_pub(
-            bytemuck::bytes_of_mut(protected),
-            &metadata.gn,
-            &metadata.nonce,
-            &metadata.tag,
-            secret_key,
-            group_bytes,
-        )?;
+        metadata.decrypt(bytemuck::bytes_of_mut(protected), key, group_bytes)?;
 
         Ok(())
     }
@@ -111,7 +104,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
     // EncFilei = group || Enc_pk_inter(slot || name)
 
     // size of EncFilei || PKMi
-    const ENTRY_SIZE: usize = size_of::<InterrogateFile>() + size_of::<crypto::PubKeyMetadata>();
+    const ENTRY_SIZE: usize = size_of::<InterrogateFile>() + size_of::<crypto::SymmetricMetadata>();
 
     // allocate a payload buffer of the maximum size and write the ciphertext into it
     let mut payload = [0; 8 * ENTRY_SIZE + size_of::<crypto::SymmetricMetadata>()];
@@ -145,15 +138,14 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
                         name: metadata.name,
                     },
                 };
-                let pkm: &mut crypto::PubKeyMetadata = bytemuck::from_bytes_mut(pkm);
-                let key = group_keys.pk_inter.0;
+                let pkm: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(pkm);
+                let key = group_keys.k_inter.0;
 
                 // encrypt just the slot and filename
                 // write G^n, nonce, tag to PKM at the end of entry
                 // HSM1 needs to read group in order to get the correct key
-                crypto::encrypt_payload_pub(
+                crypto::encrypt_payload_symmetric(
                     bytemuck::bytes_of_mut(&mut ifile.protected),
-                    &mut pkm.gn,
                     &mut pkm.nonce,
                     &mut pkm.tag,
                     &key,

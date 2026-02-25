@@ -133,10 +133,6 @@ fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
             continue;
         };
 
-        // verify file signature before handling
-        let group_keys = secrets::get_enc_group_keys(file.protected.group)?;
-        let key = group_keys.pk_sign.0;
-
         let metadata = FileMeta {
             name: file.protected.name,
             group: file.protected.group,
@@ -489,7 +485,7 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
 
     let InterrogateHeader { pin } = *bytemuck::from_bytes(&msg);
 
-    let k_auth = ctx.k_auth(&pin)?;
+    let _k_auth = ctx.k_auth(&pin)?;
 
     // TODO: maybe send bitmask
     const GROUPS_BYTE_LEN: usize = COPY_PERM_GROUPS.len() * size_of::<u16>();
@@ -532,9 +528,9 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
     num_files.copy_from_slice(&(count as u32).to_le_bytes());
 
     for (i, ifile) in interrogate_info.iter_mut().enumerate() {
-        let group_keys = secrets::get_enc_group_keys(ifile.file.group())?.decrypt(&k_auth);
+        let group_keys = secrets::get_enc_group_keys(ifile.file.group())?;
 
-        ifile.decrypt(&group_keys.sk_inter.ok_or(ProtocolError::InvalidGroup)?.0)?;
+        ifile.decrypt(&group_keys.k_inter.0)?;
 
         // copy to the correct offset in list
         let list_offset = i * size_of::<listen::InterrogateFile>();

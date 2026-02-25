@@ -51,7 +51,7 @@ def gen_secrets(groups: list[int]) -> bytes:
         group_data["sk_sign"] = get_random_bytes(32).hex()
         group_data["sk_read"] = get_random_bytes(32).hex()
         group_data["sk_trans"] = get_random_bytes(32).hex()
-        group_data["sk_inter"] = get_random_bytes(32).hex()
+        group_data["k_inter"] = get_random_bytes(32).hex()
         group_data["k_uuid"] = get_random_bytes(32).hex()
 
         all_secrets["groups"][f"{group}"] = group_data
