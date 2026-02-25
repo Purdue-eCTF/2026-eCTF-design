@@ -27,7 +27,7 @@ pub struct PubKeyMetadata {
 }
 
 impl PubKeyMetadata {
-    /// Clear all fields to 0.
+    /// Initialize all fields to 0.
     pub fn empty() -> Self {
         Self {
             gn: [0u8; _],
@@ -42,7 +42,7 @@ impl PubKeyMetadata {
         public_key: &[u8; 32],
         associated_data: &[u8],
     ) -> Result<Self, ProtocolError> {
-        // Reset self to be used as blocks of storage during cryptographic processes.
+        // Initialize an empty struct to be used as blocks of storage during cryptographic processes.
         let mut out = Self::empty();
 
         encrypt_payload_pub(
@@ -93,7 +93,7 @@ pub struct SymmetricMetadata {
 }
 
 impl SymmetricMetadata {
-    /// Clears all fields to 0.
+    /// Initialize all fields to 0.
     pub fn empty() -> Self {
         Self {
             nonce: [0u8; _],
@@ -175,7 +175,7 @@ pub fn sign_file(file: &mut File, key: &[u8; 32]) -> Result<(), CryptoError> {
 
 /// Decrypt an asymmetrically encrypted payload and return the resulting data.
 ///
-/// Use the diffie hellman key exchange with the file's stored public key and the group's private
+/// Use the Diffie-Hellman key exchange with the file's stored public key and the group's private
 /// key to regenerate the shared secret, which is then used in symmetric decryption.
 pub fn decrypt_payload_pub<'a>(
     payload: &'a mut [u8],
@@ -187,7 +187,7 @@ pub fn decrypt_payload_pub<'a>(
 ) -> Result<&'a mut [u8], CryptoError> {
     let sk = StaticSecret::from(*secret_key);
     let pubkey = PublicKey::from(*gn);
-    // Regenerate shared/common secret from diffie hellman key exchange.
+    // Regenerate shared/common secret from Diffie-Hellman key exchange.
     let shared = sk.diffie_hellman(&pubkey).to_bytes();
 
     // use kdf as recommended by rfc
@@ -202,7 +202,7 @@ pub fn decrypt_payload_pub<'a>(
 
 /// Asymmetrically encrypt data and return the resulting payload.
 ///
-/// The TRNG, diffie hellman key exchange, and blake hash are used to make a unique symmetric
+/// The TRNG, Diffie-Hellman key exchange, and blake hash are used to make a unique symmetric
 /// encryption. The parameters are present to ensure that there are empty blocks in the stored
 /// file dedicated to the generated metadata.
 pub fn encrypt_payload_pub<'a>(
@@ -231,7 +231,7 @@ pub fn encrypt_payload_pub<'a>(
     let new_pk = PublicKey::from(&n);
     gn.copy_from_slice(&new_pk.to_bytes());
 
-    // Generate shared secret by the diffie hellman key exchange with file and group public
+    // Generate shared secret by the Diffie-Hellman key exchange with file and group public
     // keys
     let shared = n.diffie_hellman(&pk).to_bytes();
 
