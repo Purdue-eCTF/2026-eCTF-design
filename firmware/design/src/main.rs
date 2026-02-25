@@ -16,8 +16,8 @@ use context::*;
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
 use design_macros::rand_ops;
-use mspm0l222x_hal::Peripherals;
 use mspm0l222x_hal::trng;
+use mspm0l222x_hal::{CorePeripherals, Peripherals};
 
 use crate::{
     crypto::{
@@ -46,7 +46,10 @@ fn handle_panics(info: &PanicInfo) -> ! {
 
 #[entry]
 fn main() -> ! {
-    let mut ctx = Context::new(Peripherals::take().unwrap());
+    let mut ctx = Context::new(
+        Peripherals::take().unwrap(),
+        CorePeripherals::take().unwrap(),
+    );
 
     for file in &ctx.files {
         // TODO: gracefully handle this failure

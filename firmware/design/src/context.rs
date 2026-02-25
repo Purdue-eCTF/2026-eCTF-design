@@ -7,6 +7,8 @@ use core::{
 };
 use cortex_m::peripheral::SYST;
 use cortex_m_rt::exception;
+use mspm0l222x_hal::CorePeripherals;
+use mspm0l222x_hal::mspm0l222x_pac::MPU;
 use subtle::ConstantTimeEq;
 
 use mspm0l222x_hal::{
@@ -84,9 +86,11 @@ unsafe extern "C" {
 }
 
 impl Context {
-    pub(crate) fn new(peripherals: Peripherals) -> Self {
+    pub(crate) fn new(peripherals: Peripherals, core_peripherals: CorePeripherals) -> Self {
         // entire ram not executable
         Mpu::sram_rw_boundary(&peripherals.sysctl, 0x7fff).expect("failed to set sram rw boundary");
+
+        let mpu = Mpu::new(core_peripherals.MPU);
 
         mspm0l222x_hal::timer::SysTickConfig::enable_with_reload(
             unsafe { &*(SYST::PTR as *const SYST) },
@@ -99,6 +103,7 @@ impl Context {
 
         Uart0::init(&iomux, peripherals.uart0);
         println!("starting!");
+        println!("mpu regions: {}", mpu.region_count());
         Uart1::init(&iomux, peripherals.uart1);
         FlashController::init(peripherals.flashctl);
 
