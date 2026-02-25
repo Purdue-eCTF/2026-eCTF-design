@@ -258,14 +258,11 @@ pub fn decrypt_payload_symmetric<'a>(
     key: &[u8; 32],
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
-    // Derive a cipherstream using the ChaCha20Poly1305 algorithm from the key
+    // Derive a cipherstream using the XChaCha20Poly1305 algorithm from the key
     let cipher = XChaCha20Poly1305::new_from_slice(key)
         .map_err(|_| CryptoError::InvalidDecryptionPayload)?;
 
-    // Retrieve the nonce and use it to (symmetrically) decrypt the payload, during with a
-    // verification tag is generated. The resulting decryption is authenticated by comparing the
-    // decrypted associated data with the provided associated data and the new verification tag with
-    // the old tag.
+    // Decrypt the payload using the nonce and key after using the tag to check authenticity
     let nonce_ga = GenericArray::from_slice(nonce);
     let tag_ga = GenericArray::from_slice(tag);
     cipher
@@ -294,7 +291,7 @@ pub fn encrypt_payload_symmetric<'a>(
         chunk.copy_from_slice(&trng.word().to_le_bytes());
     }
 
-    // Derive a cipherstream using the ChaCha20Poly1305 algorithm from the key
+    // Derive a cipherstream using the XChaCha20Poly1305 algorithm from the key
     let cipher = XChaCha20Poly1305::new_from_slice(key)
         .map_err(|_| CryptoError::InvalidEncryptionPayload)?;
 
