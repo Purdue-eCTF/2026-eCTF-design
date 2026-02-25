@@ -26,6 +26,7 @@ pub struct FileMeta {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
+/// Signed file data. Includes ciphertext, required file metadata, as well as G^n, nonce, and tag for decryption.
 pub struct ProtectedFileData {
     pub nonce: [u8; 24],
     pub tag: [u8; 16],
@@ -35,7 +36,6 @@ pub struct ProtectedFileData {
     pub group: u16,
     pub contents_length: u16,
     pub contents: [u8; CONTENT_SIZE],
-    _pad: [u8; 4],
 }
 
 impl ProtectedFileData {
@@ -49,7 +49,6 @@ impl ProtectedFileData {
             group: 0,
             contents_length: 0,
             contents: [0; CONTENT_SIZE],
-            _pad: [0; 4],
         }
     }
 }
@@ -61,10 +60,13 @@ unsafe impl Zeroable for ProtectedFileData {
 unsafe impl Pod for ProtectedFileData {}
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
+
+/// Layout of a file. Includes state(EMPTY or FULL), ed25519 signature, and signed data.
 pub struct File {
     pub state: u64,
     pub signature: [u8; 64],
     pub protected: ProtectedFileData,
+    _pad: [u8; 4], // pad to a multiple of 8 as required by FlashEntry
 }
 
 impl File {
@@ -75,6 +77,7 @@ impl File {
             state: File::EMPTY,
             signature: [0; _],
             protected: ProtectedFileData::empty(),
+            _pad: [u8; 4],
         }
     }
     pub(crate) fn is_full(&self) -> bool {
@@ -90,6 +93,8 @@ unsafe impl Pod for File {}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
+
+/// File allocation table entry used by the eCTF bootloader.
 pub struct FatEntry {
     pub uuid: UUID,
     pub length: u16,
@@ -98,6 +103,8 @@ pub struct FatEntry {
 }
 
 #[derive(Debug, Clone, Copy)]
+
+/// File allocation table used by the eCTF bootloader.
 pub struct FatTable {
     pub entries: [FatEntry; 8],
 }

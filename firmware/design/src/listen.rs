@@ -23,6 +23,9 @@ pub(crate) enum ListenError {
 }
 #[repr(C, packed)]
 #[derive(Clone, Copy, Zeroable, Pod)]
+
+/// File metadata included in response to Interrogate from neighbor HSM.
+/// Protected info should be encrypted before send.
 pub struct InterrogateFile {
     // group must not be u16 because it is ub to take reference to u16 in packed struct with potentially less alignment
     pub group_bytes: [u8; 2],
@@ -41,6 +44,9 @@ impl InterrogateFile {
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Zeroable, Pod)]
+
+/// File metadata that should be encrypted before send.
+/// Included in response to Interrogate from neighbor HSM
 pub struct InterrogateFileProtected {
     pub slot: u8,
     pub name: FileName,
@@ -48,6 +54,9 @@ pub struct InterrogateFileProtected {
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Pod, Zeroable)]
+
+/// Encrypted metadata for a file and associated metadata for decryption.
+/// Sent in response to Interrogate from neighbor HSM
 pub struct EncryptedInterrogateInfo {
     pub file: InterrogateFile,
     pub metadata: PubKeyMetadata,
@@ -95,6 +104,8 @@ impl EncryptedInterrogateInfo {
     }
 }
 
+#[inline]
+/// Handle a command received in listen mode.
 pub fn recv(ctx: &mut Context, opcode: Opcode, body: &mut [u8]) -> Result<(), ListenError> {
     match opcode {
         Opcode::Interrogate => respond_interrogate(ctx, body),
@@ -104,6 +115,7 @@ pub fn recv(ctx: &mut Context, opcode: Opcode, body: &mut [u8]) -> Result<(), Li
     Ok(())
 }
 
+/// Handle an interrogate command from a neighbor HSM, received while in listen mode.
 fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
     // Expect body = Enc_I0(Group1 || Group2 || ... || GroupN) || SM
     let i0 = INTERROGATE_SEND.0;
@@ -122,7 +134,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
     // EncFilei = group || Enc_pk_inter(slot || name)
 
     // size of EncFilei || PKMi
-    const ENTRY_SIZE: usize = size_of::<InterrogateFile>() + size_of::<crypto::PubKeyMetadata>();
+    const ENTRY_SIZE: usize = size_of::<EncryptedInterrogateInfo>();
 
     // allocate a payload buffer of the maximum size and write the ciphertext into it
     let mut payload = [0; 8 * ENTRY_SIZE + size_of::<crypto::SymmetricMetadata>()];
@@ -206,6 +218,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
     .unwrap();
 }
 
+/// Handle a receive command from a neighbor HSM, received while in listen mode.
 fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ListenError> {
     if body.len() != size_of::<TransferM0Encrypted>() {
         return Err(ListenError::InvalidMessageLength);

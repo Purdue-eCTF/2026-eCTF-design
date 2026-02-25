@@ -16,8 +16,9 @@ pub const NONCE_SIZE: usize = 24;
 pub const TAG_SIZE: usize = 16;
 pub const GN_SIZE: usize = 32;
 
-/// The public key has generated metadata for cryptographic purposes, with a signature
-/// for asymmetric enc/decryption and a nonce and tag for symmetric enc/decryption.
+/// Metadata to append to a public-key encrypted ciphertext.
+/// Includes a Diffie-Hellman public key for asymmetric enc/decryption
+/// and XChaCha20-Poly1305 nonce and tag for symmetric enc/decryption.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct PubKeyMetadata {
@@ -83,8 +84,8 @@ pub fn unwrap_pub_message<'a>(
     Ok(msg_inner)
 }
 
-/// The metadata for symmetric encryption consists of a random nonce from the TRNG
-/// and a tag that is generated during encryption.
+/// Metadata to append to symmetrically encrypted ciphertext.
+/// Includes a nonce and authentication tag for XChaCha20-Poly1305.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct SymmetricMetadata {
@@ -152,10 +153,7 @@ pub enum CryptoError {
     KDFFailure,
 }
 
-// TODO: Have these keys use a reference to the type instead of a byte array
-// so we don't accidently pass in a pubkey to a function that expects a sym_key
-// and vice versa
-/// Verify a file's contents with it's signature using a corresponding asymmetric encryption key
+/// Verify a file's contents and metadata with its signature using a corresponding asymmetric encryption key
 pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> {
     let pk_sign = VerifyingKey::from_bytes(key).unwrap();
     let expected_signature = Signature::from_bytes(&file.signature);
@@ -173,10 +171,12 @@ pub fn sign_file(file: &mut File, key: &[u8; 32]) -> Result<(), CryptoError> {
     Ok(())
 }
 
-/// Decrypt an asymmetrically encrypted payload.
+/// Decrypts an asymmetrically encrypted payload in-place.
 ///
-/// Since the asymmetrically encryption of the payload is layered on top of a symmetric encryption,
-/// the symmetric encryption is decrypted first before the asymmetric encryption.
+/// Derives a new key from a secret key and the value G^n
+/// in order to symmetrically decrypt the payload in-place.
+/// 
+/// See the protocol document for more detailed information.
 pub fn decrypt_payload_pub<'a>(
     payload: &'a mut [u8],
     gn: &[u8; GN_SIZE],
@@ -198,12 +198,13 @@ pub fn decrypt_payload_pub<'a>(
     Ok(payload)
 }
 
-/// Asymmetrically encrypt data.
+/// Asymmetrically encrypt data in-place.
+/// The buffers gn, nonce, and tag are filled with generated metadata required for decryption.
 ///
-/// A corresponding group and function key is used to asymmetrically encrypt data before 
-/// it (and its associated data) is also encrypted symmetrically. The resulting payload is
-/// returned. The parameters are present to ensure that there are empty blocks dedicated to
-/// the generated metadata.
+/// Derives a secret key from the public key and a random n generated from the hardware TRNG.
+/// The key is used to symmetrically encrypt the payload in-place.
+/// 
+/// See the protocol document for more detailed information.
 pub fn encrypt_payload_pub<'a>(
     payload: &'a mut [u8],
     gn: &'a mut [u8; GN_SIZE],
@@ -238,11 +239,9 @@ pub fn encrypt_payload_pub<'a>(
     Ok(payload)
 }
 
-/// Decrypt a symmetrically encrypted payload.
-///
-/// A cipherstream is derived from the key using the ChaCha20Poly1305 algorithm and is used with the
-/// provided nonce to decrypt the payload and generate a verification tag that is compared with the
-/// provided tag. On success, the decrypted data is returned.
+/// Decrypt a payload in-place using XChaCha20-Poly1305.
+/// 
+/// See the protocol document for detailed information.
 pub fn decrypt_payload_symmetric<'a>(
     payload: &'a mut [u8],
     nonce: &'a [u8; NONCE_SIZE],
@@ -262,13 +261,12 @@ pub fn decrypt_payload_symmetric<'a>(
     Ok(payload)
 }
 
-/// Symmetrically encrypt data; empty blocks should be provided for the generated metadata (nonce
-/// and tag).
+/// Symmetrically encrypt data in-place.
+/// The nonce is written to nonce_slot and the authentication tag is written to tag_slot.
 ///
-/// A cipherstream is derived from the symmetric encryption key using the ChaCha20Poly1305 
-/// algorithm and is used with a generated nonce to encrypt the payload and generate a tag.
-/// The tag and nonce are then copied into their respective slots and the encrypted payload is
-/// returned.
+/// Generates a nonce with the hardware TRNG and encrypts the payload in-place using XChaCha20-Poly1305.
+/// 
+/// See the protocol document for detailed information.
 pub fn encrypt_payload_symmetric<'a>(
     payload: &'a mut [u8],
     nonce_slot: &'a mut [u8; NONCE_SIZE],
