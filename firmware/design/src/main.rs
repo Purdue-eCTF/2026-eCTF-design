@@ -556,7 +556,6 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
 /// process before sending back the corresponding data.
 fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
     Message::send_ack(MessagePort::UART0);
-    Message::write_header(Opcode::Listen, 0, MessagePort::UART0);
     let mut body = [0u8; MAX_BODY_SIZE];
     let msg = Message::read(MessagePort::UART1, &mut body)?;
     println!("listen: got message: {:?}", msg.opcode);
@@ -567,8 +566,11 @@ fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
 fn handle_listen_request(ctx: &mut Context) -> Result<(), ProtocolError> {
     if let Err(err) = handle_listen(ctx) {
         let _ = Message::write(Opcode::Error, MessagePort::UART1, &[]);
+        // returning error will cause uart0 to have error written
         Err(err)
     } else {
+        // handle listen has already sent a success response to uart1
+        let _ = Message::write(Opcode::Listen, MessagePort::UART0, &[]);
         Ok(())
     }
 }
