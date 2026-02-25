@@ -29,6 +29,7 @@ use crate::{
     },
 };
 
+/// On panic, inform the host with the information associated with the panic and reboot the board.
 #[panic_handler]
 fn handle_panics(info: &PanicInfo) -> ! {
     // #[cfg(debug_assertions)]
@@ -42,8 +43,11 @@ fn handle_panics(info: &PanicInfo) -> ! {
 
 #[entry]
 fn main() -> ! {
+    // Startup tasks...
+    // Retrieve context.
     let mut ctx = Context::new(Peripherals::take().unwrap());
 
+    // Populate files.
     for file in &ctx.files {
         // TODO: gracefully handle this failure
         let Some(file) = file.get() else {
@@ -52,6 +56,7 @@ fn main() -> ! {
         assert!(file.state == File::EMPTY || file.state == File::FULL);
     }
 
+    // Handle messages from host.
     let mut message_body = [0u8; MAX_BODY_SIZE];
     loop {
         let msg_info = Message::read(MessagePort::UART0, &mut message_body).unwrap();
@@ -92,15 +97,15 @@ const TIME_BUDGET_MS: &[(Opcode, u32)] = &[
     (Opcode::Interrogate, 1000),
 ];
 
+/// Container for the header received for list.
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 #[repr(C, packed)]
 struct ListHeader {
     pub pin: [u8; 6],
 }
 
-/// List files; requires pin on usage. Sends back a head with total number of
-/// files and length of the message body, and then the data, with the name,
-/// group, and slot of the file.
+/// List all files currently on the board with their metadata; requires pin on usage. In this
+/// process, the file signature is verified before the metadata is sent back to host.
 fn handle_list(ctx: &mut Context, msg: &[u8]) {
     if msg.len() != size_of::<ListHeader>() {
         panic!()
@@ -115,6 +120,7 @@ fn handle_list(ctx: &mut Context, msg: &[u8]) {
     let mut body = [0u8; 4 + 8 * METADATA_SIZE];
     let file_list = &mut body[4..];
     let list_entries: &mut [FileMeta; 8] = bytemuck::from_bytes_mut(file_list);
+
     let mut counter: usize = 0;
     for i in 0..8 {
         // if not in use or flash entry is empty, continue
@@ -147,9 +153,6 @@ fn handle_list(ctx: &mut Context, msg: &[u8]) {
     Message::write(Opcode::List, MessagePort::UART0, actual_body).unwrap();
 }
 
-// Read file on given slot, returning to the host the file; requires pin on
-// usage. Since the file is stored on flash encrypted, this function uses the
-// pin to decrypt the file before returning it to the host.
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 #[repr(C, packed)]
@@ -158,6 +161,10 @@ struct ReadFileHeader {
     pub slot: u8,
 }
 
+/// Read file on given slot, returning the file to the host; requires pin on
+/// usage. The pin is also used to decrypt the file from flash.
+///
+/// See the protocol document for more detailed information on the cryptographic measures implemented.
 fn handle_read(ctx: &mut Context, msg: &[u8]) {
     if msg.len() != size_of::<ReadFileHeader>() {
         panic!()
@@ -217,8 +224,10 @@ struct WriteFileHeader {
     pub length: u16,
 }
 
-/// Write a file received from host into flash. The file should be encrypted
-/// and signed.
+/// Write a file received from host into flash. Before writing the file into flash, the file is
+/// encrypted and signed.
+///
+/// See the protocol document for more detailed information on the cryptographic measures implemented.
 fn handle_write(ctx: &mut Context, msg: &[u8]) {
     let (header, data) = msg.split_at(core::mem::size_of::<WriteFileHeader>());
     let WriteFileHeader {
@@ -230,7 +239,7 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
         length,
     } = *bytemuck::from_bytes(header);
 
-    // check if the data from message is larger than allocated data/content area in fat, or whether
+    // Check if the data from message is larger than allocated data/content area in fat, or whether
     // the allocated data has incorrect length
     let data_len = length as usize;
     if data_len > file::CONTENT_SIZE || data_len != data.len() {
@@ -245,30 +254,30 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
 
     println!("1: {}", ctx.time());
 
-    // retrieve signing and read encryption keys with pin
+    // Retrieve signing and read encryption keys with pin
     let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
     let pk_read = group_key.pk_read.unwrap().0;
 
     println!("2: {}", ctx.time());
 
-    // generate empty file variable
+    // Generate empty file variable
     let mut file = File::empty();
     file.state = File::FULL;
 
-    // set file metadata
+    // Set file metadata
     let protected = &mut file.protected;
     protected.name = name;
     protected.uuid = uuid;
     protected.group = group;
 
-    // set initial content data
-    // we already verified that the data length is correct, so don't check again
+    // Set initial content data
+    // The data length is alreayd verified to be correct, so don't check again
     // TODO: do we need to read chunks?
     protected.contents[..data.len()].copy_from_slice(data);
     protected.contents[data.len()..].fill(0);
     protected.contents_length = data.len() as u16;
 
-    // encrypt everything
+    // Encrypt everything
     encrypt_payload_pub(
         &mut protected.contents[..data_len],
         &mut protected.gn,
@@ -296,7 +305,7 @@ fn handle_write(ctx: &mut Context, msg: &[u8]) {
     }
     println!("5: {}", ctx.time());
     let current = ctx.fat.get().unwrap();
-    // avoid in-place mutation
+    // Avoid in-place mutation
     let mut entries = current.entries;
     entries[slot] = new_fat;
     unsafe {
@@ -315,6 +324,11 @@ struct ReceiveFileHeader {
     pub write_slot: u8,
 }
 
+/// Receive a file (specified by slot by host) from an adjacent board and write it into flash. In
+/// this process, the file is decrypted and verified before being re-encrypted to be written into
+/// flash.
+///
+/// See the protocol document for more detailed information on the cryptographic measures implemented.
 fn handle_receive(ctx: &mut Context, msg: &[u8]) {
     if msg.len() != size_of::<ReceiveFileHeader>() {
         panic!()
@@ -328,29 +342,29 @@ fn handle_receive(ctx: &mut Context, msg: &[u8]) {
 
     let k_auth = ctx.k_auth(&pin).expect("incorrect pin");
 
-    // request file
+    // Request file
     protocol::initiate_transfer(read_slot).unwrap();
 
-    // receive file
+    // Receive file
     let mut buf = [0u8; protocol::TRANSFER_RECEIVE_MAX_LENGTH];
     let response = Message::read(MessagePort::UART1, &mut buf).unwrap();
     assert!(response.length as usize == buf.len());
 
-    // decrypt with T1
+    // Decrypt with T1
     let payload =
         unwrap_symmetric_message(&mut buf, &TRANSFER_RECV.0, &[Opcode::Receive.into()]).unwrap();
 
-    // parse out group id associated data
+    // Parse out group id associated data
     let (assymetric_payload, group_id_bytes) =
         payload.split_at_mut(payload.len() - size_of::<u16>());
     let group_id_bytes: &mut [u8; 2] = group_id_bytes.try_into().unwrap();
     let group_id = u16::from_le_bytes(*group_id_bytes);
 
-    // decrypt correct keys based on group
+    // Decrypt correct keys based on group
     let enc_group_keys = secrets::get_enc_group_keys(group_id).unwrap();
     let group_keys = enc_group_keys.decrypt(&k_auth);
 
-    // decrypt assymetrically encrypted part of message
+    // Decrypt assymetrically encrypted part of message
     let inner = unwrap_pub_message(
         assymetric_payload,
         &group_keys.sk_trans.unwrap().0,
@@ -359,7 +373,7 @@ fn handle_receive(ctx: &mut Context, msg: &[u8]) {
     .unwrap();
 
     let file: &mut File = bytemuck::from_bytes_mut(inner);
-    // check earlier associated group id matches
+    // Check earlier associated group id matches
     assert!(file.protected.group == group_id);
 
     verify_signature(file, &enc_group_keys.pk_sign.0).unwrap();
@@ -390,9 +404,10 @@ struct InterrogateHeader {
 }
 
 /// Interrogate an adjacent board for a list of files that the current board
-/// has permissions for. Since the entire list of files is encrypted
-/// symmetrically and each file's metadata encrypted asymmetrically, all this
-/// will be decrypted before being sent back to host.
+/// has permissions for and return the results of the interrogation to the host.
+///
+/// See the protocol document for more detailed information on the cryptographic
+/// measures implemented.
 fn handle_interrogate(ctx: &mut Context, msg: &[u8]) {
     // Command contains just the PIN
     if msg.len() != size_of::<InterrogateHeader>() {
@@ -409,33 +424,33 @@ fn handle_interrogate(ctx: &mut Context, msg: &[u8]) {
     let (payload, metadata) = buf.split_at_mut(GROUPS_BYTE_LEN);
     let metadata: &mut SymmetricMetadata = bytemuck::from_bytes_mut(metadata);
 
-    // copy list of interrogatable groups
+    // Copy list of interrogatable groups
     payload.copy_from_slice(bytemuck::cast_slice(&COPY_PERM_GROUPS));
 
-    // encrypt
+    // Encrypt
     *metadata =
         SymmetricMetadata::encrypt(payload, &INTERROGATE_SEND.0, &[Opcode::Interrogate.into()])
             .unwrap();
 
-    // send message
+    // Send message
     Message::write(Opcode::Interrogate, MessagePort::UART1, &buf).unwrap();
 
-    // receive interrogate response
+    // Receive interrogate response
     let mut buf = [0u8; size_of::<EncryptedInterrogateInfo>() * 8 + size_of::<SymmetricMetadata>()];
     let response = Message::read(MessagePort::UART1, &mut buf).unwrap();
     let payload = &mut buf[..response.length as usize];
 
-    // decrypt
+    // Decrypt
     let payload =
         unwrap_symmetric_message(payload, &INTERROGATE_RECV.0, &[Opcode::Interrogate.into()])
             .unwrap();
     let interrogate_info: &mut [EncryptedInterrogateInfo] = bytemuck::cast_slice_mut(payload);
     let count = interrogate_info.len();
 
-    // allocate response buffer of the maximum size
+    // Allocate response buffer of the maximum size
     let mut response = [0; 4 + 8 * size_of::<listen::InterrogateFile>()];
 
-    // split num_files off from the list and set it
+    // Split num_files off from the list and set it
     let (num_files, list) = response.split_at_mut(4);
     num_files.copy_from_slice(&(count as u32).to_le_bytes());
 
@@ -465,6 +480,9 @@ fn handle_interrogate(ctx: &mut Context, msg: &[u8]) {
 
 /// Listens for any Receive or Interrogate command from an adjacent board to
 /// process before sending back the corresponding data.
+///
+/// See the protocol document for more detailed information on the cryptographic
+/// measures implemented.
 fn handle_listen(ctx: &mut Context) {
     Message::write_header(Opcode::Listen, 0, MessagePort::UART0);
     let mut body = [0u8; MAX_BODY_SIZE];

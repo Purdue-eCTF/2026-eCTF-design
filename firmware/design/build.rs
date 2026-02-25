@@ -69,7 +69,6 @@ struct GlobalSecrets {
     pub_encrypt_salt: SymmetricKey,
 }
 
-/// Retrieve all groups, generate all of their private and public keys, and remove the unnecessary keys. Write the keys into a file.
 fn main() {
     println!("cargo:rerun-if-changed=link.x");
     println!("cargo:rerun-if-changed=memory.x");
