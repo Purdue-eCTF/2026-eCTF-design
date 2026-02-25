@@ -6,6 +6,8 @@ use crate::secrets::{
 use argon2::Block;
 use argon2::{Algorithm, Argon2, Params, Version};
 use bytemuck::{Pod, Zeroable};
+use design_macros::rand_ops;
+use mspm0l222x_hal::trng;
 
 // ARGON2 TUNING PARAMETERS
 // Requirements: Boot ~4s and PIN ~1s
@@ -32,6 +34,8 @@ impl Salt {
     }
 
     pub fn derive_argon(input: &[u8], output: &mut [u8], t_cost: u32) {
+        rand_ops!(trng::trng());
+
         // TODO: prevent this from overflowing the stack
         let mut mem = [Block::new(); ARGON_M_COST_USIZE];
 
@@ -43,6 +47,8 @@ impl Salt {
         argon
             .hash_password_into_with_memory(input, DERIVE_SALT, output, &mut mem)
             .expect("Argon Derivation Failed");
+
+        rand_ops!(trng::trng());
     }
 }
 

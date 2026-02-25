@@ -14,7 +14,9 @@ use bytemuck::{Pod, Zeroable};
 use context::*;
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
+use design_macros::rand_ops;
 use mspm0l222x_hal::Peripherals;
+use mspm0l222x_hal::trng;
 
 use crate::{
     crypto::{
@@ -59,6 +61,8 @@ fn main() -> ! {
 
         let start = ctx.time();
         sensitive!(ctx, {
+            rand_ops!(trng::trng());
+
             match msg_info.opcode {
                 Opcode::List => handle_list(&mut ctx, msg_info.length as usize),
                 Opcode::Read => handle_read(&mut ctx, msg_info.length as usize),

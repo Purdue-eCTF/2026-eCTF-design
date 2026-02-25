@@ -3,6 +3,7 @@ use blake2::{Blake2s256, Digest};
 use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::aead::generic_array::GenericArray;
 use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
+use design_macros::rand_ops;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use mspm0l222x_hal::trng;
 use thiserror::Error;
@@ -159,18 +160,28 @@ pub enum CryptoError {
 // so we don't accidently pass in a pubkey to a function that expects a sym_key
 // and vice versa
 pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> {
+    rand_ops!(trng::trng());
+
     let pk_sign = VerifyingKey::from_bytes(key).unwrap();
     let expected_signature = Signature::from_bytes(&file.signature);
     pk_sign
         .verify(bytemuck::bytes_of(&file.protected), &expected_signature)
         .unwrap();
+
+    rand_ops!(trng::trng());
+
     Ok(())
 }
 
 pub fn sign_file(file: &mut File, key: &[u8; 32]) -> Result<(), CryptoError> {
+    rand_ops!(trng::trng());
+
     let sk_sign = SigningKey::from_bytes(key);
     let signature = sk_sign.sign(bytemuck::bytes_of(&file.protected));
     file.signature = signature.to_bytes();
+
+    rand_ops!(trng::trng());
+
     Ok(())
 }
 
@@ -182,15 +193,20 @@ pub fn decrypt_payload_pub<'a>(
     secret_key: &[u8; 32],
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
+    rand_ops!(trng::trng());
+
     let sk = StaticSecret::from(*secret_key);
     let pubkey = PublicKey::from(*gn);
     let shared = sk.diffie_hellman(&pubkey).to_bytes();
+
+    rand_ops!(trng::trng());
 
     // use kdf as recommended by rfc
     // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
     // TODO: maybe add per key salt
     let sym_key = blake_hash(&shared, &PUB_ENCRYPT_SALT);
 
+    // decrypt payload already have rand ops
     decrypt_payload_symmetric(payload, nonce, tag, &sym_key, associated_data)?;
     Ok(payload)
 }
@@ -204,6 +220,8 @@ pub fn encrypt_payload_pub<'a>(
     public_key: &[u8; 32],
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
+    rand_ops!(trng::trng());
+
     let pk = PublicKey::from(*public_key);
     let mut n_bytes = [0; 32];
 
@@ -218,6 +236,8 @@ pub fn encrypt_payload_pub<'a>(
     gn.copy_from_slice(&new_pk.to_bytes());
 
     let shared = n.diffie_hellman(&pk).to_bytes();
+
+    rand_ops!(trng::trng());
 
     // use kdf as recommended by rfc
     // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
@@ -235,6 +255,8 @@ pub fn decrypt_payload_symmetric<'a>(
     key: &[u8; 32],
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
+    rand_ops!(trng::trng());
+
     let cipher = XChaCha20Poly1305::new_from_slice(key)
         .map_err(|_| CryptoError::InvalidDecryptionPayload)?;
 
@@ -243,6 +265,8 @@ pub fn decrypt_payload_symmetric<'a>(
     cipher
         .decrypt_in_place_detached(nonce_ga, associated_data, payload, tag_ga)
         .map_err(|_| CryptoError::InvalidDecryptionPayload)?;
+
+    rand_ops!(trng::trng());
 
     Ok(payload)
 }
@@ -254,6 +278,8 @@ pub fn encrypt_payload_symmetric<'a>(
     key: &[u8; 32],
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
+    rand_ops!(trng::trng());
+
     let trng = trng::trng();
     for chunk in nonce_slot.chunks_exact_mut(4) {
         chunk.copy_from_slice(&trng.word().to_le_bytes());
@@ -268,12 +294,21 @@ pub fn encrypt_payload_symmetric<'a>(
         .map_err(|_| CryptoError::InvalidEncryptionPayload)?;
 
     tag_slot.copy_from_slice(tag.as_slice());
+
+    rand_ops!(trng::trng());
+
     Ok(payload)
 }
 
 pub fn blake_hash(input: &[u8], salt: &[u8; 32]) -> [u8; 32] {
+    rand_ops!(trng::trng());
+
     let mut blake_hasher = Blake2s256::new();
     blake_hasher.update(input);
     blake_hasher.update(salt);
-    *blake_hasher.finalize().as_array().unwrap()
+    let result = *blake_hasher.finalize().as_array().unwrap();
+
+    rand_ops!(trng::trng());
+
+    result
 }

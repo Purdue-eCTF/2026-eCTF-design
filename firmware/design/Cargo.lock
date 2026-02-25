@@ -276,6 +276,7 @@ dependencies = [
 name = "design_macros"
 version = "0.1.0"
 dependencies = [
+ "blake2",
  "proc-macro2",
  "quote",
  "rand",
