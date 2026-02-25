@@ -2,7 +2,7 @@ use core::ops::Index;
 
 use bytemuck::{NoUninit, Pod, Zeroable};
 
-use crate::{context, crypto::SymmetricMetadata};
+use crate::{crypto::SymmetricMetadata, flash};
 
 pub const CONTENT_SIZE: usize = 8192;
 pub const UUID_SIZE: usize = 16;
@@ -131,9 +131,9 @@ pub struct FileSlot {
 #[unsafe(no_mangle)]
 pub static __FILES: [FileSlot; 8] = [FileSlot {
     file: File::empty(),
-    magic: context::FLASH_MAGIC,
+    magic: flash::FLASH_MAGIC,
 }; 8];
 
 #[unsafe(link_section = ".filetable.default")]
 #[unsafe(no_mangle)]
-pub static __FAT: ([u8; core::mem::size_of::<FatTable>()], u64) = ([0; _], context::FLASH_MAGIC);
+pub static __FAT: ([u8; core::mem::size_of::<FatTable>()], u64) = ([0; _], flash::FLASH_MAGIC);

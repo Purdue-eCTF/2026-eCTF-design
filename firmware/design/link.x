@@ -105,7 +105,7 @@ SECTIONS {
         . = ALIGN(1024);
         _esalt = .;
         ASSERT(_esalt - _salt == 1024, "boot_salt_1 section has incorrect length");
-    } > APP2 /* not enough space to fit in first 32kb of flash where more writes are allowed */
+    } > APP2
 
     .filetable : {
         _filetable = .;

@@ -5,11 +5,11 @@ FROM rust:slim-trixie
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt update && \
-	apt install --no-install-recommends -y gcc-arm-none-eabi && \
-	rm -rf /var/lib/apt/lists/*
-RUN rustup toolchain update nightly && \
-	rustup target install --toolchain nightly thumbv6m-none-eabi && \
-	rustup component add --toolchain nightly rustc-dev rustfmt
+apt install --no-install-recommends -y gcc-arm-none-eabi && \
+rm -rf /var/lib/apt/lists/* && \
+rustup toolchain update nightly && \
+rustup target install --toolchain nightly thumbv6m-none-eabi && \
+rustup component add --toolchain nightly rustc-dev rustfmt
 
 WORKDIR /hsm
 ENTRYPOINT ["/bin/sh", "/hsm/build.sh"]

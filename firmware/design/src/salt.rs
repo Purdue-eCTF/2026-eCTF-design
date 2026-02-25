@@ -1,4 +1,4 @@
-use crate::context;
+use crate::flash;
 use crate::secrets::BOOT_SALT_1;
 use crate::secrets::{
     ARGON_M_COST, ARGON_P_COST, BOOT_SALT_0, DERIVE_SALT, T_COST_BOOT, T_COST_PIN,
@@ -54,4 +54,4 @@ impl Salt {
 
 #[unsafe(link_section = ".salt.default")]
 #[unsafe(no_mangle)]
-pub static __SALT: ([u8; core::mem::size_of::<Salt>()], u64) = (BOOT_SALT_1, context::FLASH_MAGIC);
+pub static __SALT: ([u8; core::mem::size_of::<Salt>()], u64) = (BOOT_SALT_1, flash::FLASH_MAGIC);
