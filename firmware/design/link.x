@@ -10,6 +10,10 @@ Offset  | Size    | Name                  | Description
 __file_app1_size = 6*(9 * 1024);
 __file_app2_size = 2*(9 * 1024);
 
+__data_region_size = 128;
+
+INCLUDE memory.x
+
 MEMORY {
     BOOTLOADER(r) : ORIGIN = 0x0, LENGTH = 0x6000
     APP1(rx) : ORIGIN = 0x6000, LENGTH = 0x34000 - __file_app1_size
@@ -17,11 +21,11 @@ MEMORY {
     FILETABLE(rw) : ORIGIN = 0x3A000, LENGTH = 0x400
     FILES_APP2(rw) : ORIGIN = 0x3A400, LENGTH = __file_app2_size
     APP2(rw) : ORIGIN = (0x3A400 + __file_app2_size), LENGTH = (0x5c00 - __file_app2_size)
+    DATA_REGION(rw) : ORIGIN = (ORIGIN(RAM) + LENGTH(RAM) - __data_region_size), LENGTH = __data_region_size
 }
 
 ASSERT(ORIGIN(APP1) + LENGTH(APP1) <= ORIGIN(FILES_APP1), "APP1 overlaps with FILES")
 
-INCLUDE memory.x
 INCLUDE device.x
 
 EXTERN(__RESET_VECTOR);
@@ -57,7 +61,7 @@ PROVIDE(__pre_init = DefaultPreInit);
 SECTIONS {
     PROVIDE(_ram_start = ORIGIN(RAM));
     PROVIDE(_ram_end = ORIGIN(RAM) + LENGTH(RAM));
-    PROVIDE(_stack_start = _ram_end);
+    PROVIDE(_stack_start = ORIGIN(DATA_REGION));
 
     .vector_table ORIGIN(APP1) : {
         LONG(_stack_start & 0xFFFFFFF8);
@@ -140,7 +144,7 @@ SECTIONS {
         *(.bss .bss.*);
         *(COMMON); /* Uninitialized C statics */
         . = ALIGN(8); /* 4-byte align the end (VMA) of this section */
-    } > RAM
+    } > DATA_REGION
 
     . = ALIGN(8);
     __ebss = .;
@@ -152,7 +156,7 @@ SECTIONS {
         . = ALIGN(8);
         *(.uninit .uninit.*);
         . = ALIGN(8);
-    } > RAM
+    } > DATA_REGION
 
     .got (NOLOAD) :
     {
@@ -165,7 +169,7 @@ SECTIONS {
         *(.data .data.*);
         . = ALIGN(8); /* 4-byte align the end (VMA) of this section */
         __edata = .;
-    } > RAM AT>APP2
+    } > DATA_REGION AT>APP2
 
     /* ## Discarded sections */
     /DISCARD/ :
