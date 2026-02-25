@@ -14,7 +14,7 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde::Deserialize;
 use x25519_dalek::{PublicKey, StaticSecret};
 
-/// From a private key, generate it's public key with x25519_dalek. This is for asymmetric
+/// From a private key, generate its public key with x25519_dalek. This is for asymmetric
 /// encryption.
 fn public_encryption_key(secret_key: &SymmetricKey) -> SymmetricKey {
     let secret_key = StaticSecret::from(secret_key.0);
@@ -22,7 +22,7 @@ fn public_encryption_key(secret_key: &SymmetricKey) -> SymmetricKey {
     SymmetricKey(public_key.to_bytes())
 }
 
-/// From a private signing key, generate it's public key. This is for signature generation.
+/// From a private signing key, generate its public key. This is for signature verification.
 fn public_signing_key(secret_key: &SymmetricKey) -> SymmetricKey {
     let secret_key = SigningKey::from_bytes(&secret_key.0);
     let public_key = VerifyingKey::from(&secret_key);
@@ -30,7 +30,7 @@ fn public_signing_key(secret_key: &SymmetricKey) -> SymmetricKey {
 }
 
 impl From<GroupSecretKeys> for GroupKey {
-    /// Retrieve (decrypt) the set of a group keys that are stored encrypted on flash.
+    /// Retrieve the set of a group keys that are stored encrypted on flash.
     fn from(value: GroupSecretKeys) -> Self {
         GroupKey {
             sk_sign: Some(value.sk_sign),
@@ -156,6 +156,7 @@ fn main() {
 }
 
 /// Using the generated secrets, return a formatted String with all of the information ready for use in the firmware.
+/// Output is included in secrets.rs.
 fn generate_secrets(
     pin_salts: &PinSalts,
     global_keys: &GlobalSecrets,
@@ -303,7 +304,7 @@ fn derive_next_salt(input: &[u8], t_cost: u32) -> Salt {
     out
 }
 
-/// Blake hash implementation with a single salt.
+/// Blake hash with a single salt.
 fn blake_hash(input: &[u8], salt: &Salt) -> [u8; 32] {
     let mut blake_hasher = Blake2s256::new();
     blake_hasher.update(input);

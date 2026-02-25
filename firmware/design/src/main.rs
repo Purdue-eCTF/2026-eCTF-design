@@ -44,7 +44,7 @@ fn handle_panics(info: &PanicInfo) -> ! {
 #[entry]
 fn main() -> ! {
     // Startup tasks...
-    // Retrieve context.
+    // Retrieve context. Derives boot salt 1 and PIN salt 1.
     let mut ctx = Context::new(Peripherals::take().unwrap());
 
     // Populate files.

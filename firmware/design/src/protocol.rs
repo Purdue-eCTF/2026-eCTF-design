@@ -68,7 +68,6 @@ pub struct TransferM0 {
 // TODO: Should error if T0 doesn't exist
 
 impl TransferM0 {
-    /// Generates a transfer request for slot 0
     pub fn empty() -> Self {
         Self { slot: 0 }
     }
