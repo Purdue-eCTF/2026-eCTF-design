@@ -76,7 +76,8 @@ pub(crate) struct Context {
 }
 
 unsafe extern "C" {
-    pub static _files: u8;
+    pub static _files_app1: u8;
+    pub static _files_app2: u8;
     pub static _filetable: u8;
     pub static _salt: u8;
 }
@@ -103,14 +104,14 @@ impl Context {
             core::mem::size_of::<FileSlot>().div_ceil(FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE;
         let files = unsafe {
             [
-                FlashEntry::new(((&_files as *const u8).add(0 * file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(2 * file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(3 * file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(4 * file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(5 * file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(6 * file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(7 * file_size)) as u32),
+                FlashEntry::new(((&_files_app1 as *const u8).add(0 * file_size)) as u32),
+                FlashEntry::new(((&_files_app1 as *const u8).add(1 * file_size)) as u32),
+                FlashEntry::new(((&_files_app1 as *const u8).add(2 * file_size)) as u32),
+                FlashEntry::new(((&_files_app1 as *const u8).add(3 * file_size)) as u32),
+                FlashEntry::new(((&_files_app1 as *const u8).add(4 * file_size)) as u32),
+                FlashEntry::new(((&_files_app1 as *const u8).add(5 * file_size)) as u32),
+                FlashEntry::new(((&_files_app2 as *const u8).add(0 * file_size)) as u32),
+                FlashEntry::new(((&_files_app2 as *const u8).add(1 * file_size)) as u32),
             ]
         };
 

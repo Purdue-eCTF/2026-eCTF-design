@@ -21,8 +21,9 @@ mspm0l222x-hal = { git = "https://github.com/Purdue-eCTF/mspm0l222x-hal.git", fe
 thiserror = { version = "2.0.18", default-features = false }
 x25519-dalek = { version = "2.0.1", default-features = false, features = [
     "static_secrets",
+    "precomputed-tables",
 ] }
-ed25519-dalek = { version = "2.2.0", default-features = false, features = ["digest", "hazmat"] }
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["digest", "hazmat", "fast"] }
 common = { path = "../common" }
 subtle = { version = "2.6.1", default-features = false, features = ["const-generics", "nightly"] }
 design_macros = { path = "../design_macros" }
