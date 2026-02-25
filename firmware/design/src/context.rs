@@ -13,6 +13,7 @@ use mspm0l222x_hal::{
     Peripherals,
     flash::{self, FLASH_PAGE_SIZE, FlashController},
     iomux::Iomux,
+    mpu::Mpu,
     trng::Trng,
     uart::{Uart0, Uart1},
 };
@@ -84,6 +85,9 @@ unsafe extern "C" {
 
 impl Context {
     pub(crate) fn new(peripherals: Peripherals) -> Self {
+        // entire ram not executable
+        Mpu::sram_rw_boundary(&peripherals.sysctl, 0x7fff).expect("failed to set sram rw boundary");
+
         mspm0l222x_hal::timer::SysTickConfig::enable_with_reload(
             unsafe { &*(SYST::PTR as *const SYST) },
             32_000 - 1, // 1 ms timer interval
