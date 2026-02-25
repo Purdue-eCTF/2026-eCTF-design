@@ -9,6 +9,7 @@ unsafe extern "C" {
     pub static _commit: u8;
 }
 
+/// Write a commit to the first empty commit entry.
 fn write_commit(commit: Commit) {
     let flash = mspm0l222x_hal::flash::flash();
     let commits: &[Commit; 128] = unsafe { &*(&raw const _commit as *const [Commit; 128]) };
@@ -34,6 +35,8 @@ fn write_commit(commit: Commit) {
 }
 
 // TODO: verify each pair is write/erase, then end
+/// Verify that for all commits that their associated operation is complete, else revert the last
+/// operation.
 pub(crate) fn check_commits() {
     let flash = mspm0l222x_hal::flash::flash();
     let commits: &[Commit; 128] = unsafe { &*(&raw const _commit as *const [Commit; 128]) };
@@ -74,6 +77,7 @@ struct Commit {
     magic: u16,
 }
 impl Commit {
+    /// Initialize a new commit with the specified information.
     fn new(typ: u8, pages: u8, location: u32) -> Self {
         Self {
             typ,

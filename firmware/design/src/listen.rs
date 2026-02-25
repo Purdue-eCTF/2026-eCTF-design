@@ -33,10 +33,12 @@ pub struct InterrogateFile {
 }
 
 impl InterrogateFile {
+    /// Retrieve group id from the struct.
     pub fn group(&self) -> u16 {
         u16::from_le_bytes(self.group_bytes)
     }
 
+    /// Set group id in the struct.
     pub fn set_group(&mut self, group: u16) {
         self.group_bytes = group.to_le_bytes();
     }
@@ -63,6 +65,7 @@ pub struct EncryptedInterrogateInfo {
 }
 
 impl EncryptedInterrogateInfo {
+    /// Helper function to encrypt interrogation information with a public key.
     pub fn encrypt(&mut self, public_key: &[u8; 32]) -> Result<(), ProtocolError> {
         let Self {
             file:
@@ -80,6 +83,7 @@ impl EncryptedInterrogateInfo {
         Ok(())
     }
 
+    /// Helper function to decrypt interrogation information with a decrypted private key.
     pub fn decrypt(&mut self, secret_key: &[u8; 32]) -> Result<(), ProtocolError> {
         let Self {
             file:
