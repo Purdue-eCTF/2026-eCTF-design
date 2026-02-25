@@ -19,7 +19,7 @@ use mspm0l222x_hal::{
 
 use crate::{
     crypto::blake_hash,
-    file::{FatTable, File},
+    file::{FatTable, File, FileSlot},
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
     protocol::ProtocolError,
 };
@@ -188,7 +188,8 @@ impl Context {
 
         Trng::init(peripherals.trng);
 
-        let file_size = core::mem::size_of::<File>().div_ceil(FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE;
+        let file_size =
+            core::mem::size_of::<FileSlot>().div_ceil(FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE;
         let files = unsafe {
             [
                 FlashEntry::new(((&_files as *const u8).add(0 * file_size)) as u32),
