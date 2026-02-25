@@ -3,100 +3,6 @@ use core::marker::PhantomData;
 use bytemuck::{NoUninit, Pod, Zeroable};
 use mspm0l222x_hal::flash::FLASH_PAGE_SIZE;
 
-pub const COMMIT_MAGIC: u16 = 0x3340;
-
-unsafe extern "C" {
-    pub static _commit: u8;
-}
-
-fn write_commit(commit: Commit) {
-    let flash = mspm0l222x_hal::flash::flash();
-    let commits: &[Commit; 128] = unsafe { &*(&raw const _commit as *const [Commit; 128]) };
-    let commits_location = &raw const *commits as u32;
-
-    // find first empty commit entry
-    match commits.iter().position(|c| c.magic != COMMIT_MAGIC) {
-        None => {
-            // erase page and write at index 0
-            unsafe { flash.erase_page(commits_location).unwrap() };
-            unsafe {
-                flash
-                    .write_word(commits_location, bytemuck::cast_ref(&commit))
-                    .unwrap()
-            };
-        }
-        Some(i) => unsafe {
-            flash
-                .write_word(commits_location + 8 * i as u32, bytemuck::cast_ref(&commit))
-                .unwrap()
-        },
-    }
-}
-
-// TODO: verify each pair is write/erase, then end
-pub(crate) fn check_commits() {
-    let flash = mspm0l222x_hal::flash::flash();
-    let commits: &[Commit; 128] = unsafe { &*(&raw const _commit as *const [Commit; 128]) };
-    let commits_location = &raw const *commits as u32;
-
-    let end = commits
-        .iter()
-        .position(|c| c.magic != COMMIT_MAGIC)
-        .unwrap_or(128);
-
-    if end % 2 != 0 {
-        // finish or revert last operation
-        let last = commits[end - 1];
-        for page in 0..last.pages {
-            unsafe {
-                flash
-                    .erase_page(last.location + FLASH_PAGE_SIZE as u32 * page as u32)
-                    .unwrap()
-            };
-        }
-    }
-    unsafe { flash.erase_page(commits_location).unwrap() };
-}
-
-#[repr(u8)]
-enum CommitType {
-    End = 1,
-    Write = 2,
-    Erase = 3,
-}
-
-#[derive(Clone, Copy, Pod, Zeroable)]
-#[repr(C)]
-struct Commit {
-    location: u32,
-    pages: u8,
-    typ: u8,
-    magic: u16,
-}
-impl Commit {
-    fn new(typ: u8, pages: u8, location: u32) -> Self {
-        Self {
-            typ,
-            pages,
-            location,
-            magic: COMMIT_MAGIC,
-        }
-    }
-}
-
-impl TryFrom<[u8; 8]> for Commit {
-    type Error = ();
-
-    fn try_from(value: [u8; 8]) -> Result<Self, Self::Error> {
-        let commit: &Commit = bytemuck::cast_ref(&value);
-        // we know that the largest flash op is erasing + writing a 9-page file
-        if (!(1..=3).contains(&commit.typ)) || commit.magic != COMMIT_MAGIC || commit.pages > 9 {
-            return Err(());
-        }
-        Ok(*commit)
-    }
-}
-
 // TODO: automatically handle partial page writes
 pub const FLASH_MAGIC: u64 = 0x7c79b307cf99d0d6;
 pub struct FlashEntry<T: NoUninit> {
@@ -126,24 +32,12 @@ impl<T: NoUninit> FlashEntry<T> {
     }
 
     pub(crate) unsafe fn erase(&self) {
-        write_commit(Commit::new(
-            CommitType::Erase as u8,
-            self.pages as u8,
-            self.location,
-        ));
-
         let flash = mspm0l222x_hal::flash::flash();
         for page in 0..self.pages {
             unsafe {
                 let _ = flash.erase_page(self.location + page * FLASH_PAGE_SIZE as u32);
             }
         }
-
-        write_commit(Commit::new(
-            CommitType::End as u8,
-            self.pages as u8,
-            self.location,
-        ));
     }
     pub(crate) unsafe fn set(&self, data: &T) -> Result<(), mspm0l222x_hal::HalError> {
         let res = self.set_inner(data);
@@ -161,12 +55,6 @@ impl<T: NoUninit> FlashEntry<T> {
 
     #[inline]
     fn set_inner(&self, data: &T) -> Result<(), mspm0l222x_hal::HalError> {
-        write_commit(Commit::new(
-            CommitType::Write as u8,
-            self.pages as u8,
-            self.location,
-        ));
-
         let flash = mspm0l222x_hal::flash::flash();
 
         let data = bytemuck::bytes_of(data);
@@ -193,11 +81,6 @@ impl<T: NoUninit> FlashEntry<T> {
             unsafe { flash.write_word(self.location + i as u32 * 8, word)? };
         }
 
-        write_commit(Commit::new(
-            CommitType::Write as u8,
-            self.pages as u8,
-            self.location,
-        ));
         Ok(())
     }
 

@@ -85,9 +85,6 @@ impl Context {
             32_000 - 1, // 1 ms timer interval
         );
 
-        // erase any in-progress operations that failed
-        crate::flash::check_commits();
-
         // TODO: PIN salt generation + penalty enforcement
         // TODO: check for flash write failure
         let iomux = Iomux::new(&peripherals.iomux);
