@@ -34,16 +34,25 @@ use crate::{
     },
 };
 
-unsafe extern "C" {
-    static mut __stack_chk_guard: usize;
-}
-
 #[panic_handler]
 fn handle_panics(info: &PanicInfo) -> ! {
     // #[cfg(debug_assertions)]
     {
         eprintln!("{info}");
     }
+
+    cortex_m::peripheral::SCB::sys_reset();
+    loop {}
+}
+
+#[unsafe(link_section = ".stack_canary.default")]
+#[unsafe(no_mangle)]
+static mut __stack_chk_guard: usize = 0;
+
+#[unsafe(no_mangle)]
+extern "C" fn __stack_chk_fail() -> ! {
+    // TODO: remove print
+    eprintln!("stack smashing detected");
 
     cortex_m::peripheral::SCB::sys_reset();
     loop {}
