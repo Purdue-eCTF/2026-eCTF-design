@@ -94,7 +94,6 @@ impl Context {
         Mpu::sram_rw_boundary(&peripherals.sysctl, 0x7fff).expect("failed to set sram rw boundary");
 
         let mut mpu = Mpu::new(core_peripherals.MPU);
-        setup_mpu_mappings(&mut mpu);
 
         mspm0l222x_hal::timer::SysTickConfig::enable_with_reload(
             unsafe { &*(SYST::PTR as *const SYST) },
@@ -107,6 +106,7 @@ impl Context {
 
         Uart0::init(&iomux, peripherals.uart0);
         println!("starting!");
+        setup_mpu_mappings(&mut mpu);
         Uart1::init(&iomux, peripherals.uart1);
         FlashController::init(peripherals.flashctl);
 
@@ -218,6 +218,8 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
     if !mpu.is_available() {
         return;
     }
+
+    println!("enabling mpu");
 
     unsafe {
         // flash executable
