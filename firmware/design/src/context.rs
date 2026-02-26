@@ -233,8 +233,6 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
         return;
     }
 
-    println!("enabling mpu");
-
     unsafe {
         // flash executable
         mpu.set_region(
