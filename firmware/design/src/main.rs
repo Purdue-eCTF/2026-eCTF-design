@@ -89,43 +89,51 @@ fn main() -> ! {
 
         println!("Got message {msg_info:?}");
 
-        let start = ctx.time();
         sensitive!(ctx, {
             // rand_ops!(trng::trng());
-
-            let result = match msg_info.opcode {
-                Opcode::List => handle_list(&mut ctx, msg_info.length as usize),
-                Opcode::Read => handle_read(&mut ctx, msg_info.length as usize),
-                Opcode::Write => handle_write(&mut ctx, msg_info.length as usize),
-                Opcode::Receive => handle_receive(&mut ctx, msg_info.length as usize),
-                Opcode::Interrogate => handle_interrogate(&mut ctx, msg_info.length as usize),
-                Opcode::Listen => handle_listen_request(&mut ctx),
-                Opcode::Ack => Ok(()),
-                e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
-            };
-
-            if let Err(err) = result {
-                panic!("handler failed: {err}");
-            }
+            delayed_write(msg_info.opcode, &mut ctx, msg_info.length as usize);
         });
-        let elapsed = ctx.time() - start;
-        // TODO: remove this before submitting
-        if let Some((_, budget)) = TIME_BUDGET_MS
-            .iter()
-            .find(|(opcode, _)| *opcode == msg_info.opcode)
-        // && elapsed > *budget
-        {
-            println!("Took {elapsed} ms to run, expected {budget}");
-        }
     }
 }
 
-const TIME_BUDGET_MS: &[(Opcode, u32)] = &[
-    (Opcode::List, 500),
-    (Opcode::Read, 3000),
-    (Opcode::Write, 3000),
-    (Opcode::Receive, 3000),
-    (Opcode::Interrogate, 1000),
+/// convenience function to wait until the last second to send the response over UART
+fn delayed_write(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
+    let mut buf = [0u8; 8228];
+
+    let Budget(_, max_time, max_bytes) = TIME_BUDGET_MS.iter().find(|b| b.0 == opcode).unwrap();
+    let start = ctx.time();
+    let res = match opcode {
+        Opcode::List => handle_list(ctx, &mut buf, msg_len),
+        Opcode::Read => handle_read(ctx, &mut buf, msg_len),
+        Opcode::Write => handle_write(ctx, &mut buf, msg_len),
+        Opcode::Receive => handle_receive(ctx, &mut buf, msg_len),
+        Opcode::Interrogate => handle_interrogate(ctx, &mut buf, msg_len),
+        Opcode::Listen => handle_listen_request(ctx, &mut buf, msg_len),
+        Opcode::Ack => Ok(0),
+        e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
+    };
+
+    let uart_time = (max_bytes * 5700) >> 16; // approximately * 0.0868
+    while ctx.time() < start + uart_time {}
+
+    match res {
+        Ok(bytes) => Message::write(opcode, MessagePort::UART0, &buf[..bytes]).unwrap(),
+        Err(e) => panic!("handler failed: {e}"),
+    };
+
+    while ctx.time() < start + max_time {}
+}
+
+// opcode, total budget, max uart bytes sent
+pub struct Budget(pub Opcode, pub u32, pub u32);
+
+pub const TIME_BUDGET_MS: &[Budget] = &[
+    Budget(Opcode::List, 500, 288),
+    Budget(Opcode::Read, 3000, 8228),
+    Budget(Opcode::Write, 3000, 4),
+    Budget(Opcode::Receive, 3000, 4),
+    Budget(Opcode::Receive, 3000, 0),
+    Budget(Opcode::Interrogate, 1000, 0),
 ];
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
@@ -138,7 +146,11 @@ struct ListHeader {
 /// files and length of the message body, and then the data, with the name,
 /// group, and slot of the file.
 #[inline(never)]
-fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn handle_list(
+    ctx: &mut Context,
+    buffer: &mut [u8],
+    msg_len: usize,
+) -> Result<usize, ProtocolError> {
     if msg_len != size_of::<ListHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -159,8 +171,7 @@ fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
 fn handle_list_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     // 4 bytes at start for total number of files; file slot, name of file, group id, for 8 files
     const METADATA_SIZE: usize = core::mem::size_of::<FileMeta>();
-    let mut body = [0u8; 4 + 8 * METADATA_SIZE];
-    let file_list = &mut body[4..];
+    let file_list = &mut buffer[4..];
     let list_entries: &mut [FileMeta; 8] = bytemuck::from_bytes_mut(file_list);
     let mut counter: usize = 0;
     for i in 0..8 {
@@ -179,12 +190,13 @@ fn handle_list_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
         counter += 1;
     }
     // set number of files listed
-    body[0..4].copy_from_slice(&(counter as u32).to_le_bytes());
+    buffer[0..4].copy_from_slice(&(counter as u32).to_le_bytes());
 
     // return data without the extra space allocated in the body buffer
-    let actual_body = &body[..4 + counter * METADATA_SIZE];
-    Message::write(Opcode::List, MessagePort::UART0, actual_body)?;
-    Ok(())
+
+    // delay until UART is about to send
+
+    Ok(4 + counter * METADATA_SIZE)
 }
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 #[repr(C, packed)]
@@ -197,7 +209,11 @@ struct ReadFileHeader {
 // usage. Since the file is stored on flash encrypted, this function uses the
 // pin to decrypt the file before returning it to the host.
 #[inline(never)]
-fn handle_read(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn handle_read(
+    ctx: &mut Context,
+    buffer: &mut [u8],
+    msg_len: usize,
+) -> Result<usize, ProtocolError> {
     if msg_len != size_of::<ReadFileHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -240,8 +256,8 @@ fn handle_read_inner(
     verify_signature_bytes(file, &pk_sign)?;
 
     // buf = N || PT
-    let mut buf = [0; file::CONTENT_SIZE + file::NAME_SIZE];
-    let (name, pt) = buf.split_at_mut(file::NAME_SIZE);
+
+    let (name, pt) = buffer.split_at_mut(file::NAME_SIZE);
 
     name.copy_from_slice(&file.protected.name.0);
     pt[..file_length].copy_from_slice(&file.protected.contents.0[..file_length]);
@@ -259,8 +275,7 @@ fn handle_read_inner(
     )?;
 
     let total_length = file::NAME_SIZE + file_length;
-    Message::write(Opcode::Read, MessagePort::UART0, &buf[..total_length])?;
-    Ok(())
+    Ok(total_length)
 }
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
@@ -277,7 +292,11 @@ struct WriteFileHeader {
 /// Write a file received from host into flash. The file should be encrypted
 /// and signed.
 #[inline(never)]
-fn handle_write(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn handle_write(
+    ctx: &mut Context,
+    buffer: &mut [u8],
+    msg_len: usize,
+) -> Result<usize, ProtocolError> {
     if msg_len < size_of::<WriteFileHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -411,8 +430,7 @@ fn handle_write_inner(
     }
     println!("6: {}", ctx.time());
 
-    Message::write(Opcode::Write, MessagePort::UART0, &[])?;
-    Ok(())
+    Ok(0)
 }
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
@@ -423,11 +441,13 @@ struct ReceiveFileHeader {
     pub write_slot: u8,
 }
 
-#[repr(align(8))]
 struct AlignedBuffer([u8; protocol::TRANSFER_RECEIVE_MAX_LENGTH]);
-
 #[inline(never)]
-fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn handle_receive(
+    ctx: &mut Context,
+    buffer: &mut [u8],
+    msg_len: usize,
+) -> Result<usize, ProtocolError> {
     if msg_len != size_of::<ReceiveFileHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -560,12 +580,9 @@ fn handle_receive_inner(
             .set(&FatTable { entries })
             .map_err(|_| ProtocolError::StorageFailure)?;
     }
-
     // 0.08 seconds total writing flash
     println!("11: {}", ctx.time());
-
-    Message::write_header(Opcode::Receive, 0, MessagePort::UART0);
-    Ok(())
+    Ok(0)
 }
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
@@ -579,7 +596,11 @@ struct InterrogateHeader {
 /// symmetrically and each file's metadata encrypted asymmetrically, all this
 /// will be decrypted before being sent back to host.
 #[inline(never)]
-fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn handle_interrogate(
+    ctx: &mut Context,
+    buffer: &mut [u8],
+    msg_len: usize,
+) -> Result<usize, ProtocolError> {
     // Command contains just the PIN
     if msg_len != size_of::<InterrogateHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
@@ -645,7 +666,7 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     println!("6: {}", ctx.time());
 
     // allocate response buffer of the maximum size
-    let mut response = [0; 4 + 8 * size_of::<listen::InterrogateFile>()];
+    let response = &mut buffer[..4 + 8 * size_of::<listen::InterrogateFile>()];
 
     // split num_files off from the list and set it
     let (num_files, list) = response.split_at_mut(4);
@@ -667,12 +688,7 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     println!("7: {}", ctx.time());
 
     let actual_message_size = 4 + count * size_of::<listen::InterrogateFile>();
-    Message::write(
-        Opcode::Interrogate,
-        MessagePort::UART0,
-        &response[..actual_message_size],
-    )?;
-    Ok(())
+    Ok(actual_message_size)
 }
 
 /// Listens for any Receive or Interrogate command from an adjacent board to
@@ -687,14 +703,17 @@ fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
 }
 
 #[inline(never)]
-fn handle_listen_request(ctx: &mut Context) -> Result<(), ProtocolError> {
+fn handle_listen_request(
+    ctx: &mut Context,
+    _buffer: &mut [u8],
+    _msg_len: usize,
+) -> Result<usize, ProtocolError> {
     if let Err(err) = handle_listen(ctx) {
         let _ = Message::write(Opcode::Error, MessagePort::UART1, &[]);
         // returning error will cause uart0 to have error written
         Err(err)
     } else {
         // handle listen has already sent a success response to uart1
-        let _ = Message::write(Opcode::Listen, MessagePort::UART0, &[]);
-        Ok(())
+        Ok(0)
     }
 }
