@@ -17,6 +17,7 @@ use serde::{
     Deserialize,
     de::{self, Visitor},
 };
+use subtle::ConstantTimeEq;
 
 #[derive(Default, Pod, Zeroable, Clone, Copy, Debug)]
 #[repr(transparent)]
@@ -27,7 +28,7 @@ impl SymmetricKey {
         Self([0; _])
     }
     pub fn is_empty(&self) -> bool {
-        self.0.iter().all(|v| *v == 0)
+        self.0.ct_eq(&[0; 32]).into()
     }
 }
 

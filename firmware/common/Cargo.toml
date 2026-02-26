@@ -13,3 +13,4 @@ chacha20poly1305 = { version = "0.10.1", default-features = false, features = [
 serde = { version = "1.0.228", default-features = false, features = ["derive"] }
 ed25519-dalek = { version = "2.2.0", default-features = false, features = ["hazmat"] }
 blake2 = { version = "0.10.6", default-features = false }
+subtle = { version = "2.6.1", default-features = false }
