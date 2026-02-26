@@ -16,6 +16,7 @@ use context::*;
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
 use design_macros::rand_ops;
+use mspm0l222x_hal::flash::FLASH_PAGE_SIZE;
 use mspm0l222x_hal::{CorePeripherals, Peripherals};
 use mspm0l222x_hal::{Trng, trng};
 
@@ -98,26 +99,26 @@ fn main() -> ! {
 
 /// convenience function to wait until the last second to send the response over UART
 fn delayed_write(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
-    let mut buf = [0u8; 8228];
+    let mut buffer = [0u8; 9 * FLASH_PAGE_SIZE]; // 8kb for file + 1kb for misc metadata
 
-    let Budget(_, max_time, max_bytes) = TIME_BUDGET_MS.iter().find(|b| b.0 == opcode).unwrap();
     let start = ctx.time();
     let res = match opcode {
-        Opcode::List => handle_list(ctx, &mut buf, msg_len),
-        Opcode::Read => handle_read(ctx, &mut buf, msg_len),
-        Opcode::Write => handle_write(ctx, &mut buf, msg_len),
-        Opcode::Receive => handle_receive(ctx, &mut buf, msg_len),
-        Opcode::Interrogate => handle_interrogate(ctx, &mut buf, msg_len),
-        Opcode::Listen => handle_listen_request(ctx, &mut buf, msg_len),
+        Opcode::List => handle_list(ctx, &mut buffer, msg_len),
+        Opcode::Read => handle_read(ctx, &mut buffer, msg_len),
+        Opcode::Write => handle_write(ctx, &mut buffer, msg_len),
+        Opcode::Receive => handle_receive(ctx, &mut buffer, msg_len),
+        Opcode::Interrogate => handle_interrogate(ctx, &mut buffer, msg_len),
+        Opcode::Listen => handle_listen_request(ctx, &mut buffer, msg_len),
         Opcode::Ack => Ok(0),
         e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
     };
 
+    let Budget(_, max_time, max_bytes) = TIME_BUDGET_MS.iter().find(|b| b.0 == opcode).unwrap();
     let uart_time = (max_bytes * 5700) >> 16; // approximately * 0.0868
     while ctx.time() < start + uart_time {}
 
     match res {
-        Ok(bytes) => Message::write(opcode, MessagePort::UART0, &buf[..bytes]).unwrap(),
+        Ok(bytes) => Message::write(opcode, MessagePort::UART0, &buffer[..bytes]).unwrap(),
         Err(e) => panic!("handler failed: {e}"),
     };
 
@@ -358,7 +359,10 @@ fn handle_write_inner(
     let pk_read = group_key.pk_read.ok_or(ProtocolError::InvalidGroup)?.0;
 
     // generate empty file variable
-    let mut file = File::empty();
+    // TODO: are all fields set, or do we need a *file = File::empty()?
+    let (_, [file], _) = (unsafe { buffer.align_to_mut::<File>() }) else {
+        panic!("can't align to file alignment");
+    };
     file.state = File::FULL;
 
     // set file metadata
@@ -401,7 +405,7 @@ fn handle_write_inner(
 
     println!("3: {}", ctx.time());
     let sk_sign = group_key.sk_sign.ok_or(ProtocolError::InvalidGroup)?;
-    sign_file(&mut file, &sk_sign.0)?;
+    sign_file(file, &sk_sign.0)?;
     println!("4: {}", ctx.time());
 
     // TODO: make sure file/fat can't be partially written
@@ -484,15 +488,16 @@ fn handle_receive_inner(
     println!("3: {}", ctx.time());
 
     // receive file
-    let mut buf = AlignedBuffer([0u8; protocol::TRANSFER_RECEIVE_MAX_LENGTH]);
-    let response = Message::read(MessagePort::UART1, &mut buf.0)?;
-    if response.opcode == Opcode::Error {
-        return Err(ProtocolError::PeerBoardError);
-    }
-    if response.opcode != Opcode::Receive {
-        return Err(ProtocolError::InvalidOpcode);
-    }
-    if response.length as usize != buf.0.len() {
+    assert!(buffer.len() >= protocol::TRANSFER_RECEIVE_MAX_LENGTH);
+    let mut buf = buffer;
+    let response = Message::read(MessagePort::UART1, &mut buf)?;
+    match response.opcode {
+        Opcode::Error => return Err(ProtocolError::PeerBoardError),
+        Opcode::Receive => (),
+        _ => return Err(ProtocolError::InvalidOpcode),
+    };
+
+    if response.length as usize != buf.len() {
         return Err(ProtocolError::InvalidMessageLength);
     }
 
@@ -507,7 +512,7 @@ fn handle_receive_inner(
     }
 
     // parse out group id associated data
-    let (assymetric_payload, group_id_bytes) =
+    let (asymmetric_payload, group_id_bytes) =
         payload.split_at_mut(payload.len() - size_of::<u16>());
     let group_id_bytes: &mut [u8; 2] = group_id_bytes
         .try_into()
@@ -522,10 +527,10 @@ fn handle_receive_inner(
 
     println!("6: {}", ctx.time());
 
-    // decrypt assymetrically encrypted part of message
+    // decrypt asymmetrically encrypted part of message
     // about ~0.75-0.8 seconds
     let inner = unwrap_pub_message(
-        assymetric_payload,
+        asymmetric_payload,
         &group_keys.sk_trans.ok_or(ProtocolError::InvalidGroup)?.0,
         group_id_bytes,
     )?;
@@ -562,7 +567,6 @@ fn handle_receive_inner(
 
     println!("9: {}", ctx.time());
 
-    // TODO: just write the one fat entry
     unsafe {
         ctx.files[write_slot]
             .set(file)
