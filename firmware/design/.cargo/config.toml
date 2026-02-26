@@ -9,6 +9,9 @@ profile-rustflags = true
 rustflags = [
     "-C",
     "linker=arm-none-eabi-gcc",
+    "-Z",
+    # https://doc.rust-lang.org/beta/nightly-rustc/rustc_target/spec/enum.StackProtector.html (stack protecter levels)
+    "stack-protector=strong",
     "-C",
     "link-arg=-nostartfiles",
     "-C",

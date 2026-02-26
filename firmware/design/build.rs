@@ -160,6 +160,8 @@ fn generate_secrets(
 ) -> String {
     assert!(group_keys.is_sorted_by_key(|k| k.group));
 
+    let stack_canary = OsRng.next_u32();
+
     let encrypted_keys = group_keys
         .iter()
         .map(|group_key| format!("{:?}", group_key))
@@ -206,6 +208,10 @@ pub const PUB_ENCRYPT_SALT: [u8; 32] = {:?};
 pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
 
 pub const COPY_PERM_GROUPS: [u16; {}] = {:?};
+
+#[unsafe(link_section = \".stack_canary.default\")]
+#[unsafe(no_mangle)]
+static __stack_chk_guard: usize = {};
 ",
         ARGON_M_COST,
         ARGON_P_COST,
@@ -226,6 +232,7 @@ pub const COPY_PERM_GROUPS: [u16; {}] = {:?};
         encrypted_keys,
         copy_perm_grops.len(),
         copy_perm_grops,
+        stack_canary,
     )
 }
 

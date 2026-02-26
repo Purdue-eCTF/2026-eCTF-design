@@ -84,6 +84,9 @@ SECTIONS {
 
         *(.Reset);
 
+        /* stack canary should go early in memory to avoid being accidently read out */
+        KEEP(*(.stack_canary.default));
+
         /* The HardFaultTrampoline uses the `b` instruction to enter `HardFault`,
         so must be placed close to it. */
         *(.HardFaultTrampoline);

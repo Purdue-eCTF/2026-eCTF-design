@@ -231,7 +231,7 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
             MpuPerms {
                 read: true,
                 write: false,
-                execute: false,
+                execute: true,
             },
             MemoryCacheType::StronglyOrdered,
         )

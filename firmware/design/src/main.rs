@@ -40,8 +40,17 @@ fn handle_panics(info: &PanicInfo) -> ! {
         eprintln!("{info}");
     }
 
-    // loop {}
     cortex_m::peripheral::SCB::sys_reset();
+    loop {}
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn __stack_chk_fail() -> ! {
+    // TODO: remove print
+    eprintln!("stack smashing detected");
+
+    cortex_m::peripheral::SCB::sys_reset();
+    loop {}
 }
 
 #[entry]
