@@ -270,14 +270,12 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
 
         // first guard stop flashcat type attack reading out file data
         let files_guard = (&_files_app1 as *const u8 as usize) - MPU_MIN_SIZE;
-        // add_mpu_guard(mpu, 3, files_guard as u32);
-        mpu.clear_region(3).unwrap();
+        add_mpu_guard(mpu, 3, files_guard as u32);
 
         // second guard stop unbounded read from inside files hitting uuid in FAT
         // not reserve in linker but File doesn't take up whole 9 pages, put right at end
         let fat_guard = (&_filetable as *const u8 as usize) - MPU_MIN_SIZE;
-        // add_mpu_guard(mpu, 4, fat_guard as u32);
-        mpu.clear_region(4).unwrap();
+        add_mpu_guard(mpu, 4, fat_guard as u32);
         // probably no guard needed after FAT since FAT is never read by design (except for updating FAT again)
         // can add one to be safe in future
 
