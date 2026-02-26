@@ -123,7 +123,6 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
             // if a valid file matches the group, add it to the list
             if file.is_full() && metadata.group == group {
                 let group_keys = secrets::get_enc_group_keys(group)?;
-                crypto::verify_signature(file, &group_keys.pk_sign.0)?;
 
                 // get location of the next entry in list
                 let entry = &mut list[count * ENTRY_SIZE..(count + 1) * ENTRY_SIZE];
