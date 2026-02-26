@@ -17,6 +17,7 @@ import os
 import pathlib
 import random
 import re
+import secrets
 import shlex
 import subprocess
 import sys
@@ -120,6 +121,35 @@ def print_section_list(title: str, sections: list[str]) -> None:
     print()
 
 
+def log_env_set(key: str, value: str) -> None:
+    print(f"[env set] {key}={value}")
+
+
+def log_env_unset(key: str, old_value: str | None) -> None:
+    if old_value is None:
+        print(f"[env unset] {key} was already unset")
+    else:
+        print(f"[env unset] {key} (old value: {old_value})")
+
+
+def log_encoded_rustflags(encoded_value: str) -> None:
+    print(f"[env set] CARGO_ENCODED_RUSTFLAGS={encoded_value}")
+    print("[env set] CARGO_ENCODED_RUSTFLAGS tokens:")
+    for token in encoded_value.split("\x1f"):
+        print(f"  {token}")
+
+
+def get_or_generate_seed(seed_env: str) -> tuple[str, bool]:
+    current = os.environ.get(seed_env)
+    if current is not None and current != "":
+        return current, False
+
+    generated = secrets.token_hex(32)
+    os.environ[seed_env] = generated
+    log_env_set(seed_env, generated)
+    return generated, True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Extract sections, randomize .text.* order, emit temp linker script, rebuild."
@@ -146,13 +176,9 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    build_seed = os.environ.get(args.seed_env)
-    if build_seed is None:
-        print(
-            f"Missing required env var '{args.seed_env}'.",
-            file=sys.stderr,
-        )
-        return 2
+    build_seed, generated_seed = get_or_generate_seed(args.seed_env)
+    if generated_seed:
+        print(f"{args.seed_env} not set; generated seed: {build_seed}\n")
 
     temp_map_path = pathlib.Path(
         tempfile.NamedTemporaryFile(
@@ -213,10 +239,13 @@ def main() -> int:
     )
 
     randomized_env = dict(os.environ)
-    randomized_env.pop("RUSTFLAGS", None)
-    randomized_env["CARGO_ENCODED_RUSTFLAGS"] = make_encoded_rustflags_for_randomized_linker(
+    removed_rustflags = randomized_env.pop("RUSTFLAGS", None)
+    log_env_unset("RUSTFLAGS", removed_rustflags)
+    encoded_rustflags = make_encoded_rustflags_for_randomized_linker(
         randomized_linker_path
     )
+    randomized_env["CARGO_ENCODED_RUSTFLAGS"] = encoded_rustflags
+    log_encoded_rustflags(encoded_rustflags)
 
     print(f"Running randomized build:\n  {args.randomized_build_cmd}\n")
     random_rc, random_output = run_build(args.randomized_build_cmd, env=randomized_env)
@@ -238,6 +267,7 @@ def main() -> int:
     print("Summary:")
     print(f"- build_seed_env: {args.seed_env}")
     print(f"- build_seed_value: {build_seed}")
+    print(f"- build_seed_generated: {generated_seed}")
     print(f"- magic_constant: {args.magic_constant}")
     print(f"- seed_digest_sha256: {seed_digest}")
     print(f"- extraction_build_cmd: {shlex.quote(extraction_build_cmd)}")
