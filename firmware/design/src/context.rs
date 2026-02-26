@@ -251,7 +251,6 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
             MemoryCacheType::StronglyOrdered,
         )
         .unwrap();
-        mpu.clear_region(1).unwrap();
 
         // mmio read write
         mpu.set_region(
@@ -268,7 +267,6 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
             MemoryCacheType::StronglyOrdered,
         )
         .unwrap();
-        mpu.clear_region(2).unwrap();
 
         // first guard stop flashcat type attack reading out file data
         let files_guard = (&_files_app1 as *const u8 as usize) - MPU_MIN_SIZE;
