@@ -209,9 +209,7 @@ pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
 
 pub const COPY_PERM_GROUPS: [u16; {}] = {:?};
 
-#[unsafe(link_section = \".stack_canary.default\")]
-#[unsafe(no_mangle)]
-static __stack_chk_guard: usize = {};
+pub const STACK_CANARY_START_VALUE: usize = {};
 ",
         ARGON_M_COST,
         ARGON_P_COST,

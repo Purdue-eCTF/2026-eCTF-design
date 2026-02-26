@@ -7,11 +7,7 @@ use core::{
 };
 use cortex_m::peripheral::SYST;
 use cortex_m_rt::exception;
-use mspm0l222x_hal::mspm0l222x_pac::MPU;
-use mspm0l222x_hal::{
-    CorePeripherals,
-    mpu::{MemoryCacheType, MpuPerms, MpuRegionSize},
-};
+use mspm0l222x_hal::mpu::{MemoryCacheType, MpuPerms, MpuRegionSize};
 use subtle::ConstantTimeEq;
 
 use mspm0l222x_hal::{
@@ -88,12 +84,33 @@ unsafe extern "C" {
     pub static _salt: u8;
 }
 
-impl Context {
-    pub(crate) fn new(peripherals: Peripherals, core_peripherals: CorePeripherals) -> Self {
-        // entire ram not executable
-        Mpu::sram_rw_boundary(&peripherals.sysctl, 0x7fff).expect("failed to set sram rw boundary");
+#[unsafe(link_section = ".stack_canary.default")]
+#[unsafe(no_mangle)]
+static mut __stack_chk_guard: usize = 0;
 
-        let mut mpu = Mpu::new(core_peripherals.MPU);
+#[unsafe(no_mangle)]
+extern "C" fn __stack_chk_fail() -> ! {
+    // TODO: remove print
+    eprintln!("stack smashing detected");
+
+    cortex_m::peripheral::SCB::sys_reset();
+    loop {}
+}
+
+impl Context {
+    pub(crate) fn new(
+        sysctl: mspm0l222x_hal::mspm0l222x_pac::Sysctl,
+        iomux: mspm0l222x_hal::mspm0l222x_pac::Iomux,
+        uart0: mspm0l222x_hal::mspm0l222x_pac::Uart0,
+        uart1: mspm0l222x_hal::mspm0l222x_pac::Uart1,
+        flashctl: mspm0l222x_hal::mspm0l222x_pac::Flashctl,
+        mpu_regs: cortex_m::peripheral::MPU,
+    ) -> Self {
+        // entire ram not executable
+        Mpu::sram_rw_boundary(&sysctl, 0x7fff).expect("failed to set sram rw boundary");
+
+        let mut mpu = Mpu::new(mpu_regs);
+        setup_mpu_mappings(&mut mpu);
 
         mspm0l222x_hal::timer::SysTickConfig::enable_with_reload(
             unsafe { &*(SYST::PTR as *const SYST) },
@@ -102,15 +119,12 @@ impl Context {
 
         // TODO: PIN salt generation + penalty enforcement
         // TODO: check for flash write failure
-        let iomux = Iomux::new(&peripherals.iomux);
+        let iomux = Iomux::new(&iomux);
 
-        Uart0::init(&iomux, peripherals.uart0);
+        Uart0::init(&iomux, uart0);
         println!("starting!");
-        setup_mpu_mappings(&mut mpu);
-        Uart1::init(&iomux, peripherals.uart1);
-        FlashController::init(peripherals.flashctl);
-
-        Trng::init(peripherals.trng);
+        Uart1::init(&iomux, uart1);
+        FlashController::init(flashctl);
 
         // protect all flash except for FlashEntry-s
         let flash = mspm0l222x_hal::flash::flash();
@@ -268,14 +282,29 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
         )
         .unwrap();
 
+        // make stack canary read only
+        mpu.set_region(
+            3,
+            0x2020_0000,
+            MpuRegionSize::Bytes32,
+            0,
+            MpuPerms {
+                read: true,
+                write: false,
+                execute: false,
+            },
+            MemoryCacheType::StronglyOrdered,
+        )
+        .unwrap();
+
         // first guard stop flashcat type attack reading out file data
         let files_guard = (&_files_app1 as *const u8 as usize) - MPU_MIN_SIZE;
-        add_mpu_guard(mpu, 3, files_guard as u32);
+        add_mpu_guard(mpu, 4, files_guard as u32);
 
         // second guard stop unbounded read from inside files hitting uuid in FAT
         // not reserve in linker but File doesn't take up whole 9 pages, put right at end
         let fat_guard = (&_filetable as *const u8 as usize) - MPU_MIN_SIZE;
-        add_mpu_guard(mpu, 4, fat_guard as u32);
+        add_mpu_guard(mpu, 5, fat_guard as u32);
         // probably no guard needed after FAT since FAT is never read by design (except for updating FAT again)
         // can add one to be safe in future
 
@@ -283,7 +312,6 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
         // - before secret keys
         // - end of stack (before global data)
 
-        mpu.clear_region(5).unwrap();
         mpu.clear_region(6).unwrap();
         mpu.clear_region(7).unwrap();
 

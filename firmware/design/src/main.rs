@@ -16,8 +16,8 @@ use context::*;
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
 use design_macros::rand_ops;
-use mspm0l222x_hal::trng;
 use mspm0l222x_hal::{CorePeripherals, Peripherals};
+use mspm0l222x_hal::{Trng, trng};
 
 use crate::{
     crypto::{
@@ -29,9 +29,14 @@ use crate::{
     message::{CHUNK_SIZE, HEADER_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
     protocol::ProtocolError,
     secrets::{
-        COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, get_enc_group_keys,
+        COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, STACK_CANARY_START_VALUE,
+        TRANSFER_RECV, get_enc_group_keys,
     },
 };
+
+unsafe extern "C" {
+    static mut __stack_chk_guard: usize;
+}
 
 #[panic_handler]
 fn handle_panics(info: &PanicInfo) -> ! {
@@ -44,21 +49,25 @@ fn handle_panics(info: &PanicInfo) -> ! {
     loop {}
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn __stack_chk_fail() -> ! {
-    // TODO: remove print
-    eprintln!("stack smashing detected");
-
-    cortex_m::peripheral::SCB::sys_reset();
-    loop {}
-}
-
 #[entry]
 fn main() -> ! {
-    let mut ctx = Context::new(
-        Peripherals::take().unwrap(),
-        CorePeripherals::take().unwrap(),
-    );
+    let peripherals = Peripherals::take().unwrap();
+    let Peripherals {
+        trng: trng_peripheral,
+        sysctl,
+        iomux,
+        uart0,
+        uart1,
+        flashctl,
+        ..
+    } = peripherals;
+    Trng::init(trng_peripheral);
+    unsafe {
+        __stack_chk_guard = trng::trng().word() as usize ^ STACK_CANARY_START_VALUE;
+    }
+
+    let core_peripherals = CorePeripherals::take().unwrap();
+    let mut ctx = Context::new(sysctl, iomux, uart0, uart1, flashctl, core_peripherals.MPU);
 
     for file in &ctx.files {
         // TODO: gracefully handle this failure

@@ -84,9 +84,6 @@ SECTIONS {
 
         *(.Reset);
 
-        /* stack canary should go early in memory to avoid being accidently read out */
-        KEEP(*(.stack_canary.default));
-
         /* The HardFaultTrampoline uses the `b` instruction to enter `HardFault`,
         so must be placed close to it. */
         *(.HardFaultTrampoline);
@@ -140,6 +137,10 @@ SECTIONS {
         ASSERT(_efiletable - _filetable == 1024, "FAT section has incorrect length");
     } > FILETABLE
 
+    /* stack canary at start of ram */
+    .stack_canary ORIGIN(RAM) (NOLOAD) : ALIGN(8) {
+        KEEP(*(.stack_canary.default));
+    } > RAM
 
     /* ### .bss */
     .bss (NOLOAD) : ALIGN(8)
