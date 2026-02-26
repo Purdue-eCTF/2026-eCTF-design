@@ -19,6 +19,8 @@ pub enum MessageError {
     BodyLengthError,
     #[error("No ACK received")]
     AckError,
+    #[error("Unexpected ACK opcode: {0:?}")]
+    UnexpectedAckOpcode(Opcode),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -210,7 +212,9 @@ impl Message {
     fn read_ack(port: MessagePort) -> Result<(), MessageError> {
         let message = Self::read_header(port)?;
 
-        if message.length != 0 {
+        if message.opcode != Opcode::Ack {
+            Err(MessageError::UnexpectedAckOpcode(message.opcode))
+        } else if message.length != 0 {
             Err(MessageError::AckError)
         } else {
             Ok(())
