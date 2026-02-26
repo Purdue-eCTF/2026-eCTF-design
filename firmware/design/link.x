@@ -12,11 +12,13 @@ __file_app2_size = 2*(9 * 1024);
 
 __data_region_size = 128;
 
+__mpu_min_size = 32;
+
 INCLUDE memory.x
 
 MEMORY {
     BOOTLOADER(r) : ORIGIN = 0x0, LENGTH = 0x6000
-    APP1(rx) : ORIGIN = 0x6000, LENGTH = 0x34000 - __file_app1_size
+    APP1(rx) : ORIGIN = 0x6000, LENGTH = (0x34000 - __file_app1_size - __mpu_min_size)
     FILES_APP1(rw) : ORIGIN = (0x3A000 - __file_app1_size), LENGTH = __file_app1_size
     FILETABLE(rw) : ORIGIN = 0x3A000, LENGTH = 0x400
     FILES_APP2(rw) : ORIGIN = 0x3A400, LENGTH = __file_app2_size

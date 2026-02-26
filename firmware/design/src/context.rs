@@ -7,8 +7,11 @@ use core::{
 };
 use cortex_m::peripheral::SYST;
 use cortex_m_rt::exception;
-use mspm0l222x_hal::CorePeripherals;
 use mspm0l222x_hal::mspm0l222x_pac::MPU;
+use mspm0l222x_hal::{
+    CorePeripherals,
+    mpu::{MemoryCacheType, MpuPerms, MpuRegionSize},
+};
 use subtle::ConstantTimeEq;
 
 use mspm0l222x_hal::{
@@ -90,7 +93,8 @@ impl Context {
         // entire ram not executable
         Mpu::sram_rw_boundary(&peripherals.sysctl, 0x7fff).expect("failed to set sram rw boundary");
 
-        let mpu = Mpu::new(core_peripherals.MPU);
+        let mut mpu = Mpu::new(core_peripherals.MPU);
+        setup_mpu_mappings(&mut mpu);
 
         mspm0l222x_hal::timer::SysTickConfig::enable_with_reload(
             unsafe { &*(SYST::PTR as *const SYST) },
@@ -103,7 +107,6 @@ impl Context {
 
         Uart0::init(&iomux, peripherals.uart0);
         println!("starting!");
-        println!("mpu regions: {}", mpu.region_count());
         Uart1::init(&iomux, peripherals.uart1);
         FlashController::init(peripherals.flashctl);
 
@@ -186,6 +189,108 @@ impl Context {
     #[allow(static_mut_refs)]
     pub(crate) fn reset_time(&self) {
         unsafe { TICKS.store(0, Ordering::Relaxed) }
+    }
+}
+
+const MPU_MIN_SIZE: usize = 32;
+
+unsafe fn add_mpu_guard(mpu: &mut Mpu, index: u32, address: u32) {
+    unsafe {
+        mpu.set_region(
+            index,
+            address,
+            MpuRegionSize::Bytes32,
+            0,
+            MpuPerms {
+                read: false,
+                write: false,
+                execute: false,
+            },
+            MemoryCacheType::StronglyOrdered,
+        )
+        .unwrap();
+    }
+}
+
+fn setup_mpu_mappings(mpu: &mut Mpu) {
+    // TODO: remove this check
+    // only added because mpu on qemu does not work
+    if !mpu.is_available() {
+        return;
+    }
+
+    unsafe {
+        // flash executable
+        mpu.set_region(
+            0,
+            0x0,
+            MpuRegionSize::KibiByte256,
+            0,
+            MpuPerms {
+                read: true,
+                write: false,
+                execute: true,
+            },
+            MemoryCacheType::StronglyOrdered,
+        )
+        .unwrap();
+        mpu.clear_region(0).unwrap();
+
+        // ram read write
+        mpu.set_region(
+            1,
+            0x2020_0000,
+            MpuRegionSize::KibiByte32,
+            0,
+            MpuPerms {
+                read: true,
+                write: true,
+                execute: false,
+            },
+            MemoryCacheType::StronglyOrdered,
+        )
+        .unwrap();
+        mpu.clear_region(1).unwrap();
+
+        // mmio read write
+        mpu.set_region(
+            2,
+            0x4000_0000,
+            MpuRegionSize::MibiByte512,
+            0,
+            MpuPerms {
+                read: true,
+                write: true,
+                execute: false,
+            },
+            // peripheral memory last year we use strongly ordered
+            MemoryCacheType::StronglyOrdered,
+        )
+        .unwrap();
+        mpu.clear_region(2).unwrap();
+
+        // first guard stop flashcat type attack reading out file data
+        let files_guard = (&_files_app1 as *const u8 as usize) - MPU_MIN_SIZE;
+        // add_mpu_guard(mpu, 3, files_guard as u32);
+        mpu.clear_region(3).unwrap();
+
+        // second guard stop unbounded read from inside files hitting uuid in FAT
+        // not reserve in linker but File doesn't take up whole 9 pages, put right at end
+        let fat_guard = (&_filetable as *const u8 as usize) - MPU_MIN_SIZE;
+        // add_mpu_guard(mpu, 4, fat_guard as u32);
+        mpu.clear_region(4).unwrap();
+        // probably no guard needed after FAT since FAT is never read by design (except for updating FAT again)
+        // can add one to be safe in future
+
+        // TODO: potential protection regions:
+        // - before secret keys
+        // - end of stack (before global data)
+
+        mpu.clear_region(5).unwrap();
+        mpu.clear_region(6).unwrap();
+        mpu.clear_region(7).unwrap();
+
+        mpu.enable();
     }
 }
 
