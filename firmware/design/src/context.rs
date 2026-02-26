@@ -236,7 +236,6 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
             MemoryCacheType::StronglyOrdered,
         )
         .unwrap();
-        mpu.clear_region(0).unwrap();
 
         // ram read write
         mpu.set_region(
