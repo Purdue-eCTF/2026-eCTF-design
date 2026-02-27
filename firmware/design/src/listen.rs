@@ -200,10 +200,7 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolEr
         return Err(ProtocolError::InvalidFile);
     }
 
-    // TODO: check that all instances where we use &PIN are valid
     let group_keys = secrets::get_enc_group_keys(file_src.protected.group)?;
-    crypto::verify_signature(file_src, &group_keys.pk_sign.0)?;
-
     let group_id_bytes = file_src.protected.group.to_le_bytes();
 
     // we will create M1 = Enc_T1(Enc_pk_trans(file) || PKM || group id) || SM
