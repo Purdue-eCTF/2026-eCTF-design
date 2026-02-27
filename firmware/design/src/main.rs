@@ -518,7 +518,11 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
 
     let InterrogateHeader { pin } = *bytemuck::from_bytes(&msg);
 
+    println!("1: {}", ctx.time());
+
     let _k_auth = ctx.k_auth(&pin)?;
+
+    println!("2: {}", ctx.time());
 
     // TODO: maybe send bitmask
     const GROUPS_BYTE_LEN: usize = COPY_PERM_GROUPS.len() * size_of::<u16>();
@@ -533,8 +537,12 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
     *metadata =
         SymmetricMetadata::encrypt(payload, &INTERROGATE_SEND.0, &[Opcode::Interrogate.into()])?;
 
+    println!("3: {}", ctx.time());
+
     // send message
     Message::write(Opcode::Interrogate, MessagePort::UART1, &buf)?;
+
+    println!("4: {}", ctx.time());
 
     // receive interrogate response
     let mut buf = [0u8; size_of::<EncryptedInterrogateInfo>() * 8 + size_of::<SymmetricMetadata>()];
@@ -547,11 +555,15 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
     }
     let payload = &mut buf[..response.length as usize];
 
+    println!("5: {}", ctx.time());
+
     // decrypt
     let payload =
         unwrap_symmetric_message(payload, &INTERROGATE_RECV.0, &[Opcode::Interrogate.into()])?;
     let interrogate_info: &mut [EncryptedInterrogateInfo] = bytemuck::cast_slice_mut(payload);
     let count = interrogate_info.len();
+
+    println!("6: {}", ctx.time());
 
     // allocate response buffer of the maximum size
     let mut response = [0; 4 + 8 * size_of::<listen::InterrogateFile>()];
@@ -572,6 +584,8 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
         list_entry[1..3].copy_from_slice(&u16::to_le_bytes(ifile.file.group()));
         list_entry[3..].copy_from_slice(&ifile.file.protected.name.0);
     }
+
+    println!("7: {}", ctx.time());
 
     let actual_message_size = 4 + count * size_of::<listen::InterrogateFile>();
     Message::write(
