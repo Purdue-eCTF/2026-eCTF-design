@@ -163,16 +163,20 @@ pub enum CryptoError {
 // TODO: Have these keys use a reference to the type instead of a byte array
 // so we don't accidently pass in a pubkey to a function that expects a sym_key
 // and vice versa
-pub fn verify_signature(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> {
+pub fn verify_signature_bytes(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> {
+    // should never have invalid key and fail
+    let verifying_key = VerifyingKey::from_bytes(key).unwrap();
+    verify_signature(file, &verifying_key)
+}
+
+pub fn verify_signature(file: &File, key: &VerifyingKey) -> Result<(), CryptoError> {
     // rand_ops!(trng::trng());
 
     let mut hasher = Blake2b512::new();
     hasher.update(bytemuck::bytes_of(&file.protected));
 
-    // key bytes should never be invalid
-    let pk_sign = VerifyingKey::from_bytes(key).unwrap();
     let expected_signature = Signature::from_bytes(&file.signature);
-    raw_verify_prehashed::<Blake2b512, Blake2b512>(&pk_sign, hasher, None, &expected_signature)
+    raw_verify_prehashed::<Blake2b512, Blake2b512>(key, hasher, None, &expected_signature)
         .map_err(|_| CryptoError::InvalidSignature)?;
 
     // rand_ops!(trng::trng());

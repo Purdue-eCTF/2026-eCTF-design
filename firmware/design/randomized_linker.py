@@ -46,7 +46,7 @@ def main():
 
         hasher = sha256()
         hasher.update(
-            os.environ.get("RANDOMIZED_LINKER_SEED_ENV", "default build seed").encode(),
+            os.environ.get("BUILD_SEED", "default build seed").encode(),
         )
         seed = hasher.digest()
 
@@ -54,13 +54,21 @@ def main():
         shuffled = sections[:]
         rng.shuffle(shuffled)
 
+        print(shuffled)
+
         old = template.read_bytes()
         randomized_text = (
             b"/* BEGIN generated randomized .text.* order */\n"
-            b"*(.text);\n        "
+            + b"        *(.text);\n        "
             + b"\n        ".join([f"*({section});".encode() for section in shuffled])
+            # fallback
+            + b"\n        *(.text.*);"
         )
         new = old.replace(b"*(.text .text.*);", randomized_text)
+        if len(old) == len(new):
+            print("Error: failed to find a *(.text.*); in original linker script to replace")
+            sys.exit(1)
+            
 
         outfile.write(new)
         outfile.flush()

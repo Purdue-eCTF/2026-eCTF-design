@@ -22,7 +22,7 @@ use mspm0l222x_hal::{Trng, trng};
 use crate::{
     crypto::{
         SymmetricMetadata, decrypt_payload_pub, encrypt_payload_pub, sign_file, unwrap_pub_message,
-        unwrap_symmetric_message, verify_signature,
+        unwrap_symmetric_message, verify_signature_bytes,
     },
     file::{FatEntry, FatTable, File, FileMeta, FileName, UUID},
     listen::EncryptedInterrogateInfo,
@@ -219,7 +219,7 @@ fn handle_read(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     let group = file.protected.group;
     let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin)?;
     let pk_sign = get_enc_group_keys(group)?.pk_sign.0;
-    verify_signature(file, &pk_sign)?;
+    verify_signature_bytes(file, &pk_sign)?;
 
     // buf = N || PT
     let mut buf = [0; file::CONTENT_SIZE + file::NAME_SIZE];
@@ -456,7 +456,7 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
         return Err(ProtocolError::InvalidGroup);
     }
 
-    verify_signature(file, &enc_group_keys.pk_sign.0)?;
+    verify_signature_bytes(file, &enc_group_keys.pk_sign.0)?;
 
     // decrypt uuid
     let mut uuid = file.protected.uuid;
