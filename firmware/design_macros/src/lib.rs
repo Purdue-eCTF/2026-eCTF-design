@@ -2,18 +2,8 @@ use proc_macro::TokenStream;
 
 use blake2::{Blake2s256, Digest};
 use quote::quote;
-use rand::{
-    Rng,
-    RngExt,
-    SeedableRng,
-    prelude::IndexedRandom,
-    rngs::StdRng,
-};
-use syn::{
-    Expr,
-    parse_macro_input,
-    spanned::Spanned,
-};
+use rand::{RngExt, SeedableRng, prelude::IndexedRandom, rngs::StdRng};
+use syn::{Expr, parse_macro_input, spanned::Spanned};
 
 const MAGIC_SEED_CONST: u64 = 0xD15E_A5E5_C0DE_C0DE;
 
@@ -31,8 +21,7 @@ fn hash_seed(build_seed: &str, file: &str, line: u32, column: u32) -> [u8; 32] {
 pub fn rand_ops(input: TokenStream) -> TokenStream {
     let rng = parse_macro_input!(input as Expr);
 
-    let build_seed = std::env::var("BUILD_SEED")
-        .unwrap_or("temp_seed".to_string());
+    let build_seed = std::env::var("BUILD_SEED").unwrap_or("temp_seed".to_string());
 
     let call_site = rng.span();
     let call_site_start = call_site.start();
@@ -90,5 +79,6 @@ pub fn rand_ops(input: TokenStream) -> TokenStream {
                 _ => panic!("impossible check"),
             }
         }
-    }}.into()
+    }}
+    .into()
 }
