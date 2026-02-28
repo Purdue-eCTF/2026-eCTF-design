@@ -54,8 +54,6 @@ def main():
         shuffled = sections[:]
         rng.shuffle(shuffled)
 
-        print(shuffled)
-
         old = template.read_bytes()
         randomized_text = (
             b"/* BEGIN generated randomized .text.* order */\n"

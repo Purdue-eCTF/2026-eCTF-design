@@ -404,10 +404,16 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
         write_slot,
     } = *bytemuck::from_bytes(&msg);
 
+    println!("1: {}", ctx.time());
+
     let k_auth = ctx.k_auth(&pin)?;
+
+    println!("2: {}", ctx.time());
 
     // request file
     protocol::initiate_transfer(read_slot)?;
+
+    println!("3: {}", ctx.time());
 
     // receive file
     let mut buf = [0u8; protocol::TRANSFER_RECEIVE_MAX_LENGTH];
@@ -421,6 +427,8 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
     if response.length as usize != buf.len() {
         return Err(ProtocolError::InvalidMessageLength);
     }
+
+    println!("4: {}", ctx.time());
 
     // decrypt with T1
     let payload = unwrap_symmetric_message(&mut buf, &TRANSFER_RECV.0, &[Opcode::Receive.into()])?;
@@ -436,9 +444,13 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
         .map_err(|_| ProtocolError::InvalidMessageLength)?;
     let group_id = u16::from_le_bytes(*group_id_bytes);
 
+    println!("5: {}", ctx.time());
+
     // decrypt correct keys based on group
     let enc_group_keys = secrets::get_enc_group_keys(group_id)?;
     let group_keys = enc_group_keys.decrypt(&k_auth);
+
+    println!("6: {}", ctx.time());
 
     // decrypt assymetrically encrypted part of message
     let inner = unwrap_pub_message(
@@ -446,6 +458,8 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
         &group_keys.sk_trans.ok_or(ProtocolError::InvalidGroup)?.0,
         group_id_bytes,
     )?;
+
+    println!("7: {}", ctx.time());
 
     if inner.len() != size_of::<File>() {
         return Err(ProtocolError::InvalidMessageLength);
@@ -457,6 +471,8 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
     }
 
     verify_signature_bytes(file, &enc_group_keys.pk_sign.0)?;
+
+    println!("8: {}", ctx.time());
 
     // decrypt uuid
     let mut uuid = file.protected.uuid;
@@ -479,11 +495,14 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
         addr: ctx.fat.get().ok_or(ProtocolError::InvalidFile)?.entries[write_slot].addr,
     };
 
+    println!("9: {}", ctx.time());
+
     // TODO: just write the one fat entry
     unsafe {
         ctx.files[write_slot]
             .set(file)
             .map_err(|_| ProtocolError::StorageFailure)?;
+        println!("10: {}", ctx.time());
         let current = ctx.fat.get().ok_or(ProtocolError::InvalidFile)?;
         let mut entries = current.entries;
         entries[write_slot] = new_fat;
@@ -491,6 +510,8 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
             .set(&FatTable { entries })
             .map_err(|_| ProtocolError::StorageFailure)?;
     }
+
+    println!("11: {}", ctx.time());
 
     Message::write_header(Opcode::Receive, 0, MessagePort::UART0);
     Ok(())
