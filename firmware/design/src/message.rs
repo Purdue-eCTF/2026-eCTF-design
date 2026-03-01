@@ -1,4 +1,6 @@
 use bytemuck::bytes_of_mut;
+use design_macros::rand_ops;
+use mspm0l222x_hal::trng;
 use mspm0l222x_hal::{
     HalError,
     uart::{uart0, uart1},
@@ -17,6 +19,8 @@ pub enum MessageError {
     BodyLengthError,
     #[error("No ACK received")]
     AckError,
+    #[error("Unexpected ACK opcode: {0:?}")]
+    UnexpectedAckOpcode(Opcode),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,6 +159,8 @@ impl Message {
         reader.read_bytes(&mut length).unwrap();
         let length = u16::from_le_bytes(length);
 
+        // rand_ops!(trng::trng());
+
         Ok(Self {
             opcode,
             length,
@@ -170,6 +176,9 @@ impl Message {
             reader.read_bytes(chunk).unwrap();
             Self::send_ack(port);
         }
+
+        // rand_ops!(trng::trng());
+
         Ok(())
     }
 
@@ -180,6 +189,9 @@ impl Message {
         for chunk in buf.chunks_mut(CHUNK_SIZE) {
             reader.read_bytes(chunk).unwrap();
         }
+
+        // rand_ops!(trng::trng());
+
         Ok(())
     }
 
@@ -206,7 +218,9 @@ impl Message {
     fn read_ack(port: MessagePort) -> Result<(), MessageError> {
         let message = Self::read_header(port)?;
 
-        if message.length != 0 {
+        if message.opcode != Opcode::Ack {
+            Err(MessageError::UnexpectedAckOpcode(message.opcode))
+        } else if message.length != 0 {
             Err(MessageError::AckError)
         } else {
             Ok(())
@@ -218,6 +232,8 @@ impl Message {
         let writer = MessageUart::new(port);
         writer.write_bytes(&[MAGIC, opcode.into()]);
         writer.write_bytes(&length.to_le_bytes());
+
+        // rand_ops!(trng::trng());
     }
 
     /// Writes a message from an opcode and slice (header + body)
@@ -227,6 +243,7 @@ impl Message {
         if !NACKS.contains(&opcode) {
             Self::read_ack(port)?;
         }
+        // trailing rand ops in write_body
         Self::write_body(buf, port, &opcode)
     }
 
@@ -242,6 +259,9 @@ impl Message {
                 }
             }
         }
+
+        // rand_ops!(trng::trng());
+
         Ok(())
     }
 }

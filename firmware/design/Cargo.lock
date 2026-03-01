@@ -151,9 +151,12 @@ dependencies = [
 name = "common"
 version = "0.1.0"
 dependencies = [
+ "blake2",
  "bytemuck",
  "chacha20poly1305",
+ "ed25519-dalek",
  "serde",
+ "subtle",
 ]
 
 [[package]]
@@ -261,6 +264,7 @@ dependencies = [
  "common",
  "cortex-m",
  "cortex-m-rt",
+ "design_macros",
  "ed25519-dalek",
  "mspm0l222x-hal",
  "rand",
@@ -269,6 +273,17 @@ dependencies = [
  "subtle",
  "thiserror",
  "x25519-dalek",
+]
+
+[[package]]
+name = "design_macros"
+version = "0.1.0"
+dependencies = [
+ "blake2",
+ "proc-macro2",
+ "quote",
+ "rand",
+ "syn",
 ]
 
 [[package]]
@@ -300,6 +315,7 @@ dependencies = [
  "curve25519-dalek",
  "ed25519",
  "sha2",
+ "signature",
  "subtle",
 ]
 
@@ -447,7 +463,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 [[package]]
 name = "mspm0l222x-hal"
 version = "0.1.0"
-source = "git+https://github.com/Purdue-eCTF/mspm0l222x-hal.git#64f451501c5c0fe7503b382dc401cb0042ad44ae"
+source = "git+https://github.com/Purdue-eCTF/mspm0l222x-hal.git#a23c5e2124537d764d58a11a3cdc0a5ca3e95d98"
 dependencies = [
  "bytemuck",
  "cortex-m",
@@ -685,6 +701,9 @@ name = "signature"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
+dependencies = [
+ "digest",
+]
 
 [[package]]
 name = "subtle"
@@ -694,9 +713,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"
-version = "2.0.114"
+version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4d107df263a3013ef9b1879b0df87d706ff80f65a86ea879bd9c31f9b307c2a"
+checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
 dependencies = [
  "proc-macro2",
  "quote",

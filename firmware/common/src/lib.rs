@@ -3,6 +3,7 @@
 
 use core::fmt;
 
+use blake2::{Blake2b512, Digest};
 use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::{
     AeadCore, AeadInPlace, KeyInit, XChaCha20Poly1305,
@@ -11,10 +12,12 @@ use chacha20poly1305::{
         rand_core::{CryptoRng, RngCore},
     },
 };
+use ed25519_dalek::hazmat::ExpandedSecretKey;
 use serde::{
     Deserialize,
     de::{self, Visitor},
 };
+use subtle::ConstantTimeEq;
 
 #[derive(Default, Pod, Zeroable, Clone, Copy, Debug)]
 #[repr(transparent)]
@@ -25,7 +28,7 @@ impl SymmetricKey {
         Self([0; _])
     }
     pub fn is_empty(&self) -> bool {
-        self.0.iter().all(|v| *v == 0)
+        self.0.ct_eq(&[0; 32]).into()
     }
 }
 
@@ -35,7 +38,7 @@ pub struct GroupKey {
     pub sk_read: Option<SymmetricKey>,
     pub pk_read: Option<SymmetricKey>,
     pub sk_trans: Option<SymmetricKey>,
-    pub sk_inter: Option<SymmetricKey>,
+    pub k_uuid: Option<SymmetricKey>,
 }
 
 #[derive(Default, Clone, Copy, Zeroable, Pod)]
@@ -45,7 +48,7 @@ pub struct GroupKeyBlob {
     pub sk_read: SymmetricKey,
     pub pk_read: SymmetricKey,
     pub sk_trans: SymmetricKey,
-    pub sk_inter: SymmetricKey,
+    pub k_uuid: SymmetricKey,
 }
 
 impl From<GroupKey> for GroupKeyBlob {
@@ -55,7 +58,7 @@ impl From<GroupKey> for GroupKeyBlob {
             sk_read,
             pk_read,
             sk_trans,
-            sk_inter,
+            k_uuid,
         } = value;
 
         GroupKeyBlob {
@@ -63,7 +66,7 @@ impl From<GroupKey> for GroupKeyBlob {
             sk_read: sk_read.unwrap_or(SymmetricKey::empty()),
             pk_read: pk_read.unwrap_or(SymmetricKey::empty()),
             sk_trans: sk_trans.unwrap_or(SymmetricKey::empty()),
-            sk_inter: sk_inter.unwrap_or(SymmetricKey::empty()),
+            k_uuid: k_uuid.unwrap_or(SymmetricKey::empty()),
         }
     }
 }
@@ -75,7 +78,7 @@ impl From<GroupKeyBlob> for GroupKey {
             sk_read,
             pk_read,
             sk_trans,
-            sk_inter,
+            k_uuid,
         } = value;
 
         GroupKey {
@@ -83,7 +86,7 @@ impl From<GroupKeyBlob> for GroupKey {
             sk_read: Some(sk_read).filter(|k| !k.is_empty()),
             pk_read: Some(pk_read).filter(|k| !k.is_empty()),
             sk_trans: Some(sk_trans).filter(|k| !k.is_empty()),
-            sk_inter: Some(sk_inter).filter(|k| !k.is_empty()),
+            k_uuid: Some(k_uuid).filter(|k| !k.is_empty()),
         }
     }
 }
@@ -96,7 +99,7 @@ pub struct EncryptedGroupKey {
     pub nonce: [u8; 24],
     pub pk_sign: SymmetricKey,
     pub pk_trans: SymmetricKey,
-    pub pk_inter: SymmetricKey,
+    pub k_inter: SymmetricKey,
 }
 
 impl EncryptedGroupKey {
@@ -125,7 +128,7 @@ impl EncryptedGroupKey {
         k_auth: &SymmetricKey,
         pk_sign: SymmetricKey,
         pk_trans: SymmetricKey,
-        pk_inter: SymmetricKey,
+        k_inter: SymmetricKey,
     ) -> Self {
         let group_key_blob: GroupKeyBlob = group_keys.clone().into();
         let mut blob: [u8; core::mem::size_of::<GroupKeyBlob>()] = [0; _];
@@ -146,9 +149,21 @@ impl EncryptedGroupKey {
             nonce: *nonce.as_array().unwrap(),
             pk_sign,
             pk_trans,
-            pk_inter,
+            k_inter,
         }
     }
+}
+
+pub fn expand_private_key(key: &[u8; 32]) -> ExpandedSecretKey {
+    // expand secret key with blake2b
+    // this is pretty much copied what ed25519_dalek does, just with blake2b instead
+    let mut hasher = Blake2b512::new();
+    hasher.update(key);
+    let expanded_array = hasher.finalize();
+    // unwrap should never fail
+    let expanded_bytes = expanded_array.as_array().unwrap();
+
+    ExpandedSecretKey::from_bytes(expanded_bytes)
 }
 
 // traitslop

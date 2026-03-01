@@ -10,17 +10,6 @@ use crate::{
     protocol::{ProtocolError, TransferM0Encrypted},
     secrets::{self, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV},
 };
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub(crate) enum ListenError {
-    #[error("Invalid message length")]
-    InvalidMessageLength,
-    #[error("Invalid file")]
-    InvalidFile,
-    #[error("Invalid opcode")]
-    InvalidOpcode,
-}
 #[repr(C, packed)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 
@@ -61,12 +50,12 @@ pub struct InterrogateFileProtected {
 /// Sent in response to Interrogate from neighbor HSM
 pub struct EncryptedInterrogateInfo {
     pub file: InterrogateFile,
-    pub metadata: PubKeyMetadata,
+    pub metadata: SymmetricMetadata,
 }
 
 impl EncryptedInterrogateInfo {
     /// Helper function to encrypt interrogation information with a public key.
-    pub fn encrypt(&mut self, public_key: &[u8; 32]) -> Result<(), ProtocolError> {
+    pub fn encrypt(&mut self, key: &[u8; 32]) -> Result<(), ProtocolError> {
         let Self {
             file:
                 InterrogateFile {
@@ -78,13 +67,13 @@ impl EncryptedInterrogateInfo {
         } = self;
 
         *metadata =
-            PubKeyMetadata::encrypt(bytemuck::bytes_of_mut(protected), public_key, group_bytes)?;
+            SymmetricMetadata::encrypt(bytemuck::bytes_of_mut(protected), key, group_bytes)?;
 
         Ok(())
     }
 
     /// Helper function to decrypt interrogation information with a decrypted private key.
-    pub fn decrypt(&mut self, secret_key: &[u8; 32]) -> Result<(), ProtocolError> {
+    pub fn decrypt(&mut self, key: &[u8; 32]) -> Result<(), ProtocolError> {
         let Self {
             file:
                 InterrogateFile {
@@ -95,36 +84,28 @@ impl EncryptedInterrogateInfo {
             ..
         } = self;
 
-        decrypt_payload_pub(
-            bytemuck::bytes_of_mut(protected),
-            &metadata.gn,
-            &metadata.nonce,
-            &metadata.tag,
-            secret_key,
-            group_bytes,
-        )?;
+        metadata.decrypt(bytemuck::bytes_of_mut(protected), key, group_bytes)?;
 
         Ok(())
     }
 }
 
-#[inline]
 /// Handle a command received in listen mode.
-pub fn recv(ctx: &mut Context, opcode: Opcode, body: &mut [u8]) -> Result<(), ListenError> {
+pub fn recv(ctx: &mut Context, opcode: Opcode, body: &mut [u8]) -> Result<(), ProtocolError> {
     match opcode {
-        Opcode::Interrogate => respond_interrogate(ctx, body),
-        Opcode::Receive => respond_transfer(ctx, body).unwrap(),
-        _ => return Err(ListenError::InvalidOpcode),
+        Opcode::Interrogate => respond_interrogate(ctx, body)?,
+        Opcode::Receive => respond_transfer(ctx, body)?,
+        _ => return Err(ProtocolError::InvalidOpcode),
     };
     Ok(())
 }
 
 /// Handle an interrogate command from a neighbor HSM, received while in listen mode.
-fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
+fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolError> {
     // Expect body = Enc_I0(Group1 || Group2 || ... || GroupN) || SM
     let i0 = INTERROGATE_SEND.0;
 
-    let msg = unwrap_symmetric_message(body, &i0, &[Opcode::Interrogate.into()]).unwrap();
+    let msg = unwrap_symmetric_message(body, &i0, &[Opcode::Interrogate.into()])?;
 
     // msg = Group1 || Group2 || ... || GroupN
 
@@ -138,7 +119,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
     // EncFilei = group || Enc_pk_inter(slot || name)
 
     // size of EncFilei || PKMi
-    const ENTRY_SIZE: usize = size_of::<EncryptedInterrogateInfo>();
+    const ENTRY_SIZE: usize = size_of::<InterrogateFile>() + size_of::<crypto::SymmetricMetadata>();
 
     // allocate a payload buffer of the maximum size and write the ciphertext into it
     let mut payload = [0; 8 * ENTRY_SIZE + size_of::<crypto::SymmetricMetadata>()];
@@ -148,19 +129,15 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
     let (list, _) = payload.split_at_mut(8 * ENTRY_SIZE);
     let mut count = 0;
     for chunk in msg.chunks_exact(2) {
-        let bytes: &[u8; 2] = chunk.try_into().unwrap();
-        let group = u16::from_le_bytes(*bytes);
+        let group = u16::from_le_bytes([chunk[0], chunk[1]]);
 
         for i in 0..8 {
-            let file = ctx.files[i].get().unwrap();
+            let file = ctx.files[i].get().ok_or(ProtocolError::InvalidFile)?;
             // check if the slot is full and the group id matches
             let metadata = &file.protected;
             // if a valid file matches the group, add it to the list
             if file.is_full() && metadata.group == group {
-                let group_keys = secrets::get_enc_group_keys(group).unwrap();
-                if crypto::verify_signature(file, &group_keys.pk_sign.0).is_err() {
-                    continue;
-                }
+                let group_keys = secrets::get_enc_group_keys(group)?;
 
                 // get location of the next entry in list
                 let entry = &mut list[count * ENTRY_SIZE..(count + 1) * ENTRY_SIZE];
@@ -175,21 +152,19 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
                         name: metadata.name,
                     },
                 };
-                let pkm: &mut crypto::PubKeyMetadata = bytemuck::from_bytes_mut(pkm);
-                let key = group_keys.pk_inter.0;
+                let pkm: &mut crypto::SymmetricMetadata = bytemuck::from_bytes_mut(pkm);
+                let key = group_keys.k_inter.0;
 
                 // encrypt just the slot and filename
                 // write G^n, nonce, tag to PKM at the end of entry
                 // HSM1 needs to read group in order to get the correct key
-                let _ = crypto::encrypt_payload_pub(
+                crypto::encrypt_payload_symmetric(
                     bytemuck::bytes_of_mut(&mut ifile.protected),
-                    &mut pkm.gn,
                     &mut pkm.nonce,
                     &mut pkm.tag,
                     &key,
                     &metadata.group.to_le_bytes(),
-                )
-                .unwrap();
+                )?;
                 count += 1;
             }
         }
@@ -204,49 +179,44 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) {
         bytemuck::from_bytes_mut(&mut sm_bytes[..size_of::<crypto::SymmetricMetadata>()]);
 
     // encrypt the part of buffer that was used
-    let _ = crypto::encrypt_payload_symmetric(
+    crypto::encrypt_payload_symmetric(
         body,
         &mut sm.nonce,
         &mut sm.tag,
         &i1,
         &[Opcode::Interrogate.into()],
-    )
-    .unwrap();
+    )?;
 
     let payload_size = body_size + size_of::<crypto::SymmetricMetadata>();
     Message::write(
         Opcode::Interrogate,
         MessagePort::UART1,
         &payload[..payload_size],
-    )
-    .unwrap();
+    )?;
+
+    Ok(())
 }
 
 /// Handle a receive command from a neighbor HSM, received while in listen mode.
-fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ListenError> {
+fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolError> {
     if body.len() != size_of::<TransferM0Encrypted>() {
-        return Err(ListenError::InvalidMessageLength);
+        return Err(ProtocolError::InvalidMessageLength);
     }
     let enc: &TransferM0Encrypted = bytemuck::from_bytes(body);
-    let m0 = enc.decrypt().unwrap();
+    let m0 = enc.decrypt()?;
 
     let slot: usize = m0.slot as usize;
 
     if slot > 7 {
-        return Err(ListenError::InvalidFile);
+        return Err(ProtocolError::InvalidSlot);
     }
 
-    let file_src = ctx.files[slot].get().unwrap();
+    let file_src = ctx.files[slot].get().ok_or(ProtocolError::InvalidFile)?;
     if !file_src.is_full() {
-        return Err(ListenError::InvalidFile);
+        return Err(ProtocolError::InvalidFile);
     }
 
-    // TODO: check that all instances where we use &PIN are valid
-    let group_keys = secrets::get_enc_group_keys(file_src.protected.group).unwrap();
-    if crypto::verify_signature(file_src, &group_keys.pk_sign.0).is_err() {
-        return Err(ListenError::InvalidFile);
-    }
-
+    let group_keys = secrets::get_enc_group_keys(file_src.protected.group)?;
     let group_id_bytes = file_src.protected.group.to_le_bytes();
 
     // we will create M1 = Enc_T1(Enc_pk_trans(file) || PKM || group id) || SM
@@ -266,7 +236,7 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ListenErro
     file.copy_from_slice(&bytemuck::bytes_of(file_src));
 
     // encrypt file with pk trans
-    *pub_key_meta = PubKeyMetadata::encrypt(file, &group_keys.pk_trans.0, &group_id_bytes).unwrap();
+    *pub_key_meta = PubKeyMetadata::encrypt(file, &group_keys.pk_trans.0, &group_id_bytes)?;
 
     // write associated data
     group_id.copy_from_slice(&group_id_bytes);
@@ -276,9 +246,9 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ListenErro
 
     // encrypt file with T1
     *symmetric_meta =
-        SymmetricMetadata::encrypt(data, &TRANSFER_RECV.0, &[Opcode::Receive.into()]).unwrap();
+        SymmetricMetadata::encrypt(data, &TRANSFER_RECV.0, &[Opcode::Receive.into()])?;
 
-    Message::write(Opcode::Receive, MessagePort::UART1, &payload).unwrap();
+    Message::write(Opcode::Receive, MessagePort::UART1, &payload)?;
 
     Ok(())
 }

@@ -15,18 +15,22 @@ use bytemuck::{Pod, Zeroable};
 use context::*;
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
-use mspm0l222x_hal::Peripherals;
+use design_macros::rand_ops;
+use mspm0l222x_hal::{CorePeripherals, Peripherals};
+use mspm0l222x_hal::{Trng, trng};
 
 use crate::{
     crypto::{
         SymmetricMetadata, decrypt_payload_pub, encrypt_payload_pub, sign_file, unwrap_pub_message,
-        unwrap_symmetric_message, verify_signature,
+        unwrap_symmetric_message, verify_signature_bytes,
     },
     file::{FatEntry, FatTable, File, FileMeta, FileName, UUID},
     listen::EncryptedInterrogateInfo,
     message::{CHUNK_SIZE, HEADER_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
+    protocol::ProtocolError,
     secrets::{
-        COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, get_enc_group_keys,
+        COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, STACK_CANARY_START_VALUE,
+        TRANSFER_RECV, get_enc_group_keys,
     },
 };
 
@@ -38,15 +42,45 @@ fn handle_panics(info: &PanicInfo) -> ! {
         eprintln!("{info}");
     }
 
-    // loop {}
     cortex_m::peripheral::SCB::sys_reset();
+    loop {}
+}
+
+#[unsafe(link_section = ".stack_canary.default")]
+#[unsafe(no_mangle)]
+static mut __stack_chk_guard: usize = 0;
+
+#[unsafe(no_mangle)]
+extern "C" fn __stack_chk_fail() -> ! {
+    // TODO: remove print
+    eprintln!("stack smashing detected");
+
+    cortex_m::peripheral::SCB::sys_reset();
+    loop {}
 }
 
 #[entry]
 fn main() -> ! {
     // Startup tasks...
+    let peripherals = Peripherals::take().unwrap();
+    let Peripherals {
+        trng: trng_peripheral,
+        sysctl,
+        iomux,
+        uart0,
+        uart1,
+        flashctl,
+        ..
+    } = peripherals;
+    Trng::init(trng_peripheral);
+    unsafe {
+        __stack_chk_guard = trng::trng().word() as usize ^ STACK_CANARY_START_VALUE;
+    }
+
+    let core_peripherals = CorePeripherals::take().unwrap();
+
     // Retrieve context. Derives boot salt 1 and PIN salt 1.
-    let mut ctx = Context::new(Peripherals::take().unwrap());
+    let mut ctx = Context::new(sysctl, iomux, uart0, uart1, flashctl, core_peripherals.MPU);
 
     // Populate files.
     for file in &ctx.files {
@@ -64,15 +98,21 @@ fn main() -> ! {
 
         let start = ctx.time();
         sensitive!(ctx, {
-            match msg_info.opcode {
+            // rand_ops!(trng::trng());
+
+            let result = match msg_info.opcode {
                 Opcode::List => handle_list(&mut ctx, msg_info.length as usize),
                 Opcode::Read => handle_read(&mut ctx, msg_info.length as usize),
                 Opcode::Write => handle_write(&mut ctx, msg_info.length as usize),
                 Opcode::Receive => handle_receive(&mut ctx, msg_info.length as usize),
                 Opcode::Interrogate => handle_interrogate(&mut ctx, msg_info.length as usize),
-                Opcode::Listen => handle_listen(&mut ctx),
-                Opcode::Ack => println!("Ack without sent message"),
+                Opcode::Listen => handle_listen_request(&mut ctx),
+                Opcode::Ack => Ok(()),
                 e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
+            };
+
+            if let Err(err) = result {
+                panic!("handler failed: {err}");
             }
         });
         let elapsed = ctx.time() - start;
@@ -104,18 +144,18 @@ struct ListHeader {
 
 /// List all files currently on the board with their metadata; requires pin on usage. In this
 /// process, the file signature is verified before the metadata is sent back to host.
-fn handle_list(ctx: &mut Context, msg_len: usize) {
+fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ListHeader>() {
-        panic!()
+        return Err(ProtocolError::InvalidMessageLength);
     }
 
     let mut msg = [0; size_of::<ListHeader>()];
     Message::send_ack(MessagePort::UART0);
-    Message::read_body(MessagePort::UART0, &mut msg).unwrap();
+    Message::read_body(MessagePort::UART0, &mut msg)?;
 
     let ListHeader { pin } = *bytemuck::from_bytes(&msg);
 
-    let _k_auth = ctx.k_auth(&pin).expect("incorrect pin");
+    let _k_auth = ctx.k_auth(&pin)?;
 
     // 4 bytes at start for total number of files; file slot, name of file, group id, for 8 files
     const METADATA_SIZE: usize = core::mem::size_of::<FileMeta>();
@@ -129,14 +169,6 @@ fn handle_list(ctx: &mut Context, msg_len: usize) {
         let Some(file) = ctx.files[i].get().filter(|f| f.is_full()) else {
             continue;
         };
-
-        // verify file signature before handling
-        let group_keys = secrets::get_enc_group_keys(file.protected.group).unwrap();
-        let key = group_keys.pk_sign.0;
-
-        if verify_signature(file, &key).is_err() {
-            continue;
-        }
 
         let metadata = FileMeta {
             name: file.protected.name,
@@ -152,7 +184,8 @@ fn handle_list(ctx: &mut Context, msg_len: usize) {
 
     // return data without the extra space allocated in the body buffer
     let actual_body = &body[..4 + counter * METADATA_SIZE];
-    Message::write(Opcode::List, MessagePort::UART0, actual_body).unwrap();
+    Message::write(Opcode::List, MessagePort::UART0, actual_body)?;
+    Ok(())
 }
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 #[repr(C, packed)]
@@ -165,56 +198,58 @@ struct ReadFileHeader {
 /// usage. The pin is also used to decrypt the file from flash.
 ///
 /// See the protocol document for more detailed information on the cryptographic measures implemented.
-fn handle_read(ctx: &mut Context, msg_len: usize) {
+fn handle_read(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ReadFileHeader>() {
-        panic!()
+        return Err(ProtocolError::InvalidMessageLength);
     }
 
     let mut msg = [0; size_of::<ReadFileHeader>()];
     Message::send_ack(MessagePort::UART0);
-    Message::read_body(MessagePort::UART0, &mut msg).unwrap();
+    Message::read_body(MessagePort::UART0, &mut msg)?;
 
     let ReadFileHeader { pin, slot } = *bytemuck::from_bytes(&msg);
     let slot = slot as usize;
 
     if slot > 7 {
-        panic!()
+        return Err(ProtocolError::InvalidSlot);
     }
 
-    let file = ctx.files[slot].get().unwrap();
+    let file = ctx.files[slot].get().ok_or(ProtocolError::InvalidFile)?;
     let file_length = file.protected.contents_length as usize;
 
     // die if there isn't a file here
     if !file.is_full() {
-        panic!()
+        return Err(ProtocolError::InvalidFile);
     }
 
     // get group key and verify file hasn't been tampered
     let group = file.protected.group;
-    let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
-    let pk_sign = get_enc_group_keys(group).unwrap().pk_sign.0;
-    verify_signature(file, &pk_sign).unwrap();
+    let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin)?;
+    let pk_sign = get_enc_group_keys(group)?.pk_sign.0;
+    verify_signature_bytes(file, &pk_sign)?;
 
     // buf = N || PT
     let mut buf = [0; file::CONTENT_SIZE + file::NAME_SIZE];
     let (name, pt) = buf.split_at_mut(file::NAME_SIZE);
 
     name.copy_from_slice(&file.protected.name.0);
-    pt[..file_length].copy_from_slice(&file.protected.contents[..file_length]);
+    pt[..file_length].copy_from_slice(&file.protected.contents.0[..file_length]);
+    let ad = file.protected.associated_data();
 
     // decrypt the file into buffer
+    let sk_read = group_key.sk_read.ok_or(ProtocolError::InvalidGroup)?;
     decrypt_payload_pub(
         &mut pt[..file_length],
         &file.protected.gn,
         &file.protected.nonce,
         &file.protected.tag,
-        &group_key.sk_read.unwrap().0,
-        &[],
-    )
-    .unwrap();
+        &sk_read.0,
+        &ad,
+    )?;
 
     let total_length = file::NAME_SIZE + file_length;
-    Message::write(Opcode::Read, MessagePort::UART0, &buf[..total_length]).unwrap();
+    Message::write(Opcode::Read, MessagePort::UART0, &buf[..total_length])?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
@@ -232,15 +267,20 @@ struct WriteFileHeader {
 /// encrypted and signed.
 ///
 /// See the protocol document for more detailed information on the cryptographic measures implemented.
-fn handle_write(ctx: &mut Context, msg_len: usize) {
+fn handle_write(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len < size_of::<WriteFileHeader>() {
-        panic!()
+        return Err(ProtocolError::InvalidMessageLength);
     }
 
     // sizeof WriteFileHeader < CHUNK_SIZE
-    let mut msg = [0; CHUNK_SIZE];
+    let mut msg_buf = [0; CHUNK_SIZE];
+    let msg = if msg_len < msg_buf.len() {
+        &mut msg_buf[..msg_len]
+    } else {
+        &mut msg_buf
+    };
     Message::send_ack(MessagePort::UART0);
-    Message::read_body_no_ack(MessagePort::UART0, &mut msg).unwrap();
+    Message::read_body_no_ack(MessagePort::UART0, msg)?;
 
     let (header, data) = msg.split_at(core::mem::size_of::<WriteFileHeader>());
     let WriteFileHeader {
@@ -256,20 +296,20 @@ fn handle_write(ctx: &mut Context, msg_len: usize) {
     // the allocated data has incorrect length
     let data_len = length as usize;
     if data_len > file::CONTENT_SIZE {
-        panic!("got strange file length")
+        return Err(ProtocolError::InvalidMessageLength);
     }
 
     // TODO: check number of file slot requirements
     let slot = slot as usize;
     if slot > 7 {
-        panic!("slot too large")
+        return Err(ProtocolError::InvalidSlot);
     }
 
     println!("1: {}", ctx.time());
 
-    // Retrieve signing and read encryption keys with pin
-    let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin).unwrap();
-    let pk_read = group_key.pk_read.unwrap().0;
+    // retrieve signing and read encryption keys with pin
+    let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin)?;
+    let pk_read = group_key.pk_read.ok_or(ProtocolError::InvalidGroup)?.0;
 
     println!("2: {}", ctx.time());
 
@@ -283,33 +323,40 @@ fn handle_write(ctx: &mut Context, msg_len: usize) {
     protected.uuid = uuid;
     protected.group = group;
 
-    // Set initial content data
-    // The data length is alreayd verified to be correct, so don't check again
-    protected.contents[..data.len()].copy_from_slice(data);
+    // set initial content data
+    // we already verified that the data length is correct, so don't check again
+    protected.contents.0[..data.len()].copy_from_slice(data);
     Message::send_ack(MessagePort::UART0);
     if data.len() < data_len {
         Message::read_body(
             MessagePort::UART0,
-            &mut protected.contents[data.len()..data_len],
-        )
-        .unwrap();
+            &mut protected.contents.0[data.len()..data_len],
+        )?;
     }
 
-    protected.contents[data_len..].fill(0);
+    protected.contents.0[data_len..].fill(0);
     protected.contents_length = data_len as u16;
+    let ad = protected.associated_data();
+
+    println!("2.5: {}", ctx.time());
 
     // Encrypt everything
     encrypt_payload_pub(
-        &mut protected.contents[..data_len],
+        &mut protected.contents.0[..data_len],
         &mut protected.gn,
         &mut protected.nonce,
         &mut protected.tag,
         &pk_read,
-        &[],
-    )
-    .unwrap();
+        &ad,
+    )?;
+
+    let k_uuid = group_key.k_uuid.ok_or(ProtocolError::InvalidGroup)?;
+    protected.uuid_ct_metadata =
+        SymmetricMetadata::encrypt(bytemuck::bytes_of_mut(&mut protected.uuid), &k_uuid.0, &ad)?;
+
     println!("3: {}", ctx.time());
-    sign_file(&mut file, &group_key.sk_sign.unwrap().0).unwrap();
+    let sk_sign = group_key.sk_sign.ok_or(ProtocolError::InvalidGroup)?;
+    sign_file(&mut file, &sk_sign.0)?;
     println!("4: {}", ctx.time());
 
     // TODO: make sure file/fat can't be partially written
@@ -317,24 +364,29 @@ fn handle_write(ctx: &mut Context, msg_len: usize) {
         uuid,
         length: data_len as u16,
         padding: 0,
-        addr: ctx.fat.get().unwrap().entries[slot].addr,
+        addr: ctx.fat.get().ok_or(ProtocolError::InvalidFile)?.entries[slot].addr,
     };
 
     // TODO: just write the one fat entry
     unsafe {
-        ctx.files[slot].set(&file).unwrap();
+        ctx.files[slot]
+            .set(&file)
+            .map_err(|_| ProtocolError::StorageFailure)?;
     }
     println!("5: {}", ctx.time());
-    let current = ctx.fat.get().unwrap();
-    // Avoid in-place mutation
+    let current = ctx.fat.get().ok_or(ProtocolError::InvalidFile)?;
+    // avoid in-place mutation
     let mut entries = current.entries;
     entries[slot] = new_fat;
     unsafe {
-        ctx.fat.set(&FatTable { entries }).unwrap();
+        ctx.fat
+            .set(&FatTable { entries })
+            .map_err(|_| ProtocolError::StorageFailure)?;
     }
     println!("6: {}", ctx.time());
 
-    Message::write(Opcode::Write, MessagePort::UART0, &[]).unwrap();
+    Message::write(Opcode::Write, MessagePort::UART0, &[])?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
@@ -350,14 +402,14 @@ struct ReceiveFileHeader {
 /// flash.
 ///
 /// See the protocol document for more detailed information on the cryptographic measures implemented.
-fn handle_receive(ctx: &mut Context, msg_len: usize) {
+fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ReceiveFileHeader>() {
-        panic!()
+        return Err(ProtocolError::InvalidMessageLength);
     }
 
     let mut msg = [0; size_of::<ReceiveFileHeader>()];
     Message::send_ack(MessagePort::UART0);
-    Message::read_body(MessagePort::UART0, &mut msg).unwrap();
+    Message::read_body(MessagePort::UART0, &mut msg)?;
 
     let ReceiveFileHeader {
         pin,
@@ -365,61 +417,121 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) {
         write_slot,
     } = *bytemuck::from_bytes(&msg);
 
-    let k_auth = ctx.k_auth(&pin).expect("incorrect pin");
+    println!("1: {}", ctx.time());
 
-    // Request file
-    protocol::initiate_transfer(read_slot).unwrap();
+    let k_auth = ctx.k_auth(&pin)?;
+
+    println!("2: {}", ctx.time());
+
+    // request file
+    protocol::initiate_transfer(read_slot)?;
+
+    println!("3: {}", ctx.time());
 
     // Receive file
     let mut buf = [0u8; protocol::TRANSFER_RECEIVE_MAX_LENGTH];
-    let response = Message::read(MessagePort::UART1, &mut buf).unwrap();
-    assert!(response.length as usize == buf.len());
+    let response = Message::read(MessagePort::UART1, &mut buf)?;
+    if response.opcode == Opcode::Error {
+        return Err(ProtocolError::PeerBoardError);
+    }
+    if response.opcode != Opcode::Receive {
+        return Err(ProtocolError::InvalidOpcode);
+    }
+    if response.length as usize != buf.len() {
+        return Err(ProtocolError::InvalidMessageLength);
+    }
 
-    // Decrypt with T1
-    let payload =
-        unwrap_symmetric_message(&mut buf, &TRANSFER_RECV.0, &[Opcode::Receive.into()]).unwrap();
+    // time to receive after request sent: ~1.8 seconds
+    println!("4: {}", ctx.time());
+
+    // decrypt with T1
+    let payload = unwrap_symmetric_message(&mut buf, &TRANSFER_RECV.0, &[Opcode::Receive.into()])?;
+    if payload.len() < size_of::<u16>() {
+        return Err(ProtocolError::InvalidMessageLength);
+    }
 
     // Parse out group id associated data
     let (assymetric_payload, group_id_bytes) =
         payload.split_at_mut(payload.len() - size_of::<u16>());
-    let group_id_bytes: &mut [u8; 2] = group_id_bytes.try_into().unwrap();
+    let group_id_bytes: &mut [u8; 2] = group_id_bytes
+        .try_into()
+        .map_err(|_| ProtocolError::InvalidMessageLength)?;
     let group_id = u16::from_le_bytes(*group_id_bytes);
 
-    // Decrypt correct keys based on group
-    let enc_group_keys = secrets::get_enc_group_keys(group_id).unwrap();
+    println!("5: {}", ctx.time());
+
+    // decrypt correct keys based on group
+    let enc_group_keys = secrets::get_enc_group_keys(group_id)?;
     let group_keys = enc_group_keys.decrypt(&k_auth);
 
-    // Decrypt assymetrically encrypted part of message
+    println!("6: {}", ctx.time());
+
+    // decrypt assymetrically encrypted part of message
+    // about ~0.75-0.8 seconds
     let inner = unwrap_pub_message(
         assymetric_payload,
-        &group_keys.sk_trans.unwrap().0,
+        &group_keys.sk_trans.ok_or(ProtocolError::InvalidGroup)?.0,
         group_id_bytes,
-    )
-    .unwrap();
+    )?;
 
+    println!("7: {}", ctx.time());
+
+    if inner.len() != size_of::<File>() {
+        return Err(ProtocolError::InvalidMessageLength);
+    }
     let file: &mut File = bytemuck::from_bytes_mut(inner);
-    // Check earlier associated group id matches
-    assert!(file.protected.group == group_id);
+    // check earlier associated group id matches
+    if file.protected.group != group_id {
+        return Err(ProtocolError::InvalidGroup);
+    }
 
-    verify_signature(file, &enc_group_keys.pk_sign.0).unwrap();
+    // verify takes about 0.7 seconds
+    verify_signature_bytes(file, &enc_group_keys.pk_sign.0)?;
+
+    println!("8: {}", ctx.time());
+
+    // decrypt uuid
+    let mut uuid = file.protected.uuid;
+    let ad = file.protected.associated_data();
+    file.protected.uuid_ct_metadata.decrypt(
+        bytemuck::bytes_of_mut(&mut uuid),
+        &group_keys.k_uuid.ok_or(ProtocolError::InvalidGroup)?.0,
+        &ad,
+    )?;
+
+    let write_slot = write_slot as usize;
+    if write_slot > 7 {
+        return Err(ProtocolError::InvalidSlot);
+    }
 
     let new_fat = FatEntry {
-        uuid: file.protected.uuid,
+        uuid,
         length: file.protected.contents_length,
         padding: 0,
-        addr: ctx.fat.get().unwrap().entries[write_slot as usize].addr,
+        addr: ctx.fat.get().ok_or(ProtocolError::InvalidFile)?.entries[write_slot].addr,
     };
+
+    println!("9: {}", ctx.time());
 
     // TODO: just write the one fat entry
     unsafe {
-        ctx.files[write_slot as usize].set(file).unwrap();
-        let current = ctx.fat.get().unwrap();
+        ctx.files[write_slot]
+            .set(file)
+            .map_err(|_| ProtocolError::StorageFailure)?;
+        println!("10: {}", ctx.time());
+        let current = ctx.fat.get().ok_or(ProtocolError::InvalidFile)?;
         let mut entries = current.entries;
-        entries[write_slot as usize] = new_fat;
-        ctx.fat.set(&FatTable { entries }).unwrap();
+        entries[write_slot] = new_fat;
+        ctx.fat
+            .set(&FatTable { entries })
+            .map_err(|_| ProtocolError::StorageFailure)?;
     }
 
+    // 0.08 seconds total writing flash
+    println!("11: {}", ctx.time());
+
     Message::write_header(Opcode::Receive, 0, MessagePort::UART0);
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
@@ -433,19 +545,23 @@ struct InterrogateHeader {
 ///
 /// See the protocol document for more detailed information on the cryptographic
 /// measures implemented.
-fn handle_interrogate(ctx: &mut Context, msg_len: usize) {
+fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     // Command contains just the PIN
     if msg_len != size_of::<InterrogateHeader>() {
-        panic!()
+        return Err(ProtocolError::InvalidMessageLength);
     }
 
     let mut msg = [0; size_of::<InterrogateHeader>()];
     Message::send_ack(MessagePort::UART0);
-    Message::read_body(MessagePort::UART0, &mut msg).unwrap();
+    Message::read_body(MessagePort::UART0, &mut msg)?;
 
     let InterrogateHeader { pin } = *bytemuck::from_bytes(&msg);
 
-    let k_auth = ctx.k_auth(&pin).expect("incorrect pin");
+    println!("1: {}", ctx.time());
+
+    let _k_auth = ctx.k_auth(&pin)?;
+
+    println!("2: {}", ctx.time());
 
     // TODO: maybe send bitmask
     const GROUPS_BYTE_LEN: usize = COPY_PERM_GROUPS.len() * size_of::<u16>();
@@ -458,25 +574,37 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) {
 
     // Encrypt
     *metadata =
-        SymmetricMetadata::encrypt(payload, &INTERROGATE_SEND.0, &[Opcode::Interrogate.into()])
-            .unwrap();
+        SymmetricMetadata::encrypt(payload, &INTERROGATE_SEND.0, &[Opcode::Interrogate.into()])?;
 
-    // Send message
-    Message::write(Opcode::Interrogate, MessagePort::UART1, &buf).unwrap();
+    println!("3: {}", ctx.time());
+
+    // send message
+    Message::write(Opcode::Interrogate, MessagePort::UART1, &buf)?;
+
+    println!("4: {}", ctx.time());
 
     // Receive interrogate response
     let mut buf = [0u8; size_of::<EncryptedInterrogateInfo>() * 8 + size_of::<SymmetricMetadata>()];
-    let response = Message::read(MessagePort::UART1, &mut buf).unwrap();
+    let response = Message::read(MessagePort::UART1, &mut buf)?;
+    if response.opcode == Opcode::Error {
+        return Err(ProtocolError::PeerBoardError);
+    }
+    if response.opcode != Opcode::Interrogate {
+        return Err(ProtocolError::InvalidOpcode);
+    }
     let payload = &mut buf[..response.length as usize];
 
-    // Decrypt
+    println!("5: {}", ctx.time());
+
+    // decrypt
     let payload =
-        unwrap_symmetric_message(payload, &INTERROGATE_RECV.0, &[Opcode::Interrogate.into()])
-            .unwrap();
+        unwrap_symmetric_message(payload, &INTERROGATE_RECV.0, &[Opcode::Interrogate.into()])?;
     let interrogate_info: &mut [EncryptedInterrogateInfo] = bytemuck::cast_slice_mut(payload);
     let count = interrogate_info.len();
 
-    // Allocate response buffer of the maximum size
+    println!("6: {}", ctx.time());
+
+    // allocate response buffer of the maximum size
     let mut response = [0; 4 + 8 * size_of::<listen::InterrogateFile>()];
 
     // Split num_files off from the list and set it
@@ -484,11 +612,9 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) {
     num_files.copy_from_slice(&(count as u32).to_le_bytes());
 
     for (i, ifile) in interrogate_info.iter_mut().enumerate() {
-        let group_keys = secrets::get_enc_group_keys(ifile.file.group())
-            .unwrap()
-            .decrypt(&k_auth);
+        let group_keys = secrets::get_enc_group_keys(ifile.file.group())?;
 
-        ifile.decrypt(&group_keys.sk_inter.unwrap().0).unwrap();
+        ifile.decrypt(&group_keys.k_inter.0)?;
 
         // copy to the correct offset in list
         let list_offset = i * size_of::<listen::InterrogateFile>();
@@ -498,13 +624,15 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) {
         list_entry[3..].copy_from_slice(&ifile.file.protected.name.0);
     }
 
+    println!("7: {}", ctx.time());
+
     let actual_message_size = 4 + count * size_of::<listen::InterrogateFile>();
     Message::write(
         Opcode::Interrogate,
         MessagePort::UART0,
         &response[..actual_message_size],
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }
 
 /// Listens for any Receive or Interrogate command from an adjacent board to
@@ -512,11 +640,23 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) {
 ///
 /// See the protocol document for more detailed information on the cryptographic
 /// measures implemented.
-fn handle_listen(ctx: &mut Context) {
+fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
     Message::send_ack(MessagePort::UART0);
-    Message::write_header(Opcode::Listen, 0, MessagePort::UART0);
     let mut body = [0u8; MAX_BODY_SIZE];
-    let msg = Message::read(MessagePort::UART1, &mut body).unwrap();
+    let msg = Message::read(MessagePort::UART1, &mut body)?;
     println!("listen: got message: {:?}", msg.opcode);
-    listen::recv(ctx, msg.opcode, &mut body[..msg.length as usize]).unwrap();
+    listen::recv(ctx, msg.opcode, &mut body[..msg.length as usize])?;
+    Ok(())
+}
+
+fn handle_listen_request(ctx: &mut Context) -> Result<(), ProtocolError> {
+    if let Err(err) = handle_listen(ctx) {
+        let _ = Message::write(Opcode::Error, MessagePort::UART1, &[]);
+        // returning error will cause uart0 to have error written
+        Err(err)
+    } else {
+        // handle listen has already sent a success response to uart1
+        let _ = Message::write(Opcode::Listen, MessagePort::UART0, &[]);
+        Ok(())
+    }
 }

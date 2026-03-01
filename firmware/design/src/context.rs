@@ -1,22 +1,27 @@
+use bytemuck::{NoUninit, bytes_of};
 use core::{
     fmt::{self, Write},
+    marker::PhantomData,
+    mem::size_of,
     sync::atomic::{AtomicU32, Ordering},
 };
 use cortex_m::peripheral::SYST;
 use cortex_m_rt::exception;
+use mspm0l222x_hal::mpu::{MemoryCacheType, MpuPerms, MpuRegionSize};
 use subtle::ConstantTimeEq;
 
 use mspm0l222x_hal::{
     Peripherals,
-    flash::{FLASH_PAGE_SIZE, FlashController},
+    flash::{self, FLASH_PAGE_SIZE, FlashController},
     iomux::Iomux,
+    mpu::Mpu,
     trng::Trng,
     uart::{Uart0, Uart1},
 };
 
 use crate::{
     crypto::blake_hash,
-    file::{FatTable, File},
+    file::{FatTable, File, FileSlot},
     flash::FlashEntry,
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
     protocol::ProtocolError,
@@ -75,53 +80,67 @@ pub(crate) struct Context {
 }
 
 unsafe extern "C" {
-    pub static _files: u8;
+    pub static _files_app1: u8;
+    pub static _files_app2: u8;
     pub static _filetable: u8;
     pub static _salt: u8;
 }
 
 impl Context {
     /// Initialize and generate a context object based on the current state of the flash.
-    pub(crate) fn new(peripherals: Peripherals) -> Self {
-        // Start the system clock
+    pub(crate) fn new(
+        sysctl: mspm0l222x_hal::mspm0l222x_pac::Sysctl,
+        iomux: mspm0l222x_hal::mspm0l222x_pac::Iomux,
+        uart0: mspm0l222x_hal::mspm0l222x_pac::Uart0,
+        uart1: mspm0l222x_hal::mspm0l222x_pac::Uart1,
+        flashctl: mspm0l222x_hal::mspm0l222x_pac::Flashctl,
+        mpu_regs: cortex_m::peripheral::MPU,
+    ) -> Self {
+        // entire ram not executable
+        Mpu::sram_rw_boundary(&sysctl, 0x7fff).expect("failed to set sram rw boundary");
+
+        let mut mpu = Mpu::new(mpu_regs);
+        setup_mpu_mappings(&mut mpu);
+
         mspm0l222x_hal::timer::SysTickConfig::enable_with_reload(
             unsafe { &*(SYST::PTR as *const SYST) },
             32_000 - 1, // 1 ms timer interval
         );
 
-        // erase any in-progress operations that failed
-        crate::flash::check_commits();
-
         // TODO: PIN salt generation + penalty enforcement
         // TODO: check for flash write failure
-        let iomux = Iomux::new(&peripherals.iomux);
+        let iomux = Iomux::new(&iomux);
 
         // Initialize (turn on) peripherals: UART0, UART1, and the flash.
-        Uart0::init(&iomux, peripherals.uart0);
+        Uart0::init(&iomux, uart0);
         println!("starting!");
-        Uart1::init(&iomux, peripherals.uart1);
-        FlashController::init(peripherals.flashctl);
+        Uart1::init(&iomux, uart1);
+        FlashController::init(flashctl);
 
-        Trng::init(peripherals.trng);
+        // protect all flash except for FlashEntry-s
+        let flash = mspm0l222x_hal::flash::flash();
+        flash.write_protect(0, 256 * FLASH_PAGE_SIZE as u32);
 
         // Create/initialize all 8 flash entries
-        let file_size = core::mem::size_of::<File>().div_ceil(FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE;
+        let file_size =
+            core::mem::size_of::<FileSlot>().div_ceil(FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE;
         let files = unsafe {
             [
-                FlashEntry::new(((&_files as *const u8).add(0 * file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(2 * file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(3 * file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(4 * file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(5 * file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(6 * file_size)) as u32),
-                FlashEntry::new(((&_files as *const u8).add(7 * file_size)) as u32),
+                FlashEntry::new(((&_files_app1 as *const u8).add(0 * file_size)) as u32),
+                FlashEntry::new(((&_files_app1 as *const u8).add(1 * file_size)) as u32),
+                FlashEntry::new(((&_files_app1 as *const u8).add(2 * file_size)) as u32),
+                FlashEntry::new(((&_files_app1 as *const u8).add(3 * file_size)) as u32),
+                FlashEntry::new(((&_files_app1 as *const u8).add(4 * file_size)) as u32),
+                FlashEntry::new(((&_files_app1 as *const u8).add(5 * file_size)) as u32),
+                FlashEntry::new(((&_files_app2 as *const u8).add(0 * file_size)) as u32),
+                FlashEntry::new(((&_files_app2 as *const u8).add(1 * file_size)) as u32),
             ]
         };
 
         let fat = unsafe { FlashEntry::new(&_filetable as *const u8 as u32) };
 
         let boot_salt_1: FlashEntry<Salt> = unsafe { FlashEntry::new(&_salt as *const u8 as u32) };
+
         // if salt isn't set, then the device was restarted during an operation
         if !boot_salt_1.is_set() {
             let derived = Salt::derive_boot_salt_1();
@@ -165,7 +184,7 @@ impl Context {
 
         // confirm k_auth is valid
         let k_auth_hash = blake_hash(&k_auth, &K_AUTH_SALT);
-        if K_AUTH_HASH.ct_eq(&k_auth_hash).unwrap_u8() == 0 {
+        if !bool::from(K_AUTH_HASH.ct_eq(&k_auth_hash)) {
             return Err(ProtocolError::InvalidPin);
         }
 
@@ -186,7 +205,119 @@ impl Context {
     }
 }
 
-/// Accessor for board clock.
+const MPU_MIN_SIZE: usize = 32;
+
+/// Add a guard to prevent access to a region of memory.
+unsafe fn add_mpu_guard(mpu: &mut Mpu, index: u32, address: u32) {
+    unsafe {
+        mpu.set_region(
+            index,
+            address,
+            MpuRegionSize::Bytes32,
+            0,
+            MpuPerms {
+                read: false,
+                write: false,
+                execute: false,
+            },
+            MemoryCacheType::StronglyOrdered,
+        )
+        .unwrap();
+    }
+}
+
+/// Setup the MPU mappings for the board.
+fn setup_mpu_mappings(mpu: &mut Mpu) {
+    // TODO: remove this check
+    // only added because mpu on qemu does not work
+    if !mpu.is_available() {
+        return;
+    }
+
+    unsafe {
+        // flash executable
+        mpu.set_region(
+            0,
+            0x0,
+            MpuRegionSize::KibiByte256,
+            0,
+            MpuPerms {
+                read: true,
+                write: false,
+                execute: true,
+            },
+            MemoryCacheType::StronglyOrdered,
+        )
+        .unwrap();
+
+        // ram read write
+        mpu.set_region(
+            1,
+            0x2020_0000,
+            MpuRegionSize::KibiByte32,
+            0,
+            MpuPerms {
+                read: true,
+                write: true,
+                execute: false,
+            },
+            MemoryCacheType::StronglyOrdered,
+        )
+        .unwrap();
+
+        // mmio read write
+        mpu.set_region(
+            2,
+            0x4000_0000,
+            MpuRegionSize::MibiByte512,
+            0,
+            MpuPerms {
+                read: true,
+                write: true,
+                execute: false,
+            },
+            // peripheral memory last year we use strongly ordered
+            MemoryCacheType::StronglyOrdered,
+        )
+        .unwrap();
+
+        // make stack canary read only
+        mpu.set_region(
+            3,
+            0x2020_0000,
+            MpuRegionSize::Bytes32,
+            0,
+            MpuPerms {
+                read: true,
+                write: false,
+                execute: false,
+            },
+            MemoryCacheType::StronglyOrdered,
+        )
+        .unwrap();
+
+        // first guard stop flashcat type attack reading out file data
+        let files_guard = (&_files_app1 as *const u8 as usize) - MPU_MIN_SIZE;
+        add_mpu_guard(mpu, 4, files_guard as u32);
+
+        // second guard stop unbounded read from inside files hitting uuid in FAT
+        // not reserve in linker but File doesn't take up whole 9 pages, put right at end
+        let fat_guard = (&_filetable as *const u8 as usize) - MPU_MIN_SIZE;
+        add_mpu_guard(mpu, 5, fat_guard as u32);
+        // probably no guard needed after FAT since FAT is never read by design (except for updating FAT again)
+        // can add one to be safe in future
+
+        // TODO: potential protection regions:
+        // - before secret keys
+        // - end of stack (before global data)
+
+        mpu.clear_region(6).unwrap();
+        mpu.clear_region(7).unwrap();
+
+        mpu.enable();
+    }
+}
+
 static mut TICKS: AtomicU32 = AtomicU32::new(0);
 /// MPU cycles per clock tick.
 const CYCLES_PER_TICK: u32 = mspm0l222x_hal::SYSOSC_FREQUENCY / 10_000;

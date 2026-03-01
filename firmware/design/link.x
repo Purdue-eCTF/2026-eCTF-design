@@ -7,19 +7,27 @@ Offset  | Size    | Name                  | Description
 0x3A400 | 0x5c00  | APP2                  | Flash region that may be used by your design however you see fit.
 */
 
-__file_size = 8*(9 * 1024);
+__file_app1_size = 6*(9 * 1024);
+__file_app2_size = 2*(9 * 1024);
+
+__data_region_size = 128;
+
+__mpu_min_size = 32;
+
+INCLUDE memory.x
 
 MEMORY {
     BOOTLOADER(r) : ORIGIN = 0x0, LENGTH = 0x6000
-    APP1(rx) : ORIGIN = 0x6000, LENGTH = 0x34000 - __file_size
-    FILES(rw) : ORIGIN = (0x3A000 - __file_size), LENGTH = __file_size
+    APP1(rx) : ORIGIN = 0x6000, LENGTH = (0x34000 - __file_app1_size - __mpu_min_size)
+    FILES_APP1(rw) : ORIGIN = (0x3A000 - __file_app1_size), LENGTH = __file_app1_size
     FILETABLE(rw) : ORIGIN = 0x3A000, LENGTH = 0x400
-    APP2(rw) : ORIGIN = 0x3A400, LENGTH = 0x5c00
+    FILES_APP2(rw) : ORIGIN = 0x3A400, LENGTH = __file_app2_size
+    APP2(rw) : ORIGIN = (0x3A400 + __file_app2_size), LENGTH = (0x5c00 - __file_app2_size)
+    DATA_REGION(rw) : ORIGIN = (ORIGIN(RAM) + LENGTH(RAM) - __data_region_size), LENGTH = __data_region_size
 }
 
-ASSERT(ORIGIN(APP1) + LENGTH(APP1) <= ORIGIN(FILES), "APP1 overlaps with FILES")
+ASSERT(ORIGIN(APP1) + LENGTH(APP1) <= ORIGIN(FILES_APP1), "APP1 overlaps with FILES")
 
-INCLUDE memory.x
 INCLUDE device.x
 
 EXTERN(__RESET_VECTOR);
@@ -55,7 +63,7 @@ PROVIDE(__pre_init = DefaultPreInit);
 SECTIONS {
     PROVIDE(_ram_start = ORIGIN(RAM));
     PROVIDE(_ram_end = ORIGIN(RAM) + LENGTH(RAM));
-    PROVIDE(_stack_start = _ram_end);
+    PROVIDE(_stack_start = ORIGIN(DATA_REGION));
 
     .vector_table ORIGIN(APP1) : {
         LONG(_stack_start & 0xFFFFFFF8);
@@ -89,14 +97,28 @@ SECTIONS {
         __etext = .;
     } > APP1
 
+    .rodata : ALIGN(8) {
+        . = ALIGN(8);
+        *(.rodata .rodata.*);
+
+        . = ALIGN(8);
+    } > APP1
+
     __sidata = LOADADDR(.data);
 
-    .files : {
-        _files = .;
+    .files_app1 : {
+        _files_app1 = .;
         /* store default contents so that flash isn't empty on boot */
-        KEEP(*(.files.default));
-        _efiles = .;
-    } > FILES
+        KEEP(*(.files_app1.default));
+        _efiles_app1 = .;
+    } > FILES_APP1
+
+    .files_app2 : {
+        _files_app2 = .;
+        /* store default contents so that flash isn't empty on boot */
+        KEEP(*(.files_app2.default));
+        _efiles_app2 = .;
+    } > FILES_APP2
 
     .salt : {
         . = ALIGN(1024);
@@ -107,15 +129,6 @@ SECTIONS {
         ASSERT(_esalt - _salt == 1024, "boot_salt_1 section has incorrect length");
     } > APP2
 
-
-    /* flash transaction committing, should be empty by default */
-    .commit (NOLOAD) : {
-        . = ALIGN(1024);
-        _commit = .;
-        . = ALIGN(1024);
-        _ecommit = .;
-    } > APP2
-
     .filetable : {
         _filetable = .;
         KEEP(*(.filetable.default));
@@ -124,6 +137,10 @@ SECTIONS {
         ASSERT(_efiletable - _filetable == 1024, "FAT section has incorrect length");
     } > FILETABLE
 
+    /* stack canary at start of ram */
+    .stack_canary ORIGIN(RAM) (NOLOAD) : ALIGN(8) {
+        KEEP(*(.stack_canary.default));
+    } > RAM
 
     /* ### .bss */
     .bss (NOLOAD) : ALIGN(8)
@@ -133,7 +150,7 @@ SECTIONS {
         *(.bss .bss.*);
         *(COMMON); /* Uninitialized C statics */
         . = ALIGN(8); /* 4-byte align the end (VMA) of this section */
-    } > RAM
+    } > DATA_REGION
 
     . = ALIGN(8);
     __ebss = .;
@@ -145,19 +162,12 @@ SECTIONS {
         . = ALIGN(8);
         *(.uninit .uninit.*);
         . = ALIGN(8);
-    } > RAM
+    } > DATA_REGION
 
     .got (NOLOAD) :
     {
         KEEP(*(.got .got.*));
     }
-
-    .rodata : ALIGN(8) {
-        . = ALIGN(8);
-        *(.rodata .rodata.*);
-
-        . = ALIGN(8);
-    } > APP2
 
     .data : {
         . = ALIGN(8);
@@ -165,7 +175,7 @@ SECTIONS {
         *(.data .data.*);
         . = ALIGN(8); /* 4-byte align the end (VMA) of this section */
         __edata = .;
-    } > RAM AT>APP2
+    } > DATA_REGION AT>APP2
 
     /* ## Discarded sections */
     /DISCARD/ :
