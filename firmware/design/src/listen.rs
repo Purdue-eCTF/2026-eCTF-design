@@ -226,7 +226,7 @@ fn respond_transfer(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolErr
     let group_id = &mut rest[..size_of::<u16>()];
 
     // copy the file to payload
-    file.copy_from_slice(&bytemuck::bytes_of(file_src));
+    file.copy_from_slice(bytemuck::bytes_of(file_src));
 
     // encrypt file with pk trans
     *pub_key_meta = PubKeyMetadata::encrypt(file, &group_keys.pk_trans.0, &group_id_bytes)?;

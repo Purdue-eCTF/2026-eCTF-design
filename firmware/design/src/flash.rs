@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use bytemuck::{NoUninit, Pod, Zeroable};
+use bytemuck::NoUninit;
 use mspm0l222x_hal::flash::FLASH_PAGE_SIZE;
 
 // TODO: automatically handle partial page writes

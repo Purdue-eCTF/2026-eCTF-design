@@ -3,8 +3,8 @@ use bytemuck::{Pod, Zeroable};
 use crate::{
     context::*,
     crypto::{
-        SymmetricMetadata, decrypt_payload_pub, encrypt_payload_pub, sign_file, unwrap_pub_message,
-        unwrap_symmetric_message, verify_signature_bytes,
+        PubKeyMetadata, SymmetricMetadata, decrypt_payload_pub, encrypt_payload_pub, sign_file,
+        unwrap_pub_message, unwrap_symmetric_message, verify_signature_bytes,
     },
     file::{self, FatEntry, FatTable, File, FileMeta, FileName, UUID},
     listen::{self, EncryptedInterrogateInfo},
@@ -114,17 +114,16 @@ fn handle_read(
     verify_signature_bytes(file, &pk_sign)?;
 
     // buf = N || PT
-
-    let (name, pt) = buffer.split_at_mut(file::NAME_SIZE);
+    let (name, protected) = buffer.split_at_mut(file::NAME_SIZE);
 
     name.copy_from_slice(&file.protected.name.0);
-    pt[..file_length].copy_from_slice(&file.protected.contents.0[..file_length]);
+    protected[..file_length].copy_from_slice(&file.protected.contents.0[..file_length]);
     let ad = file.protected.associated_data();
 
     // decrypt the file into buffer
     let sk_read = group_key.sk_read.ok_or(ProtocolError::InvalidGroup)?;
     decrypt_payload_pub(
-        &mut pt[..file_length],
+        &mut protected[..file_length],
         &file.protected.gn,
         &file.protected.nonce,
         &file.protected.tag,
@@ -257,7 +256,7 @@ fn handle_write(
     // TODO: just write the one fat entry
     unsafe {
         ctx.files[slot]
-            .set(&file)
+            .set(file)
             .map_err(|_| ProtocolError::StorageFailure)?;
     }
     println!("5: {}", ctx.time());
@@ -315,15 +314,14 @@ fn handle_receive(
 
     // receive file
     assert!(buffer.len() >= protocol::TRANSFER_RECEIVE_MAX_LENGTH);
-    let mut buf = buffer;
-    let response = Message::read(MessagePort::UART1, &mut buf)?;
+    let response = Message::read(MessagePort::UART1, buffer)?;
     match response.opcode {
         Opcode::Error => return Err(ProtocolError::PeerBoardError),
         Opcode::Receive => (),
         _ => return Err(ProtocolError::InvalidOpcode),
     };
 
-    if response.length as usize != buf.len() {
+    if response.length as usize != buffer.len() {
         return Err(ProtocolError::InvalidMessageLength);
     }
 
@@ -331,7 +329,7 @@ fn handle_receive(
     println!("4: {}", ctx.time());
 
     // decrypt with T1
-    let payload = unwrap_symmetric_message(&mut buf, &TRANSFER_RECV.0, &[Opcode::Receive.into()])?;
+    let payload = unwrap_symmetric_message(buffer, &TRANSFER_RECV.0, &[Opcode::Receive.into()])?;
     if payload.len() < size_of::<u16>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -539,10 +537,18 @@ fn handle_listen_request(
     }
 }
 
+pub const COMMAND_MAX_LENGTH: usize = size_of::<File>()
+    + size_of::<PubKeyMetadata>()
+    + size_of::<u16>()
+    + size_of::<SymmetricMetadata>();
+
+#[repr(C, align(8))]
+struct MessageBuffer([u8; COMMAND_MAX_LENGTH]);
+
 /// convenience function to wait until the last second to send the response over UART
 pub fn delayed_write(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
-    let mut file = File::empty(); // we want buffer to be aligned to file size
-    let buffer = bytemuck::bytes_of_mut(&mut file);
+    let mut message = MessageBuffer([0; _]);
+    let buffer = bytemuck::bytes_of_mut(&mut message.0);
 
     // since we're just using as a timer, we don't want it to overflow
     // and we don't really care about sub-ms accuracy

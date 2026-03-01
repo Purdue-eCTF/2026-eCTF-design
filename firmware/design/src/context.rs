@@ -309,7 +309,6 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
 }
 
 static mut TICKS: AtomicU32 = AtomicU32::new(0);
-const CYCLES_PER_TICK: u32 = mspm0l222x_hal::SYSOSC_FREQUENCY / 10_000;
 #[allow(static_mut_refs)]
 #[exception]
 fn SysTick() {

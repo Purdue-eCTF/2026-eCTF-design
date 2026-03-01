@@ -1,12 +1,9 @@
-use argon2::{self, Block};
-use blake2::digest::{FixedOutputReset, Output, OutputSizeUser, Reset};
 use blake2::{Blake2b512, Blake2s256, Digest as BlakeDigest};
 use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::aead::generic_array::GenericArray;
 use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
-use design_macros::rand_ops;
-use ed25519_dalek::hazmat::{ExpandedSecretKey, raw_sign_prehashed, raw_verify_prehashed};
-use ed25519_dalek::{Digest as DalekDigest, Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::hazmat::{raw_sign_prehashed, raw_verify_prehashed};
+use ed25519_dalek::{Signature, VerifyingKey};
 use mspm0l222x_hal::trng;
 use thiserror::Error;
 use x25519_dalek::{PublicKey, StaticSecret};
@@ -325,9 +322,8 @@ pub fn blake_hash(input: &[u8], salt: &[u8; 32]) -> [u8; 32] {
     let mut blake_hasher = Blake2s256::new();
     blake_hasher.update(input);
     blake_hasher.update(salt);
-    let result = *blake_hasher.finalize().as_array().unwrap();
 
     // rand_ops!(trng::trng());
 
-    result
+    *blake_hasher.finalize().as_array().unwrap()
 }

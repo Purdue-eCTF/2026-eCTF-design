@@ -311,7 +311,6 @@ type Salt = [u8; 32];
 struct PinSalts {
     boot_salt_0: Salt,
     boot_salt_1: Salt,
-    pin_salt: Salt,
     k_auth: SymmetricKey,
     k_auth_salt: Salt,
     k_auth_hash: [u8; 32],
@@ -337,7 +336,6 @@ impl PinSalts {
         PinSalts {
             boot_salt_0,
             boot_salt_1,
-            pin_salt,
             k_auth: SymmetricKey(k_auth),
             k_auth_salt,
             k_auth_hash,
