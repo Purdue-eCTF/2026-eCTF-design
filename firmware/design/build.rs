@@ -275,11 +275,11 @@ impl Pin {
 const ARGON_M_COST: u32 = 8;
 const ARGON_P_COST: u32 = 1;
 // TODO: figure out these costs
-const T_COST_BOOT: u32 = 1;
-const T_COST_PIN: u32 = 1;
+// approx. t (ms) = 21 * cost + 10
+const T_COST_BOOT: u32 = 45; // ~950ms
+const T_COST_PIN: u32 = 185; // ~3875ms
 const T_COST_K_AUTH: u32 = 1;
 
-// TODO: emit this in secrets_generated
 const DERIVE_SALT: &[u8] = b"ectf-deriv";
 
 fn derive_next_salt(input: &[u8], t_cost: u32) -> Salt {

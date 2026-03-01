@@ -491,13 +491,6 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
         return Err(ProtocolError::InvalidSlot);
     }
 
-    let new_fat = FatEntry {
-        uuid,
-        length: file.protected.contents_length,
-        padding: 0,
-        addr: ctx.fat.get().ok_or(ProtocolError::InvalidFile)?.entries[write_slot].addr,
-    };
-
     println!("9: {}", ctx.time());
 
     // TODO: just write the one fat entry
@@ -506,9 +499,14 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
             .set(file)
             .map_err(|_| ProtocolError::StorageFailure)?;
         println!("10: {}", ctx.time());
-        let current = ctx.fat.get().ok_or(ProtocolError::InvalidFile)?;
-        let mut entries = current.entries;
-        entries[write_slot] = new_fat;
+        // fat can't be read from, so reconstruct from files
+        let mut entries = [FatEntry::empty(); _];
+        for (i, file) in ctx.files.iter().enumerate() {
+            entries[i] = file
+                .get()
+                .ok_or(ProtocolError::InvalidFile)?
+                .to_fat(&k_auth)?;
+        }
         ctx.fat
             .set(&FatTable { entries })
             .map_err(|_| ProtocolError::StorageFailure)?;

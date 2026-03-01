@@ -262,7 +262,7 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
                 write: true,
                 execute: false,
             },
-            // peripheral memory last year we use strongly ordered
+            // last year, we used strongly ordered for peripheral memory
             MemoryCacheType::StronglyOrdered,
         )
         .unwrap();
@@ -282,16 +282,25 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
         )
         .unwrap();
 
-        // first guard stop flashcat type attack reading out file data
+        // first guard: stop flashcat type attack reading out file data
         let files_guard = (&_files_app1 as *const u8 as usize) - MPU_MIN_SIZE;
         add_mpu_guard(mpu, 4, files_guard as u32);
 
-        // second guard stop unbounded read from inside files hitting uuid in FAT
-        // not reserve in linker but File doesn't take up whole 9 pages, put right at end
-        let fat_guard = (&_filetable as *const u8 as usize) - MPU_MIN_SIZE;
-        add_mpu_guard(mpu, 5, fat_guard as u32);
-        // probably no guard needed after FAT since FAT is never read by design (except for updating FAT again)
-        // can add one to be safe in future
+        // set FAT as no RWX, because we regenerate every time from file contents
+        // and flash doesn't hit the memory system
+        mpu.set_region(
+            5,
+            &_filetable as *const u8 as u32,
+            MpuRegionSize::KibiByte1,
+            0,
+            MpuPerms {
+                read: true,
+                write: false,
+                execute: false,
+            },
+            MemoryCacheType::StronglyOrdered,
+        )
+        .unwrap();
 
         // TODO: potential protection regions:
         // - before secret keys
