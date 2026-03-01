@@ -9,9 +9,6 @@ use bytemuck::{Pod, Zeroable};
 use design_macros::rand_ops;
 use mspm0l222x_hal::trng;
 
-// ARGON2 TUNING PARAMETERS
-// Requirements: Boot ~4s and PIN ~1s
-
 const ARGON_M_COST_USIZE: usize = ARGON_M_COST as usize;
 
 #[repr(C)]

@@ -1,8 +1,5 @@
-use bytemuck::{NoUninit, bytes_of};
 use core::{
     fmt::{self, Write},
-    marker::PhantomData,
-    mem::size_of,
     sync::atomic::{AtomicU32, Ordering},
 };
 use cortex_m::peripheral::SYST;
@@ -11,11 +8,9 @@ use mspm0l222x_hal::mpu::{MemoryCacheType, MpuPerms, MpuRegionSize};
 use subtle::ConstantTimeEq;
 
 use mspm0l222x_hal::{
-    Peripherals,
-    flash::{self, FLASH_PAGE_SIZE, FlashController},
+    flash::{FLASH_PAGE_SIZE, FlashController},
     iomux::Iomux,
     mpu::Mpu,
-    trng::Trng,
     uart::{Uart0, Uart1},
 };
 
@@ -166,6 +161,7 @@ impl Context {
         unsafe { self.boot_salt_1.set(&salt).unwrap() };
     }
 
+    #[inline(never)]
     pub(crate) fn k_auth(&self, pin: &[u8; 6]) -> Result<[u8; 32], ProtocolError> {
         let mut k_auth = [0; 32];
         let mut input = [0; 32 + 6];
