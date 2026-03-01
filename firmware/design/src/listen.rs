@@ -1,10 +1,8 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::{
-    Context,
-    crypto::{
-        self, PubKeyMetadata, SymmetricMetadata, decrypt_payload_pub, unwrap_symmetric_message,
-    },
+    context::Context,
+    crypto::{self, PubKeyMetadata, SymmetricMetadata, unwrap_symmetric_message},
     file::{File, FileName},
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
     protocol::{ProtocolError, TransferM0Encrypted},
@@ -130,7 +128,7 @@ fn respond_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), Protocol
             // check if the slot is full and the group id matches
             let metadata = &file.protected;
             // if a valid file matches the group, add it to the list
-            if file.is_full() && metadata.group == group {
+            if metadata.group == group {
                 let group_keys = secrets::get_enc_group_keys(group)?;
 
                 // get location of the next entry in list
@@ -210,9 +208,6 @@ fn respond_transfer(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolErr
     }
 
     let file_src = ctx.files[slot].get().ok_or(ProtocolError::InvalidFile)?;
-    if !file_src.is_full() {
-        return Err(ProtocolError::InvalidFile);
-    }
 
     let group_keys = secrets::get_enc_group_keys(file_src.protected.group)?;
     let group_id_bytes = file_src.protected.group.to_le_bytes();

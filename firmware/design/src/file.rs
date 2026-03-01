@@ -75,7 +75,6 @@ impl ProtectedFileData {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct File {
-    pub state: u64,
     pub signature: [u8; 64],
     pub protected: ProtectedFileData,
     _padding: [u8; 4],
@@ -86,21 +85,13 @@ impl File {
     pub const FULL: u64 = 0xc0aa73e0c260426e;
     pub const fn empty() -> Self {
         Self {
-            state: File::EMPTY,
             signature: [0; _],
             protected: ProtectedFileData::empty(),
             _padding: [0; _],
         }
     }
-    pub(crate) fn is_full(&self) -> bool {
-        self.state == File::FULL
-    }
 
-    pub(crate) fn to_fat(&self, k_auth: &[u8; 32]) -> Result<FatEntry, ProtocolError> {
-        if !self.is_full() {
-            return Ok(FatEntry::empty());
-        }
-
+    pub fn to_fat(&self, k_auth: &[u8; 32]) -> Result<FatEntry, ProtocolError> {
         let enc_group_keys = secrets::get_enc_group_keys(self.protected.group)?;
         let group_keys = enc_group_keys.decrypt(k_auth);
 
@@ -131,7 +122,7 @@ pub struct FatEntry {
 }
 
 impl FatEntry {
-    pub(crate) const fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             uuid: UUID([0; _]),
             length: 0,
