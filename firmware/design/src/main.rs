@@ -172,7 +172,7 @@ fn handle_list(
 fn handle_list_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     // 4 bytes at start for total number of files; file slot, name of file, group id, for 8 files
     const METADATA_SIZE: usize = core::mem::size_of::<FileMeta>();
-    let file_list = &mut buffer[4..];
+    let file_list = &mut buffer[4..4 + 8 * METADATA_SIZE];
     let list_entries: &mut [FileMeta; 8] = bytemuck::from_bytes_mut(file_list);
     let mut counter: usize = 0;
     for i in 0..8 {
