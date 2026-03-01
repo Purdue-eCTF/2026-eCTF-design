@@ -26,7 +26,7 @@ use crate::{
     },
     file::{FatEntry, FatTable, File, FileMeta, FileName, UUID},
     listen::EncryptedInterrogateInfo,
-    message::{CHUNK_SIZE, HEADER_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
+    message::{CHUNK_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
     protocol::ProtocolError,
     secrets::{
         COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, STACK_CANARY_START_VALUE,
@@ -43,7 +43,6 @@ fn handle_panics(info: &PanicInfo) -> ! {
     }
 
     cortex_m::peripheral::SCB::sys_reset();
-    loop {}
 }
 
 #[unsafe(link_section = ".stack_canary.default")]
@@ -56,7 +55,6 @@ extern "C" fn __stack_chk_fail() -> ! {
     eprintln!("stack smashing detected");
 
     cortex_m::peripheral::SCB::sys_reset();
-    loop {}
 }
 
 #[entry]
@@ -155,6 +153,7 @@ fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
 
     let ListHeader { pin } = *bytemuck::from_bytes(&msg);
 
+    // check that PIN is correct before continuing
     let _k_auth = ctx.k_auth(&pin)?;
 
     // 4 bytes at start for total number of files; file slot, name of file, group id, for 8 files
@@ -504,13 +503,6 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
         return Err(ProtocolError::InvalidSlot);
     }
 
-    let new_fat = FatEntry {
-        uuid,
-        length: file.protected.contents_length,
-        padding: 0,
-        addr: ctx.fat.get().ok_or(ProtocolError::InvalidFile)?.entries[write_slot].addr,
-    };
-
     println!("9: {}", ctx.time());
 
     // TODO: just write the one fat entry
@@ -519,9 +511,14 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
             .set(file)
             .map_err(|_| ProtocolError::StorageFailure)?;
         println!("10: {}", ctx.time());
-        let current = ctx.fat.get().ok_or(ProtocolError::InvalidFile)?;
-        let mut entries = current.entries;
-        entries[write_slot] = new_fat;
+        // fat can't be read from, so reconstruct from files
+        let mut entries = [FatEntry::empty(); _];
+        for (i, file) in ctx.files.iter().enumerate() {
+            entries[i] = file
+                .get()
+                .ok_or(ProtocolError::InvalidFile)?
+                .to_fat(&k_auth)?;
+        }
         ctx.fat
             .set(&FatTable { entries })
             .map_err(|_| ProtocolError::StorageFailure)?;
@@ -559,6 +556,7 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
 
     println!("1: {}", ctx.time());
 
+    // check that PIN is correct before continuing
     let _k_auth = ctx.k_auth(&pin)?;
 
     println!("2: {}", ctx.time());

@@ -2,7 +2,7 @@ use core::ops::Index;
 
 use bytemuck::{NoUninit, Pod, Zeroable};
 
-use crate::{crypto::SymmetricMetadata, flash};
+use crate::{context::Context, crypto::SymmetricMetadata, flash, protocol::ProtocolError, secrets};
 
 /// Maximum amount of content a file can store in bytes.
 pub const CONTENT_SIZE: usize = 8192;
@@ -122,6 +122,30 @@ impl File {
     pub(crate) fn is_full(&self) -> bool {
         self.state == File::FULL
     }
+
+    pub(crate) fn to_fat(&self, k_auth: &[u8; 32]) -> Result<FatEntry, ProtocolError> {
+        if !self.is_full() {
+            return Ok(FatEntry::empty());
+        }
+
+        let enc_group_keys = secrets::get_enc_group_keys(self.protected.group)?;
+        let group_keys = enc_group_keys.decrypt(k_auth);
+
+        let mut uuid = self.protected.uuid;
+        let ad = self.protected.associated_data();
+        self.protected.uuid_ct_metadata.decrypt(
+            bytemuck::bytes_of_mut(&mut uuid),
+            &group_keys.k_uuid.ok_or(ProtocolError::InvalidGroup)?.0,
+            &ad,
+        )?;
+
+        Ok(FatEntry {
+            uuid,
+            length: self.protected.contents_length,
+            padding: 0,
+            addr: &raw const self.protected.contents as u32,
+        })
+    }
 }
 
 /// A FAT Entry describes the location and amount of space in flash where a File is to be
@@ -142,6 +166,17 @@ pub struct FatEntry {
 }
 
 /// The FAT Table indexes all FatEntries on the flash.
+impl FatEntry {
+    pub(crate) const fn empty() -> Self {
+        Self {
+            uuid: UUID([0; _]),
+            length: 0,
+            padding: 0,
+            addr: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 
 /// File allocation table used by the eCTF bootloader.
