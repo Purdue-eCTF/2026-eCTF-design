@@ -428,6 +428,7 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
         return Err(ProtocolError::InvalidMessageLength);
     }
 
+    // time to receive after request sent: ~1.8 seconds
     println!("4: {}", ctx.time());
 
     // decrypt with T1
@@ -453,6 +454,7 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
     println!("6: {}", ctx.time());
 
     // decrypt assymetrically encrypted part of message
+    // about ~0.75-0.8 seconds
     let inner = unwrap_pub_message(
         assymetric_payload,
         &group_keys.sk_trans.ok_or(ProtocolError::InvalidGroup)?.0,
@@ -470,6 +472,7 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
         return Err(ProtocolError::InvalidGroup);
     }
 
+    // verify takes about 0.7 seconds
     verify_signature_bytes(file, &enc_group_keys.pk_sign.0)?;
 
     println!("8: {}", ctx.time());
@@ -511,6 +514,7 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
             .map_err(|_| ProtocolError::StorageFailure)?;
     }
 
+    // 0.08 seconds total writing flash
     println!("11: {}", ctx.time());
 
     Message::write_header(Opcode::Receive, 0, MessagePort::UART0);
