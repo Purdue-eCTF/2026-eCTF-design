@@ -77,7 +77,6 @@ impl EncryptedInterrogateInfo {
     }
 }
 
-#[inline(never)]
 pub fn recv(ctx: &mut Context, opcode: Opcode, msg_len: usize) -> Result<(), ProtocolError> {
     match opcode {
         Opcode::Interrogate => respond_interrogate(ctx, msg_len)?,
@@ -95,12 +94,8 @@ fn respond_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), Protocol
 
     let mut body = [0u8; MAX_BODY_SIZE];
     Message::read_body(MessagePort::UART1, &mut body[..msg_len])?;
+    let body = &mut body[..msg_len];
 
-    respond_interrogate_inner(ctx, &mut body[..msg_len])
-}
-
-#[inline(never)]
-fn respond_interrogate_inner(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolError> {
     // Expect body = Enc_I0(Group1 || Group2 || ... || GroupN) || SM
     let i0 = INTERROGATE_SEND.0;
 
@@ -214,11 +209,6 @@ fn respond_transfer(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolErr
         return Err(ProtocolError::InvalidSlot);
     }
 
-    respond_transfer_inner(ctx, slot)
-}
-
-#[inline(never)]
-fn respond_transfer_inner(ctx: &mut Context, slot: usize) -> Result<(), ProtocolError> {
     let file_src = ctx.files[slot].get().ok_or(ProtocolError::InvalidFile)?;
     if !file_src.is_full() {
         return Err(ProtocolError::InvalidFile);

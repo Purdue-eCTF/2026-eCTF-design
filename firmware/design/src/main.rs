@@ -293,6 +293,24 @@ fn handle_write(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> 
     Message::read_body_no_ack(MessagePort::UART0, msg)?;
 
     let (header, data) = msg.split_at(core::mem::size_of::<WriteFileHeader>());
+    let header: WriteFileHeader = *bytemuck::from_bytes(header);
+
+    println!("1: {}", ctx.time());
+
+    let k_auth = ctx.k_auth(&header.pin)?;
+
+    println!("2: {}", ctx.time());
+
+    handle_write_inner(ctx, header, data, &k_auth)
+}
+
+#[inline(never)]
+fn handle_write_inner(
+    ctx: &mut Context,
+    header: WriteFileHeader,
+    data: &[u8],
+    k_auth: &[u8; 32],
+) -> Result<(), ProtocolError> {
     let WriteFileHeader {
         pin,
         slot,
@@ -300,7 +318,8 @@ fn handle_write(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> 
         name,
         uuid,
         length,
-    } = *bytemuck::from_bytes(header);
+    } = header;
+    let slot = slot as usize;
 
     // check if the data from message is larger than allocated data/content area in fat, or whether
     // the allocated data has incorrect length
@@ -309,32 +328,11 @@ fn handle_write(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> 
         return Err(ProtocolError::InvalidMessageLength);
     }
 
-    // TODO: check number of file slot requirements
     let slot = slot as usize;
     if slot > 7 {
         return Err(ProtocolError::InvalidSlot);
     }
 
-    println!("1: {}", ctx.time());
-
-    let k_auth = ctx.k_auth(&pin)?;
-
-    println!("2: {}", ctx.time());
-
-    handle_write_inner(ctx, slot, group, name, uuid, data_len, data, &k_auth)
-}
-
-#[inline(never)]
-fn handle_write_inner(
-    ctx: &mut Context,
-    slot: usize,
-    group: u16,
-    name: FileName,
-    uuid: UUID,
-    data_len: usize,
-    data: &[u8],
-    k_auth: &[u8; 32],
-) -> Result<(), ProtocolError> {
     // retrieve signing and read encryption keys with pin
     let enc_group_keys = get_enc_group_keys(group)?;
     let group_key = enc_group_keys.decrypt(k_auth);
@@ -679,7 +677,6 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
 
 /// Listens for any Receive or Interrogate command from an adjacent board to
 /// process before sending back the corresponding data.
-#[inline(never)]
 fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
     Message::send_ack(MessagePort::UART0);
     let msg = Message::read_header(MessagePort::UART1)?;
@@ -689,6 +686,7 @@ fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
     Ok(())
 }
 
+#[inline(never)]
 fn handle_listen_request(ctx: &mut Context) -> Result<(), ProtocolError> {
     if let Err(err) = handle_listen(ctx) {
         let _ = Message::write(Opcode::Error, MessagePort::UART1, &[]);
