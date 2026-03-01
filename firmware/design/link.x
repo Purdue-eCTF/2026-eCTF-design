@@ -10,7 +10,7 @@ Offset  | Size    | Name                  | Description
 __file_app1_size = 6*(9 * 1024);
 __file_app2_size = 2*(9 * 1024);
 
-__data_region_size = 128;
+__data_region_size = 8192 + 64;
 
 __mpu_min_size = 32;
 

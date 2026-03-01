@@ -26,7 +26,7 @@ use crate::{
     },
     file::{FatEntry, FatTable, File, FileMeta, FileName, UUID},
     listen::EncryptedInterrogateInfo,
-    message::{CHUNK_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
+    message::{CHUNK_SIZE, Message, MessagePort, Opcode},
     protocol::ProtocolError,
     secrets::{
         COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, STACK_CANARY_START_VALUE,
@@ -137,6 +137,7 @@ struct ListHeader {
 /// List files; requires pin on usage. Sends back a head with total number of
 /// files and length of the message body, and then the data, with the name,
 /// group, and slot of the file.
+#[inline(never)]
 fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ListHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
@@ -151,6 +152,11 @@ fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     // check that PIN is correct before continuing
     let _k_auth = ctx.k_auth(&pin)?;
 
+    handle_list_inner(ctx)
+}
+
+#[inline(never)]
+fn handle_list_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     // 4 bytes at start for total number of files; file slot, name of file, group id, for 8 files
     const METADATA_SIZE: usize = core::mem::size_of::<FileMeta>();
     let mut body = [0u8; 4 + 8 * METADATA_SIZE];
@@ -190,6 +196,7 @@ struct ReadFileHeader {
 // Read file on given slot, returning to the host the file; requires pin on
 // usage. Since the file is stored on flash encrypted, this function uses the
 // pin to decrypt the file before returning it to the host.
+#[inline(never)]
 fn handle_read(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ReadFileHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
@@ -206,6 +213,17 @@ fn handle_read(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
         return Err(ProtocolError::InvalidSlot);
     }
 
+    let k_auth = ctx.k_auth(&pin)?;
+
+    handle_read_inner(ctx, slot, &k_auth)
+}
+
+#[inline(never)]
+fn handle_read_inner(
+    ctx: &mut Context,
+    slot: usize,
+    k_auth: &[u8; 32],
+) -> Result<(), ProtocolError> {
     let file = ctx.files[slot].get().ok_or(ProtocolError::InvalidFile)?;
     let file_length = file.protected.contents_length as usize;
 
@@ -216,8 +234,9 @@ fn handle_read(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
 
     // get group key and verify file hasn't been tampered
     let group = file.protected.group;
-    let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin)?;
-    let pk_sign = get_enc_group_keys(group)?.pk_sign.0;
+    let enc_group_keys = get_enc_group_keys(group)?;
+    let group_key = enc_group_keys.decrypt(k_auth);
+    let pk_sign = enc_group_keys.pk_sign.0;
     verify_signature_bytes(file, &pk_sign)?;
 
     // buf = N || PT
@@ -257,6 +276,7 @@ struct WriteFileHeader {
 
 /// Write a file received from host into flash. The file should be encrypted
 /// and signed.
+#[inline(never)]
 fn handle_write(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len < size_of::<WriteFileHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
@@ -297,11 +317,28 @@ fn handle_write(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> 
 
     println!("1: {}", ctx.time());
 
-    // retrieve signing and read encryption keys with pin
-    let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin)?;
-    let pk_read = group_key.pk_read.ok_or(ProtocolError::InvalidGroup)?.0;
+    let k_auth = ctx.k_auth(&pin)?;
 
     println!("2: {}", ctx.time());
+
+    handle_write_inner(ctx, slot, group, name, uuid, data_len, data, &k_auth)
+}
+
+#[inline(never)]
+fn handle_write_inner(
+    ctx: &mut Context,
+    slot: usize,
+    group: u16,
+    name: FileName,
+    uuid: UUID,
+    data_len: usize,
+    data: &[u8],
+    k_auth: &[u8; 32],
+) -> Result<(), ProtocolError> {
+    // retrieve signing and read encryption keys with pin
+    let enc_group_keys = get_enc_group_keys(group)?;
+    let group_key = enc_group_keys.decrypt(k_auth);
+    let pk_read = group_key.pk_read.ok_or(ProtocolError::InvalidGroup)?.0;
 
     // generate empty file variable
     let mut file = File::empty();
@@ -388,6 +425,10 @@ struct ReceiveFileHeader {
     pub write_slot: u8,
 }
 
+#[repr(align(8))]
+struct AlignedBuffer([u8; protocol::TRANSFER_RECEIVE_MAX_LENGTH]);
+
+#[inline(never)]
 fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ReceiveFileHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
@@ -409,21 +450,31 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
 
     println!("2: {}", ctx.time());
 
+    handle_receive_inner(ctx, read_slot, write_slot, &k_auth)
+}
+
+#[inline(never)]
+fn handle_receive_inner(
+    ctx: &mut Context,
+    read_slot: u8,
+    write_slot: u8,
+    k_auth: &[u8; 32],
+) -> Result<(), ProtocolError> {
     // request file
     protocol::initiate_transfer(read_slot)?;
 
     println!("3: {}", ctx.time());
 
     // receive file
-    let mut buf = [0u8; protocol::TRANSFER_RECEIVE_MAX_LENGTH];
-    let response = Message::read(MessagePort::UART1, &mut buf)?;
+    let mut buf = AlignedBuffer([0u8; protocol::TRANSFER_RECEIVE_MAX_LENGTH]);
+    let response = Message::read(MessagePort::UART1, &mut buf.0)?;
     if response.opcode == Opcode::Error {
         return Err(ProtocolError::PeerBoardError);
     }
     if response.opcode != Opcode::Receive {
         return Err(ProtocolError::InvalidOpcode);
     }
-    if response.length as usize != buf.len() {
+    if response.length as usize != buf.0.len() {
         return Err(ProtocolError::InvalidMessageLength);
     }
 
@@ -431,7 +482,8 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
     println!("4: {}", ctx.time());
 
     // decrypt with T1
-    let payload = unwrap_symmetric_message(&mut buf, &TRANSFER_RECV.0, &[Opcode::Receive.into()])?;
+    let payload =
+        unwrap_symmetric_message(&mut buf.0, &TRANSFER_RECV.0, &[Opcode::Receive.into()])?;
     if payload.len() < size_of::<u16>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -448,7 +500,7 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
 
     // decrypt correct keys based on group
     let enc_group_keys = secrets::get_enc_group_keys(group_id)?;
-    let group_keys = enc_group_keys.decrypt(&k_auth);
+    let group_keys = enc_group_keys.decrypt(k_auth);
 
     println!("6: {}", ctx.time());
 
@@ -504,7 +556,7 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
             entries[i] = file
                 .get()
                 .ok_or(ProtocolError::InvalidFile)?
-                .to_fat(&k_auth)?;
+                .to_fat(k_auth)?;
         }
         ctx.fat
             .set(&FatTable { entries })
@@ -528,6 +580,7 @@ struct InterrogateHeader {
 /// has permissions for. Since the entire list of files is encrypted
 /// symmetrically and each file's metadata encrypted asymmetrically, all this
 /// will be decrypted before being sent back to host.
+#[inline(never)]
 fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     // Command contains just the PIN
     if msg_len != size_of::<InterrogateHeader>() {
@@ -547,6 +600,11 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
 
     println!("2: {}", ctx.time());
 
+    handle_interrogate_inner(ctx)
+}
+
+#[inline(never)]
+fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     // TODO: maybe send bitmask
     const GROUPS_BYTE_LEN: usize = COPY_PERM_GROUPS.len() * size_of::<u16>();
     let mut buf = [0u8; GROUPS_BYTE_LEN + size_of::<SymmetricMetadata>()];
@@ -621,12 +679,13 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
 
 /// Listens for any Receive or Interrogate command from an adjacent board to
 /// process before sending back the corresponding data.
+#[inline(never)]
 fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
     Message::send_ack(MessagePort::UART0);
-    let mut body = [0u8; MAX_BODY_SIZE];
-    let msg = Message::read(MessagePort::UART1, &mut body)?;
+    let msg = Message::read_header(MessagePort::UART1)?;
+    Message::send_ack(MessagePort::UART1);
     println!("listen: got message: {:?}", msg.opcode);
-    listen::recv(ctx, msg.opcode, &mut body[..msg.length as usize])?;
+    listen::recv(ctx, msg.opcode, msg.length as usize)?;
     Ok(())
 }
 

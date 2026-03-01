@@ -369,6 +369,9 @@ impl Write for UartWriter {
 /// Called internally by print and println macros.
 ///
 /// Prints formatted info as debug messages.
+// inline never because UartWriter has a big stack buffer
+// excessive inlining can combine with other calls to stack overflow
+#[inline(never)]
 pub fn write_fmt(opcode: Opcode, args: fmt::Arguments) {
     let mut writer = UartWriter::new(opcode);
     let _ = writer.write_fmt(args);
