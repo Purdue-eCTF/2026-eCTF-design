@@ -11,12 +11,11 @@ mod protocol;
 mod salt;
 mod secrets;
 
-use bytemuck::{Pod, Zeroable};
+use bytemuck::{Pod, Zeroable, bytes_of_mut};
 use context::*;
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
 use design_macros::rand_ops;
-use mspm0l222x_hal::flash::FLASH_PAGE_SIZE;
 use mspm0l222x_hal::{CorePeripherals, Peripherals};
 use mspm0l222x_hal::{Trng, trng};
 
@@ -99,16 +98,17 @@ fn main() -> ! {
 
 /// convenience function to wait until the last second to send the response over UART
 fn delayed_write(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
-    let mut buffer = [0u8; 9 * FLASH_PAGE_SIZE]; // 8kb for file + 1kb for misc metadata
+    let mut file = File::empty(); // we want buffer to be aligned to file size
+    let buffer = bytes_of_mut(&mut file);
 
     let start = ctx.time();
     let res = match opcode {
-        Opcode::List => handle_list(ctx, &mut buffer, msg_len),
-        Opcode::Read => handle_read(ctx, &mut buffer, msg_len),
-        Opcode::Write => handle_write(ctx, &mut buffer, msg_len),
-        Opcode::Receive => handle_receive(ctx, &mut buffer, msg_len),
-        Opcode::Interrogate => handle_interrogate(ctx, &mut buffer, msg_len),
-        Opcode::Listen => handle_listen_request(ctx, &mut buffer, msg_len),
+        Opcode::List => handle_list(ctx, buffer, msg_len),
+        Opcode::Read => handle_read(ctx, buffer, msg_len),
+        Opcode::Write => handle_write(ctx, buffer, msg_len),
+        Opcode::Receive => handle_receive(ctx, buffer, msg_len),
+        Opcode::Interrogate => handle_interrogate(ctx, buffer, msg_len),
+        Opcode::Listen => handle_listen_request(ctx, buffer, msg_len),
         Opcode::Ack => Ok(0),
         e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
     };
@@ -360,9 +360,7 @@ fn handle_write_inner(
 
     // generate empty file variable
     // TODO: are all fields set, or do we need a *file = File::empty()?
-    let (_, [file], _) = (unsafe { buffer.align_to_mut::<File>() }) else {
-        panic!("can't align to file alignment");
-    };
+    let file: &mut File = bytemuck::from_bytes_mut(buffer);
     file.state = File::FULL;
 
     // set file metadata
@@ -697,22 +695,22 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
 
 /// Listens for any Receive or Interrogate command from an adjacent board to
 /// process before sending back the corresponding data.
-fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
+fn handle_listen(ctx: &mut Context, buffer: &mut [u8]) -> Result<(), ProtocolError> {
     Message::send_ack(MessagePort::UART0);
-    let msg = Message::read_header(MessagePort::UART1)?;
+    let msg = Message::read(MessagePort::UART1, buffer)?;
     Message::send_ack(MessagePort::UART1);
     println!("listen: got message: {:?}", msg.opcode);
-    listen::recv(ctx, msg.opcode, msg.length as usize)?;
+    listen::recv(ctx, msg.opcode, &mut buffer[..msg.length as usize])?;
     Ok(())
 }
 
 #[inline(never)]
 fn handle_listen_request(
     ctx: &mut Context,
-    _buffer: &mut [u8],
+    buffer: &mut [u8],
     _msg_len: usize,
 ) -> Result<usize, ProtocolError> {
-    if let Err(err) = handle_listen(ctx) {
+    if let Err(err) = handle_listen(ctx, buffer) {
         let _ = Message::write(Opcode::Error, MessagePort::UART1, &[]);
         // returning error will cause uart0 to have error written
         Err(err)
