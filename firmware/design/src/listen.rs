@@ -75,22 +75,30 @@ impl EncryptedInterrogateInfo {
     }
 }
 
-pub fn recv(ctx: &mut Context, opcode: Opcode, msg_len: usize) -> Result<(), ProtocolError> {
+pub fn recv(
+    ctx: &mut Context,
+    opcode: Opcode,
+    body: &mut [u8],
+    msg_len: usize,
+) -> Result<(), ProtocolError> {
     match opcode {
-        Opcode::Interrogate => respond_interrogate(ctx, msg_len)?,
-        Opcode::Receive => respond_transfer(ctx, msg_len)?,
+        Opcode::Interrogate => respond_interrogate(ctx, body, msg_len)?,
+        Opcode::Receive => respond_transfer(ctx, body, msg_len)?,
         _ => return Err(ProtocolError::InvalidOpcode),
     };
     Ok(())
 }
 
 #[inline(never)]
-fn respond_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn respond_interrogate(
+    ctx: &mut Context,
+    body: &mut [u8],
+    msg_len: usize,
+) -> Result<(), ProtocolError> {
     if msg_len > MAX_BODY_SIZE {
         return Err(ProtocolError::InvalidMessageLength);
     }
 
-    let mut body = [0u8; MAX_BODY_SIZE];
     Message::read_body(MessagePort::UART1, &mut body[..msg_len])?;
     let body = &mut body[..msg_len];
 
@@ -190,15 +198,19 @@ fn respond_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), Protocol
 }
 
 #[inline(never)]
-fn respond_transfer(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn respond_transfer(
+    ctx: &mut Context,
+    body: &mut [u8],
+    msg_len: usize,
+) -> Result<(), ProtocolError> {
     if msg_len != size_of::<TransferM0Encrypted>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
 
-    let mut body = [0u8; size_of::<TransferM0Encrypted>()];
-    Message::read_body(MessagePort::UART1, &mut body)?;
+    let body = &mut body[..size_of::<TransferM0Encrypted>()];
+    Message::read_body(MessagePort::UART1, body)?;
 
-    let enc: &TransferM0Encrypted = bytemuck::from_bytes(&body);
+    let enc: &TransferM0Encrypted = bytemuck::from_bytes(body);
     let m0 = enc.decrypt()?;
 
     let slot: usize = m0.slot as usize;

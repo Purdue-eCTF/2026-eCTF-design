@@ -109,7 +109,7 @@ fn handle_read(
 
     // get group key and verify file hasn't been tampered
     let group = file.protected.group;
-    let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin)?;
+    let group_key = secrets::get_enc_group_keys(group)?.decrypt(&ctx.k_auth(&pin)?);
     let pk_sign = get_enc_group_keys(group)?.pk_sign.0;
     verify_signature_bytes(file, &pk_sign)?;
 
@@ -193,7 +193,7 @@ fn handle_write(
     println!("1: {}", ctx.time());
 
     // retrieve signing and read encryption keys with pin
-    let group_key = secrets::get_group_keys_from_pin(ctx, group, &pin)?;
+    let group_key = secrets::get_enc_group_keys(group)?.decrypt(&ctx.k_auth(&pin)?);
     let pk_read = group_key.pk_read.ok_or(ProtocolError::InvalidGroup)?.0;
 
     println!("2: {}", ctx.time());
@@ -514,20 +514,24 @@ fn handle_interrogate(
 
 /// Listens for any Receive or Interrogate command from an adjacent board to
 /// process before sending back the corresponding data.
-fn handle_listen(ctx: &mut Context, buffer: &mut [u8]) -> Result<(), ProtocolError> {
+fn handle_listen(
+    ctx: &mut Context,
+    buffer: &mut [u8],
+    msg_len: usize,
+) -> Result<(), ProtocolError> {
     Message::send_ack(MessagePort::UART0);
     let msg = Message::read(MessagePort::UART1, buffer)?;
     println!("listen: got message: {:?}", msg.opcode);
-    listen::recv(ctx, msg.opcode, &mut buffer[..msg.length as usize])?;
+    listen::recv(ctx, msg.opcode, &mut buffer[..msg.length as usize], msg_len)?;
     Ok(())
 }
 
 fn handle_listen_request(
     ctx: &mut Context,
     buffer: &mut [u8],
-    _msg_len: usize,
+    msg_len: usize,
 ) -> Result<usize, ProtocolError> {
-    if let Err(err) = handle_listen(ctx, buffer) {
+    if let Err(err) = handle_listen(ctx, buffer, msg_len) {
         let _ = Message::write(Opcode::Error, MessagePort::UART1, &[]);
         // returning error will cause uart0 to have error written
         Err(err)

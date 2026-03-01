@@ -1,9 +1,10 @@
 use core::cell::RefCell;
 
 use bytemuck::bytes_of_mut;
+use cortex_m::interrupt::{self, Mutex};
 use mspm0l222x_hal::{
     HalError,
-    uart::{uart0, uart1},
+    uart::{InterruptCause, RxInterruptThreshold, uart0, uart1},
 };
 use thiserror::Error;
 
