@@ -70,7 +70,7 @@ pub fn rand_ops(input: TokenStream) -> TokenStream {
 
     quote! {{
         // use design_utils::anti_hardware::RngCore;
-        let num_ops = core::hint::black_box((#rng.word() ^ #num_ops_xor) % 500);
+        let num_ops = core::hint::black_box((#rng.word() ^ #num_ops_xor) % 256);
 
         let mut check = core::hint::black_box(#rng.word() ^ #n_xor);
         for i in 0..num_ops {

@@ -701,19 +701,8 @@ fn handle_listen_request(ctx: &mut Context) -> Result<(), ProtocolError> {
     }
 }
 
-/// convenience function to wait until the last second to send the response over UART
-pub fn delayed_write(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
-    // since we're just using as a timer, we don't want it to overflow
-    // and we don't really care about sub-ms accuracy
-    ctx.reset_time();
-    let start = ctx.time();
-
-    // TODO: remove uart bytes
-    let Some(Budget(_, max_time, _)) = TIME_BUDGET_MS.iter().find(|b| b.0 == opcode) else {
-        // received random ack, ignore
-        return;
-    };
-
+/// convenience function to dispatch to an appropriate command
+pub fn handle_any(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
     let res = match opcode {
         Opcode::List => handle_list(ctx, msg_len),
         Opcode::Read => handle_read(ctx, msg_len),
@@ -731,7 +720,8 @@ pub fn delayed_write(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
         panic!("handler failed: {e}");
     }
 
-    while ctx.time() < start + max_time {}
+    // no need to delay, because if the command succeeded, there wasn't any issue
+    // and it restarts if it panicked
 }
 
 // opcode, total budget, max uart bytes sent

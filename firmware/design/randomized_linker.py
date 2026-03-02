@@ -66,7 +66,7 @@ def main():
         if len(old) == len(new):
             print("Error: failed to find a *(.text.*); in original linker script to replace")
             sys.exit(1)
-            
+
 
         outfile.write(new)
         outfile.flush()

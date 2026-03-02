@@ -7,7 +7,7 @@ use design::{eprintln, println, sensitive};
 use mspm0l222x_hal::{CorePeripherals, Peripherals, Trng, trng};
 
 use design::{
-    commands::delayed_write,
+    commands::handle_any,
     context::Context,
     message::{Message, MessagePort},
     secrets::STACK_CANARY_START_VALUE,
@@ -66,7 +66,7 @@ fn main() -> ! {
 
         sensitive!(ctx, {
             // rand_ops!(trng::trng());
-            delayed_write(msg_info.opcode, &mut ctx, msg_info.length as usize);
+            handle_any(msg_info.opcode, &mut ctx, msg_info.length as usize);
         });
     }
 }
