@@ -3,16 +3,16 @@ use bytemuck::{Pod, Zeroable};
 use crate::{
     context::*,
     crypto::{
-        SymmetricMetadata, decrypt_payload_pub, encrypt_payload_pub, sign_file, unwrap_pub_message,
-        unwrap_symmetric_message, verify_signature_bytes,
+        SymmetricMetadata, decrypt_payload_pub, encrypt_payload_pub, sign_file,
+        verify_signature_bytes,
     },
     file::{self, File, FileMeta, FileName, UUID},
     listen,
     message::{CHUNK_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
     println,
-    protocol::{self, ProtocolError, SymEncryptable},
+    protocol::{self, ProtocolError, PubEncryptable, SymEncryptable},
     secrets::{
-        self, COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV,
+        self, COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, TRANSFER_SEND,
         get_enc_group_keys,
     },
 };
@@ -337,12 +337,22 @@ fn handle_receive_inner(
     end_time: u32,
 ) -> Result<(), ProtocolError> {
     // request file
-    protocol::initiate_transfer(read_slot)?;
+    let mut request = protocol::EncryptedTransferRequest {
+        protected: protocol::TransferRequest::new(read_slot),
+        metadata: SymmetricMetadata::empty(),
+    };
+    request.encrypt(&TRANSFER_SEND.0)?;
+
+    Message::write(
+        Opcode::Receive,
+        MessagePort::UART1,
+        bytemuck::bytes_of(&request),
+    )?;
 
     println!("3: {}", ctx.time());
 
     // receive file
-    let mut buffer = [0u8; protocol::TRANSFER_RECEIVE_MAX_LENGTH];
+    let mut buffer = [0u8; size_of::<protocol::EncryptedTransferResponse>()];
     let response = Message::read(MessagePort::UART1, &mut buffer)?;
     match response.opcode {
         Opcode::Error => return Err(ProtocolError::PeerBoardError),
@@ -357,20 +367,10 @@ fn handle_receive_inner(
     // time to receive after request sent: ~1.8 seconds
     println!("4: {}", ctx.time());
 
-    // decrypt with T1
-    let payload =
-        unwrap_symmetric_message(&mut buffer, &TRANSFER_RECV.0, &[Opcode::Receive.into()])?;
-    if payload.len() < size_of::<u16>() {
-        return Err(ProtocolError::InvalidMessageLength);
-    }
-
-    // parse out group id associated data
-    let (asymmetric_payload, group_id_bytes) =
-        payload.split_at_mut(payload.len() - size_of::<u16>());
-    let group_id_bytes: &mut [u8; 2] = group_id_bytes
-        .try_into()
-        .map_err(|_| ProtocolError::InvalidMessageLength)?;
-    let group_id = u16::from_le_bytes(*group_id_bytes);
+    let transfer_response: &mut protocol::EncryptedTransferResponse =
+        bytemuck::from_bytes_mut(&mut buffer);
+    transfer_response.decrypt(&TRANSFER_RECV.0)?;
+    let group_id = transfer_response.protected.group_id.get();
 
     println!("5: {}", ctx.time());
 
@@ -382,18 +382,13 @@ fn handle_receive_inner(
 
     // decrypt asymmetrically encrypted part of message
     // about ~0.75-0.8 seconds
-    let inner = unwrap_pub_message(
-        asymmetric_payload,
-        &group_keys.sk_trans.ok_or(ProtocolError::InvalidGroup)?.0,
-        group_id_bytes,
-    )?;
+    transfer_response
+        .protected
+        .decrypt(&group_keys.sk_trans.ok_or(ProtocolError::InvalidGroup)?.0)?;
 
     println!("7: {}", ctx.time());
 
-    if inner.len() != size_of::<File>() {
-        return Err(ProtocolError::InvalidMessageLength);
-    }
-    let file: &mut File = bytemuck::from_bytes_mut(inner);
+    let file = &mut transfer_response.protected.file;
     // check earlier associated group id matches
     if file.protected.group != group_id {
         return Err(ProtocolError::InvalidGroup);
@@ -496,12 +491,12 @@ fn handle_interrogate_inner(ctx: &mut Context, end_time: u32) -> Result<(), Prot
     // receive interrogate response
     let mut buf = [0u8; size_of::<protocol::EncryptedInterrogateResponse>()];
     let response = Message::read(MessagePort::UART1, &mut buf)?;
-    if response.opcode == Opcode::Error {
-        return Err(ProtocolError::PeerBoardError);
-    }
-    if response.opcode != Opcode::Interrogate {
-        return Err(ProtocolError::InvalidOpcode);
-    }
+    match response.opcode {
+        Opcode::Error => return Err(ProtocolError::PeerBoardError),
+        Opcode::Interrogate => (),
+        _ => return Err(ProtocolError::InvalidOpcode),
+    };
+
     if response.length as usize != buf.len() {
         return Err(ProtocolError::InvalidMessageLength);
     }

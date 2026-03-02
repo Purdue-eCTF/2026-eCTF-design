@@ -3,14 +3,13 @@ use bytemuck::Zeroable;
 use crate::{
     context::Context,
     crypto::{PubKeyMetadata, SymmetricMetadata},
-    file::File,
     message::{Message, MessagePort, Opcode},
     protocol::{
-        EncryptedInterrogateRequest, EncryptedInterrogateResponse, GroupId, InterrogateFileInfo,
-        InterrogateFileProtected, MAX_NUM_FILES, ProtocolError, SymEncryptable,
-        TransferM0Encrypted,
+        EncryptedInterrogateRequest, EncryptedInterrogateResponse, EncryptedTransferRequest,
+        EncryptedTransferResponse, GroupId, InterrogateFileInfo, InterrogateFileProtected,
+        ProtocolError, PubEncryptable, SymEncryptable, TransferResponse,
     },
-    secrets::{self, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV},
+    secrets::{self, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, TRANSFER_SEND},
 };
 
 pub fn recv(ctx: &mut Context, opcode: Opcode, body: &mut [u8]) -> Result<(), ProtocolError> {
@@ -79,14 +78,14 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
 
 #[inline(never)]
 fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolError> {
-    if body.len() != size_of::<TransferM0Encrypted>() {
+    if body.len() != size_of::<EncryptedTransferRequest>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
 
-    let enc: &TransferM0Encrypted = bytemuck::from_bytes(body);
-    let m0 = enc.decrypt()?;
+    let request: &mut EncryptedTransferRequest = bytemuck::from_bytes_mut(body);
+    request.decrypt(&TRANSFER_SEND.0)?;
 
-    let slot: usize = m0.slot as usize;
+    let slot: usize = request.protected.slot as usize;
 
     if slot > 7 {
         return Err(ProtocolError::InvalidSlot);
@@ -95,38 +94,23 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolEr
     let file_src = ctx.files[slot].get().ok_or(ProtocolError::InvalidFile)?;
 
     let group_keys = secrets::get_enc_group_keys(file_src.protected.group)?;
-    let group_id_bytes = file_src.protected.group.to_le_bytes();
+    let mut response = EncryptedTransferResponse {
+        protected: TransferResponse {
+            file: *file_src,
+            group_id: GroupId::new(file_src.protected.group),
+            pub_metadata: PubKeyMetadata::empty(),
+        },
+        metadata: SymmetricMetadata::empty(),
+    };
 
-    // we will create M1 = Enc_T1(Enc_pk_trans(file) || PKM || group id) || SM
-    // create a payload buffer of the maximum size
-    let mut payload = [0; size_of::<File>()
-        + size_of::<PubKeyMetadata>()
-        + size_of::<u16>()
-        + size_of::<SymmetricMetadata>()];
-    let payload_len = payload.len();
+    response.protected.encrypt(&group_keys.pk_trans.0)?;
+    response.encrypt(&TRANSFER_RECV.0)?;
 
-    let (file, rest) = payload.split_at_mut(size_of::<File>());
-    let (pub_key_meta, rest) = rest.split_at_mut(size_of::<PubKeyMetadata>());
-    let pub_key_meta: &mut PubKeyMetadata = bytemuck::from_bytes_mut(pub_key_meta);
-    let group_id = &mut rest[..size_of::<u16>()];
-
-    // copy the file to payload
-    file.copy_from_slice(bytemuck::bytes_of(file_src));
-
-    // encrypt file with pk trans
-    *pub_key_meta = PubKeyMetadata::encrypt(file, &group_keys.pk_trans.0, &group_id_bytes)?;
-
-    // write associated data
-    group_id.copy_from_slice(&group_id_bytes);
-
-    let (data, symmetric_meta) = payload.split_at_mut(payload_len - size_of::<SymmetricMetadata>());
-    let symmetric_meta: &mut SymmetricMetadata = bytemuck::from_bytes_mut(symmetric_meta);
-
-    // encrypt file with T1
-    *symmetric_meta =
-        SymmetricMetadata::encrypt(data, &TRANSFER_RECV.0, &[Opcode::Receive.into()])?;
-
-    Message::write(Opcode::Receive, MessagePort::UART1, &payload)?;
+    Message::write(
+        Opcode::Receive,
+        MessagePort::UART1,
+        bytemuck::bytes_of(&response),
+    )?;
 
     Ok(())
 }
