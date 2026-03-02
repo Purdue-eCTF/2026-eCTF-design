@@ -16,7 +16,7 @@ use mspm0l222x_hal::{
 
 use crate::{
     crypto::blake_hash,
-    file::{FatTable, File, FileSlot},
+    file::{FatEntry, FatTable, File, FileSlot},
     flash::FlashEntry,
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
     protocol::ProtocolError,
@@ -40,7 +40,7 @@ macro_rules! sensitive {
 /// Prints to the uart port
 #[macro_export]
 macro_rules! print {
-    ($($arg:tt)*) => ($crate::context::write_fmt(Opcode::Debug, format_args!($($arg)*)));
+    ($($arg:tt)*) => ($crate::context::write_fmt($crate::message::Opcode::Debug, format_args!($($arg)*)));
 }
 
 /// Prints to the uart port
@@ -53,7 +53,7 @@ macro_rules! println {
 /// Prints to the uart port
 #[macro_export]
 macro_rules! eprint {
-    ($($arg:tt)*) => ($crate::context::write_fmt(Opcode::Error, format_args!($($arg)*)));
+    ($($arg:tt)*) => ($crate::context::write_fmt($crate::message::Opcode::Error, format_args!($($arg)*)));
 }
 
 /// Prints to the uart port
@@ -175,6 +175,23 @@ impl Context {
         }
 
         Ok(k_auth)
+    }
+
+    pub fn rebuild_fat(&self, k_auth: &[u8; 32]) -> Result<(), ProtocolError> {
+        let mut entries = [FatEntry::empty(); 8];
+        for (i, file) in self.files.iter().enumerate() {
+            if let Some(file) = file.get() {
+                entries[i] = file.to_fat(k_auth)?;
+            }
+        }
+
+        unsafe {
+            self.fat
+                .set(&FatTable { entries })
+                .map_err(|_| ProtocolError::StorageFailure)?;
+        }
+
+        Ok(())
     }
 
     #[allow(static_mut_refs)]

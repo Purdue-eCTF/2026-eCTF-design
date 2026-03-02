@@ -92,8 +92,10 @@ impl File {
     }
 
     pub fn to_fat(&self, k_auth: &[u8; 32]) -> Result<FatEntry, ProtocolError> {
+        crate::println!("fat group: {}", self.protected.group);
         let enc_group_keys = secrets::get_enc_group_keys(self.protected.group)?;
         let group_keys = enc_group_keys.decrypt(k_auth);
+        crate::println!("group keys uuid: {}", group_keys.k_uuid.is_some());
 
         let mut uuid = self.protected.uuid;
         let ad = self.protected.associated_data();
@@ -171,4 +173,5 @@ pub static __FILES_APP2: [FileSlot; 2] = [FileSlot {
 
 #[unsafe(link_section = ".filetable.default")]
 #[unsafe(no_mangle)]
-pub static __FAT: ([u8; core::mem::size_of::<FatTable>()], u64) = ([0; _], flash::FLASH_MAGIC);
+// magic starts off as 0 for empty file
+pub static __FAT: ([u8; core::mem::size_of::<FatTable>()], u64) = ([0; _], 0);

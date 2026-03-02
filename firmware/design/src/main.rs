@@ -9,7 +9,7 @@ use mspm0l222x_hal::{CorePeripherals, Peripherals, Trng, trng};
 use design::{
     commands::delayed_write,
     context::Context,
-    message::{Message, MessagePort, Opcode},
+    message::{Message, MessagePort},
     secrets::STACK_CANARY_START_VALUE,
 };
 

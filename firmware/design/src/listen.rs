@@ -4,7 +4,7 @@ use crate::{
     context::Context,
     crypto::{self, PubKeyMetadata, SymmetricMetadata, unwrap_symmetric_message},
     file::{File, FileName},
-    message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
+    message::{Message, MessagePort, Opcode},
     protocol::{ProtocolError, TransferM0Encrypted},
     secrets::{self, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV},
 };
@@ -75,33 +75,17 @@ impl EncryptedInterrogateInfo {
     }
 }
 
-pub fn recv(
-    ctx: &mut Context,
-    opcode: Opcode,
-    body: &mut [u8],
-    msg_len: usize,
-) -> Result<(), ProtocolError> {
+pub fn recv(ctx: &mut Context, opcode: Opcode, body: &mut [u8]) -> Result<(), ProtocolError> {
     match opcode {
-        Opcode::Interrogate => respond_interrogate(ctx, body, msg_len)?,
-        Opcode::Receive => respond_transfer(ctx, body, msg_len)?,
+        Opcode::Interrogate => respond_interrogate(ctx, body)?,
+        Opcode::Receive => respond_transfer(ctx, body)?,
         _ => return Err(ProtocolError::InvalidOpcode),
     };
     Ok(())
 }
 
 #[inline(never)]
-fn respond_interrogate(
-    ctx: &mut Context,
-    body: &mut [u8],
-    msg_len: usize,
-) -> Result<(), ProtocolError> {
-    if msg_len > MAX_BODY_SIZE {
-        return Err(ProtocolError::InvalidMessageLength);
-    }
-
-    Message::read_body(MessagePort::UART1, &mut body[..msg_len])?;
-    let body = &mut body[..msg_len];
-
+fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolError> {
     // Expect body = Enc_I0(Group1 || Group2 || ... || GroupN) || SM
     let i0 = INTERROGATE_SEND.0;
 
@@ -188,27 +172,16 @@ fn respond_interrogate(
     )?;
 
     let payload_size = body_size + size_of::<crypto::SymmetricMetadata>();
-    Message::write(
-        Opcode::Interrogate,
-        MessagePort::UART1,
-        &payload[..payload_size],
-    )?;
+    Message::write(Opcode::Interrogate, MessagePort::UART1, &payload[..payload_size])?;
 
     Ok(())
 }
 
 #[inline(never)]
-fn respond_transfer(
-    ctx: &mut Context,
-    body: &mut [u8],
-    msg_len: usize,
-) -> Result<(), ProtocolError> {
-    if msg_len != size_of::<TransferM0Encrypted>() {
+fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolError> {
+    if body.len() != size_of::<TransferM0Encrypted>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
-
-    let body = &mut body[..size_of::<TransferM0Encrypted>()];
-    Message::read_body(MessagePort::UART1, body)?;
 
     let enc: &TransferM0Encrypted = bytemuck::from_bytes(body);
     let m0 = enc.decrypt()?;
