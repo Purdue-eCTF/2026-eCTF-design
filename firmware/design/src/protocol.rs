@@ -67,11 +67,33 @@ pub trait SymEncryptable {
         Ok(())
     }
 
+    fn encrypt_with_associated_data(
+        &mut self,
+        key: &SymmetricKey,
+        associated_data: &[u8],
+    ) -> Result<(), ProtocolError> {
+        let details = self.details();
+        *details.metadata = SymmetricMetadata::encrypt(details.body, key, associated_data)?;
+        Ok(())
+    }
+
     fn decrypt(&mut self, key: &SymmetricKey) -> Result<(), ProtocolError> {
         let details = self.details();
         details
             .metadata
             .decrypt(details.body, key, details.associated_data)?;
+        Ok(())
+    }
+
+    fn decrypt_with_associated_data(
+        &mut self,
+        key: &SymmetricKey,
+        associated_data: &[u8],
+    ) -> Result<(), ProtocolError> {
+        let details = self.details();
+        details
+            .metadata
+            .decrypt(details.body, key, associated_data)?;
         Ok(())
     }
 }
@@ -247,36 +269,69 @@ impl SymEncryptable for EncryptedTransferRequest {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-pub struct TransferResponse {
-    pub file: File,
-    pub group_id: GroupId,
+pub struct TransferResponseHeader {
     pub pub_metadata: PubKeyMetadata,
+    pub group_id: GroupId,
 }
 
-impl PubEncryptable for TransferResponse {
-    fn details(&mut self) -> EncryptionDetails<'_, PubKeyMetadata> {
+// #[repr(C)]
+// #[derive(Clone, Copy, Pod, Zeroable)]
+// pub struct TransferResponse {
+//     // header is sent first
+//     pub header: TransferResponseHeader,
+//     // file is received async, so shared secret can be computed, and verifying key can also be pre computed
+//     pub file: File,
+// }
+
+// impl PubEncryptable for TransferResponse {
+//     fn details(&mut self) -> EncryptionDetails<'_, PubKeyMetadata> {
+//         let Self {
+//             header:
+//                 TransferResponseHeader {
+//                     pub_metadata,
+//                     group_id,
+//                 },
+//             file,
+//         } = self;
+
+//         EncryptionDetails {
+//             body: bytes_of_mut(file),
+//             associated_data: bytes_of(group_id),
+//             metadata: pub_metadata,
+//         }
+//     }
+// }
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct EncryptedTransferResponseHeader {
+    pub protected: TransferResponseHeader,
+    pub metadata: SymmetricMetadata,
+}
+
+impl SymEncryptable for EncryptedTransferResponseHeader {
+    fn details(&mut self) -> EncryptionDetails<'_, SymmetricMetadata> {
         let Self {
-            file,
-            group_id,
-            pub_metadata,
+            protected,
+            metadata,
         } = self;
 
         EncryptionDetails {
-            body: bytes_of_mut(file),
-            associated_data: bytes_of(group_id),
-            metadata: pub_metadata,
+            body: bytes_of_mut(protected),
+            associated_data: TRANSFER_ASSOCIATED_DATA,
+            metadata,
         }
     }
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-pub struct EncryptedTransferResponse {
-    pub protected: TransferResponse,
+pub struct EncryptedTransferResponseBody {
+    pub protected: File,
     pub metadata: SymmetricMetadata,
 }
 
-impl SymEncryptable for EncryptedTransferResponse {
+impl SymEncryptable for EncryptedTransferResponseBody {
     fn details(&mut self) -> EncryptionDetails<'_, SymmetricMetadata> {
         let Self {
             protected,
