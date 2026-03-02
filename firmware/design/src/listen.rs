@@ -3,11 +3,12 @@ use bytemuck::Zeroable;
 use crate::{
     context::Context,
     crypto::{PubKeyMetadata, SymmetricMetadata},
-    message::{Message, MessagePort, Opcode},
+    message::{Message, MessagePort, MessageUart, Opcode},
     protocol::{
         EncryptedInterrogateRequest, EncryptedInterrogateResponse, EncryptedTransferRequest,
-        EncryptedTransferResponse, GroupId, InterrogateFileInfo, InterrogateFileProtected,
-        ProtocolError, PubEncryptable, SymEncryptable, TransferResponse,
+        EncryptedTransferResponseBody, EncryptedTransferResponseHeader, GroupId,
+        InterrogateFileInfo, InterrogateFileProtected, ProtocolError, SymEncryptable,
+        TransferResponseHeader,
     },
     secrets::{self, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, TRANSFER_SEND},
 };
@@ -94,23 +95,40 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolEr
     let file_src = ctx.files[slot].get().ok_or(ProtocolError::InvalidFile)?;
 
     let group_keys = secrets::get_enc_group_keys(file_src.protected.group)?;
-    let mut response = EncryptedTransferResponse {
-        protected: TransferResponse {
-            file: *file_src,
+
+    let mut response_header = EncryptedTransferResponseHeader {
+        protected: TransferResponseHeader {
             group_id: GroupId::new(file_src.protected.group),
             pub_metadata: PubKeyMetadata::empty(),
         },
         metadata: SymmetricMetadata::empty(),
     };
 
-    response.protected.encrypt(&group_keys.pk_trans.0)?;
-    response.encrypt(&TRANSFER_RECV.0)?;
+    let mut response_body = EncryptedTransferResponseBody {
+        protected: *file_src,
+        metadata: SymmetricMetadata::empty(),
+    };
+
+    // perform encryptions
+    response_header.protected.pub_metadata = PubKeyMetadata::encrypt(
+        bytemuck::bytes_of_mut(&mut response_body.protected),
+        &group_keys.pk_trans.0,
+        &file_src.protected.group.to_le_bytes(),
+    )?;
+
+    response_header.encrypt(&TRANSFER_RECV.0)?;
+    response_body
+        .encrypt_with_associated_data(&TRANSFER_RECV.0, bytemuck::bytes_of(&response_header))?;
 
     Message::write(
         Opcode::Receive,
         MessagePort::UART1,
-        bytemuck::bytes_of(&response),
+        bytemuck::bytes_of(&response_header),
     )?;
+    Message::read_ack(MessagePort::UART1)?;
+
+    let writer = MessageUart::new(MessagePort::UART1);
+    writer.write_bytes(bytemuck::bytes_of(&response_body));
 
     Ok(())
 }

@@ -167,6 +167,17 @@ pub fn sign_file(file: &mut File, key: &[u8; 32]) -> Result<(), CryptoError> {
     Ok(())
 }
 
+pub fn derive_assymetric_key(secret_key: &[u8; 32], gn: &[u8; GN_SIZE]) -> [u8; 32] {
+    let sk = StaticSecret::from(*secret_key);
+    let pubkey = PublicKey::from(*gn);
+    let shared = sk.diffie_hellman(&pubkey).to_bytes();
+
+    // use kdf as recommended by rfc
+    // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
+    // TODO: maybe add per key salt
+    blake_hash(&shared, &PUB_ENCRYPT_SALT)
+}
+
 pub fn decrypt_payload_pub<'a>(
     payload: &'a mut [u8],
     gn: &[u8; GN_SIZE],
@@ -177,16 +188,7 @@ pub fn decrypt_payload_pub<'a>(
 ) -> Result<&'a mut [u8], CryptoError> {
     // rand_ops!(trng::trng());
 
-    let sk = StaticSecret::from(*secret_key);
-    let pubkey = PublicKey::from(*gn);
-    let shared = sk.diffie_hellman(&pubkey).to_bytes();
-
-    // rand_ops!(trng::trng());
-
-    // use kdf as recommended by rfc
-    // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
-    // TODO: maybe add per key salt
-    let sym_key = blake_hash(&shared, &PUB_ENCRYPT_SALT);
+    let sym_key = derive_assymetric_key(secret_key, gn);
 
     // decrypt payload already have rand ops
     decrypt_payload_symmetric(payload, nonce, tag, &sym_key, associated_data)?;

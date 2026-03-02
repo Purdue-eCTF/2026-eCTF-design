@@ -1,13 +1,17 @@
 use bytemuck::{Pod, Zeroable};
+use ed25519_dalek::VerifyingKey;
 
 use crate::{
     context::*,
-    crypto::{PubKeyMetadata, SymmetricMetadata, sign_file, verify_signature_bytes},
+    crypto::{
+        PubKeyMetadata, SymmetricMetadata, decrypt_payload_symmetric, derive_assymetric_key,
+        sign_file, verify_signature, verify_signature_bytes,
+    },
     file::{self, File, FileMeta, FileName, UUID},
     listen,
-    message::{CHUNK_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
+    message::{self, CHUNK_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
     println,
-    protocol::{self, ProtocolError, PubEncryptable, SymEncryptable},
+    protocol::{self, ProtocolError, SymEncryptable},
     secrets::{
         self, COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, TRANSFER_SEND,
         get_enc_group_keys,
@@ -352,12 +356,12 @@ fn handle_interrogate_inner(ctx: &mut Context, end_time: u32) -> Result<(), Prot
     // receive interrogate response
     let mut buf = [0u8; size_of::<protocol::EncryptedInterrogateResponse>()];
     let response = Message::read(MessagePort::UART1, &mut buf)?;
+
     match response.opcode {
         Opcode::Error => return Err(ProtocolError::PeerBoardError),
         Opcode::Interrogate => (),
         _ => return Err(ProtocolError::InvalidOpcode),
     };
-
     if response.length as usize != buf.len() {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -368,6 +372,7 @@ fn handle_interrogate_inner(ctx: &mut Context, end_time: u32) -> Result<(), Prot
     let interrogate_response: &mut protocol::EncryptedInterrogateResponse =
         bytemuck::from_bytes_mut(&mut buf);
     interrogate_response.decrypt(&INTERROGATE_RECV.0)?;
+
     let count = interrogate_response.protected.file_count as usize;
     if count > protocol::MAX_NUM_FILES {
         return Err(ProtocolError::InvalidMessageLength);
@@ -456,6 +461,11 @@ fn handle_receive_inner(
     k_auth: &[u8; 32],
     end_time: u32,
 ) -> Result<(), ProtocolError> {
+    let write_slot = write_slot as usize;
+    if write_slot > 7 {
+        return Err(ProtocolError::InvalidSlot);
+    }
+
     // request file
     let mut request = protocol::EncryptedTransferRequest {
         protected: protocol::TransferRequest::new(read_slot),
@@ -472,59 +482,65 @@ fn handle_receive_inner(
     println!("3: {}", ctx.time());
 
     // receive file
-    let mut buffer = [0u8; size_of::<protocol::EncryptedTransferResponse>()];
+    let mut buffer = [0u8; size_of::<protocol::EncryptedTransferResponseHeader>()];
     let response = Message::read(MessagePort::UART1, &mut buffer)?;
+
     match response.opcode {
         Opcode::Error => return Err(ProtocolError::PeerBoardError),
         Opcode::Receive => (),
         _ => return Err(ProtocolError::InvalidOpcode),
     };
-
     if response.length as usize != buffer.len() {
         return Err(ProtocolError::InvalidMessageLength);
     }
 
+    // start async recv, send ack to signify async recv is started
+    message::start_async_recv(size_of::<protocol::EncryptedTransferResponseBody>());
+    Message::send_ack(MessagePort::UART1);
+
     // time to receive after request sent: ~1.8 seconds
     println!("4: {}", ctx.time());
 
-    let transfer_response: &mut protocol::EncryptedTransferResponse =
+    let header: &mut protocol::EncryptedTransferResponseHeader =
         bytemuck::from_bytes_mut(&mut buffer);
-    transfer_response.decrypt(&TRANSFER_RECV.0)?;
-    let group_id = transfer_response.protected.group_id.get();
-
-    println!("5: {}", ctx.time());
+    // store copy for later
+    let header_ct = *header;
+    header.decrypt(&TRANSFER_RECV.0)?;
+    let group_id = header.protected.group_id.get();
 
     // decrypt correct keys based on group
     let enc_group_keys = secrets::get_enc_group_keys(group_id)?;
     let group_keys = enc_group_keys.decrypt(k_auth);
 
-    println!("6: {}", ctx.time());
+    // while file data being received, decompress public key, and precompute shared secret
+    let verifying_key = VerifyingKey::from_bytes(&enc_group_keys.pk_sign.0).unwrap();
 
-    // decrypt asymmetrically encrypted part of message
-    // about ~0.75-0.8 seconds
-    transfer_response
-        .protected
-        .decrypt(&group_keys.sk_trans.ok_or(ProtocolError::InvalidGroup)?.0)?;
+    let sk_trans = group_keys.sk_trans.ok_or(ProtocolError::InvalidGroup)?.0;
+    let shared_secret = derive_assymetric_key(&sk_trans, &header.protected.pub_metadata.gn);
 
-    println!("7: {}", ctx.time());
+    // receive body of message
+    let mut body = protocol::EncryptedTransferResponseBody::zeroed();
+    message::await_async_recv_done(bytemuck::bytes_of_mut(&mut body));
 
-    let file = &mut transfer_response.protected.file;
-    // check earlier associated group id matches
+    // decrypt outer file data
+    body.decrypt_with_associated_data(&TRANSFER_RECV.0, bytemuck::bytes_of(&header_ct))?;
+    // decrypt inner assymetric data
+    decrypt_payload_symmetric(
+        bytemuck::bytes_of_mut(&mut body.protected),
+        &header.protected.pub_metadata.nonce,
+        &header.protected.pub_metadata.tag,
+        &shared_secret,
+        bytemuck::bytes_of(&group_id.to_le_bytes()),
+    )?;
+
+    // check inner file data
+    let file = &body.protected;
     if file.protected.group != group_id {
         return Err(ProtocolError::InvalidGroup);
     }
 
     // verify takes about 0.7 seconds
-    verify_signature_bytes(file, &enc_group_keys.pk_sign.0)?;
-
-    println!("8: {}", ctx.time());
-
-    let write_slot = write_slot as usize;
-    if write_slot > 7 {
-        return Err(ProtocolError::InvalidSlot);
-    }
-
-    println!("9: {}", ctx.time());
+    verify_signature(file, &verifying_key)?;
 
     unsafe {
         ctx.files[write_slot]

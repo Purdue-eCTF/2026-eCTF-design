@@ -8,6 +8,8 @@ use mspm0l222x_hal::{
 };
 use thiserror::Error;
 
+use crate::protocol;
+
 #[derive(Debug, Error)]
 pub enum MessageError {
     #[error("Unknown error")]
@@ -210,7 +212,7 @@ impl Message {
     }
 
     /// Reads an ack from UART.
-    fn read_ack(port: MessagePort) -> Result<(), MessageError> {
+    pub fn read_ack(port: MessagePort) -> Result<(), MessageError> {
         let message = Self::read_header(port)?;
 
         if message.opcode != Opcode::Ack {
@@ -258,7 +260,7 @@ impl Message {
     }
 }
 
-const ASYNC_RECV_BUFFER_SIZE: usize = 8192;
+const ASYNC_RECV_BUFFER_SIZE: usize = size_of::<protocol::EncryptedTransferResponseBody>();
 
 struct AsyncRecvBuffer {
     target_count: Option<usize>,
@@ -275,7 +277,7 @@ static ASYNC_RECV_BUFFER: Mutex<RefCell<AsyncRecvBuffer>> =
     }));
 
 pub fn start_async_recv(size: usize) {
-    assert!(size < ASYNC_RECV_BUFFER_SIZE);
+    assert!(size <= ASYNC_RECV_BUFFER_SIZE);
 
     interrupt::free(|token| {
         let mut recv_buffer = ASYNC_RECV_BUFFER.borrow(token).borrow_mut();
