@@ -189,6 +189,7 @@ pub const ARGON_M_COST: u32 = {}; // memory cost in kb
 pub const ARGON_P_COST: u32 = {}; // parallelism costs
 
 // PLACEHOLDER: Time cost (iterations) for Boot Salt 1 generation
+
 pub const T_COST_BOOT: u32 = {};
 
 // Time cost for PIN Salt derivation
@@ -197,34 +198,47 @@ pub const T_COST_PIN: u32 = {};
 // Time cost for K_auth
 pub const T_COST_K_AUTH: u32 = {};
 
-pub const BOOT_SALT_0: [u8; 32] = {:?};
-// TODO: make in special section of flash
-pub const BOOT_SALT_1: [u8; 32] = {:?};
+#[unsafe(link_section=\".secrets\")]
+pub static BOOT_SALT_0: [u8; 32] = {:?};
 
-pub const K_AUTH_SALT: [u8; 32] = {:?};
-pub const K_AUTH_HASH: [u8; 32] = {:?};
+// boot salt 1 in salt page
+#[unsafe(link_section = \".salt.default\")]
+#[unsafe(no_mangle)]
+pub static __SALT: ([u8; core::mem::size_of::<crate::salt::Salt>()], u64) = ({:?}, crate::flash::FLASH_MAGIC);
+
+#[unsafe(link_section=\".secrets\")]
+pub static K_AUTH_SALT: [u8; 32] = {:?};
+#[unsafe(link_section=\".secrets\")]
+pub static K_AUTH_HASH: [u8; 32] = {:?};
 
 // T0
-pub const TRANSFER_SEND: SymmetricKey = SymmetricKey({:?});
+#[unsafe(link_section=\".secrets\")]
+pub static TRANSFER_SEND: SymmetricKey = SymmetricKey({:?});
 // T1
-pub const TRANSFER_RECV: SymmetricKey = SymmetricKey({:?});
+#[unsafe(link_section=\".secrets\")]
+pub static TRANSFER_RECV: SymmetricKey = SymmetricKey({:?});
 
 // I0
-pub const INTERROGATE_SEND: SymmetricKey = SymmetricKey({:?});
+#[unsafe(link_section=\".secrets\")]
+pub static INTERROGATE_SEND: SymmetricKey = SymmetricKey({:?});
 // I1
-pub const INTERROGATE_RECV: SymmetricKey = SymmetricKey({:?});
+#[unsafe(link_section=\".secrets\")]
+pub static INTERROGATE_RECV: SymmetricKey = SymmetricKey({:?});
 
 // salt for argon derivation
-pub const DERIVE_SALT: &[u8] = &{:?};
+#[unsafe(link_section=\".secrets\")]
+pub static DERIVE_SALT: &[u8] = &{:?};
 // salt for blake2 derivation
-pub const PUB_ENCRYPT_SALT: [u8; 32] = {:?};
+#[unsafe(link_section=\".secrets\")]
+pub static PUB_ENCRYPT_SALT: [u8; 32] = {:?};
 
-// TODO: must be sorted by group
-pub const GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
+#[unsafe(link_section=\".secrets\")]
+pub static GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
 
 pub const COPY_PERM_GROUPS: [u16; {}] = {:?};
 
-pub const STACK_CANARY_START_VALUE: usize = {};
+#[unsafe(link_section=\".secrets\")]
+pub static STACK_CANARY_START_VALUE: usize = {};
 ",
         ARGON_M_COST,
         ARGON_P_COST,
