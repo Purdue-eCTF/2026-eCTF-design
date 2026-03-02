@@ -81,6 +81,10 @@ fn handle_list_inner(ctx: &mut Context, end_time: u32) -> Result<(), ProtocolErr
 
     // delay until UART is about to send
     while ctx.time() < end_time {}
+    println!(
+        "bench list.preparing_uart: {}",
+        ctx.time().saturating_sub(bench_start)
+    );
 
     let bench_start = ctx.time();
     let result = Message::write(
