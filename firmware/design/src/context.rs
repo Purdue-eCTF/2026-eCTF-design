@@ -344,11 +344,9 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
         )
         .unwrap();
 
-        // TODO: potential protection regions:
-        // - before secret keys
-        // - end of stack (before global data)
-
-        mpu.clear_region(7).unwrap();
+        // mpu guard before secrets
+        let secrets_guard = (&_salt as *const u8 as usize) - MPU_MIN_SIZE;
+        add_mpu_guard(mpu, 7, secrets_guard as u32);
 
         mpu.enable();
     }
