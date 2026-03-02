@@ -26,6 +26,7 @@ struct ListHeader {
 /// List files; requires pin on usage. Sends back a head with total number of
 /// files and length of the message body, and then the data, with the name,
 /// group, and slot of the file.
+#[inline(never)]
 fn handle_list(ctx: &mut Context, msg_len: usize, end_time: u32) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ListHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
@@ -87,6 +88,7 @@ struct ReadFileHeader {
 // Read file on given slot, returning to the host the file; requires pin on
 // usage. Since the file is stored on flash encrypted, this function uses the
 // pin to decrypt the file before returning it to the host.
+#[inline(never)]
 fn handle_read(ctx: &mut Context, msg_len: usize, end_time: u32) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ReadFileHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
@@ -153,6 +155,7 @@ struct WriteFileHeader {
 
 /// Write a file received from host into flash. The file should be encrypted
 /// and signed.
+#[inline(never)]
 fn handle_write(ctx: &mut Context, msg_len: usize, end_time: u32) -> Result<(), ProtocolError> {
     if msg_len < size_of::<WriteFileHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
@@ -285,6 +288,7 @@ struct ReceiveFileHeader {
     pub write_slot: u8,
 }
 
+#[inline(never)]
 fn handle_receive(ctx: &mut Context, msg_len: usize, end_time: u32) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ReceiveFileHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
@@ -426,6 +430,7 @@ struct InterrogateHeader {
 /// has permissions for. Since the entire list of files is encrypted
 /// symmetrically and each file's metadata encrypted asymmetrically, all this
 /// will be decrypted before being sent back to host.
+#[inline(never)]
 fn handle_interrogate(
     ctx: &mut Context,
     msg_len: usize,
@@ -528,6 +533,7 @@ fn handle_interrogate(
 
 /// Listens for any Receive or Interrogate command from an adjacent board to
 /// process before sending back the corresponding data.
+#[inline(never)]
 fn handle_listen(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     let mut buffer = [0u8; MAX_BODY_SIZE];
     Message::send_ack(MessagePort::UART0);
@@ -537,6 +543,7 @@ fn handle_listen(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError>
     Ok(())
 }
 
+#[inline(never)]
 fn handle_listen_request(
     ctx: &mut Context,
     msg_len: usize,
