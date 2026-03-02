@@ -297,133 +297,6 @@ fn handle_write_inner(
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 #[repr(C, packed)]
-struct ReceiveFileHeader {
-    pub pin: [u8; 6],
-    pub read_slot: u8,
-    pub write_slot: u8,
-}
-
-#[inline(never)]
-fn handle_receive(ctx: &mut Context, msg_len: usize, end_time: u32) -> Result<(), ProtocolError> {
-    if msg_len != size_of::<ReceiveFileHeader>() {
-        return Err(ProtocolError::InvalidMessageLength);
-    }
-
-    let mut msg = [0; size_of::<ReceiveFileHeader>()];
-    Message::send_ack(MessagePort::UART0);
-    Message::read_body(MessagePort::UART0, &mut msg)?;
-
-    let ReceiveFileHeader {
-        pin,
-        read_slot,
-        write_slot,
-    } = *bytemuck::from_bytes(&msg);
-
-    println!("1: {}", ctx.time());
-
-    let k_auth = ctx.k_auth(&pin)?;
-
-    println!("2: {}", ctx.time());
-
-    handle_receive_inner(ctx, read_slot, write_slot, &k_auth, end_time)
-}
-
-#[inline(never)]
-fn handle_receive_inner(
-    ctx: &mut Context,
-    read_slot: u8,
-    write_slot: u8,
-    k_auth: &[u8; 32],
-    end_time: u32,
-) -> Result<(), ProtocolError> {
-    // request file
-    let mut request = protocol::EncryptedTransferRequest {
-        protected: protocol::TransferRequest::new(read_slot),
-        metadata: SymmetricMetadata::empty(),
-    };
-    request.encrypt(&TRANSFER_SEND.0)?;
-
-    Message::write(
-        Opcode::Receive,
-        MessagePort::UART1,
-        bytemuck::bytes_of(&request),
-    )?;
-
-    println!("3: {}", ctx.time());
-
-    // receive file
-    let mut buffer = [0u8; size_of::<protocol::EncryptedTransferResponse>()];
-    let response = Message::read(MessagePort::UART1, &mut buffer)?;
-    match response.opcode {
-        Opcode::Error => return Err(ProtocolError::PeerBoardError),
-        Opcode::Receive => (),
-        _ => return Err(ProtocolError::InvalidOpcode),
-    };
-
-    if response.length as usize != buffer.len() {
-        return Err(ProtocolError::InvalidMessageLength);
-    }
-
-    // time to receive after request sent: ~1.8 seconds
-    println!("4: {}", ctx.time());
-
-    let transfer_response: &mut protocol::EncryptedTransferResponse =
-        bytemuck::from_bytes_mut(&mut buffer);
-    transfer_response.decrypt(&TRANSFER_RECV.0)?;
-    let group_id = transfer_response.protected.group_id.get();
-
-    println!("5: {}", ctx.time());
-
-    // decrypt correct keys based on group
-    let enc_group_keys = secrets::get_enc_group_keys(group_id)?;
-    let group_keys = enc_group_keys.decrypt(k_auth);
-
-    println!("6: {}", ctx.time());
-
-    // decrypt asymmetrically encrypted part of message
-    // about ~0.75-0.8 seconds
-    transfer_response
-        .protected
-        .decrypt(&group_keys.sk_trans.ok_or(ProtocolError::InvalidGroup)?.0)?;
-
-    println!("7: {}", ctx.time());
-
-    let file = &mut transfer_response.protected.file;
-    // check earlier associated group id matches
-    if file.protected.group != group_id {
-        return Err(ProtocolError::InvalidGroup);
-    }
-
-    // verify takes about 0.7 seconds
-    verify_signature_bytes(file, &enc_group_keys.pk_sign.0)?;
-
-    println!("8: {}", ctx.time());
-
-    let write_slot = write_slot as usize;
-    if write_slot > 7 {
-        return Err(ProtocolError::InvalidSlot);
-    }
-
-    println!("9: {}", ctx.time());
-
-    unsafe {
-        ctx.files[write_slot]
-            .set(file)
-            .map_err(|_| ProtocolError::StorageFailure)?;
-        println!("10: {}", ctx.time());
-    }
-    ctx.rebuild_fat(k_auth)?;
-    // 0.08 seconds total writing flash
-    println!("11: {}", ctx.time());
-
-    // delay until UART is about to send
-    while ctx.time() < end_time {}
-
-    Message::write(Opcode::Receive, MessagePort::UART0, &[]).map_err(ProtocolError::Message)
-}
-
-#[derive(Debug, Clone, Copy, Zeroable, Pod)]
-#[repr(C, packed)]
 struct InterrogateHeader {
     pub pin: [u8; 6],
 }
@@ -552,6 +425,133 @@ fn handle_interrogate_inner(ctx: &mut Context, end_time: u32) -> Result<(), Prot
         &buffer[..actual_message_size],
     )
     .map_err(ProtocolError::Message)
+}
+
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[repr(C, packed)]
+struct ReceiveFileHeader {
+    pub pin: [u8; 6],
+    pub read_slot: u8,
+    pub write_slot: u8,
+}
+
+#[inline(never)]
+fn handle_receive(ctx: &mut Context, msg_len: usize, end_time: u32) -> Result<(), ProtocolError> {
+    if msg_len != size_of::<ReceiveFileHeader>() {
+        return Err(ProtocolError::InvalidMessageLength);
+    }
+
+    let mut msg = [0; size_of::<ReceiveFileHeader>()];
+    Message::send_ack(MessagePort::UART0);
+    Message::read_body(MessagePort::UART0, &mut msg)?;
+
+    let ReceiveFileHeader {
+        pin,
+        read_slot,
+        write_slot,
+    } = *bytemuck::from_bytes(&msg);
+
+    println!("1: {}", ctx.time());
+
+    let k_auth = ctx.k_auth(&pin)?;
+
+    println!("2: {}", ctx.time());
+
+    handle_receive_inner(ctx, read_slot, write_slot, &k_auth, end_time)
+}
+
+#[inline(never)]
+fn handle_receive_inner(
+    ctx: &mut Context,
+    read_slot: u8,
+    write_slot: u8,
+    k_auth: &[u8; 32],
+    end_time: u32,
+) -> Result<(), ProtocolError> {
+    // request file
+    let mut request = protocol::EncryptedTransferRequest {
+        protected: protocol::TransferRequest::new(read_slot),
+        metadata: SymmetricMetadata::empty(),
+    };
+    request.encrypt(&TRANSFER_SEND.0)?;
+
+    Message::write(
+        Opcode::Receive,
+        MessagePort::UART1,
+        bytemuck::bytes_of(&request),
+    )?;
+
+    println!("3: {}", ctx.time());
+
+    // receive file
+    let mut buffer = [0u8; size_of::<protocol::EncryptedTransferResponse>()];
+    let response = Message::read(MessagePort::UART1, &mut buffer)?;
+    match response.opcode {
+        Opcode::Error => return Err(ProtocolError::PeerBoardError),
+        Opcode::Receive => (),
+        _ => return Err(ProtocolError::InvalidOpcode),
+    };
+
+    if response.length as usize != buffer.len() {
+        return Err(ProtocolError::InvalidMessageLength);
+    }
+
+    // time to receive after request sent: ~1.8 seconds
+    println!("4: {}", ctx.time());
+
+    let transfer_response: &mut protocol::EncryptedTransferResponse =
+        bytemuck::from_bytes_mut(&mut buffer);
+    transfer_response.decrypt(&TRANSFER_RECV.0)?;
+    let group_id = transfer_response.protected.group_id.get();
+
+    println!("5: {}", ctx.time());
+
+    // decrypt correct keys based on group
+    let enc_group_keys = secrets::get_enc_group_keys(group_id)?;
+    let group_keys = enc_group_keys.decrypt(k_auth);
+
+    println!("6: {}", ctx.time());
+
+    // decrypt asymmetrically encrypted part of message
+    // about ~0.75-0.8 seconds
+    transfer_response
+        .protected
+        .decrypt(&group_keys.sk_trans.ok_or(ProtocolError::InvalidGroup)?.0)?;
+
+    println!("7: {}", ctx.time());
+
+    let file = &mut transfer_response.protected.file;
+    // check earlier associated group id matches
+    if file.protected.group != group_id {
+        return Err(ProtocolError::InvalidGroup);
+    }
+
+    // verify takes about 0.7 seconds
+    verify_signature_bytes(file, &enc_group_keys.pk_sign.0)?;
+
+    println!("8: {}", ctx.time());
+
+    let write_slot = write_slot as usize;
+    if write_slot > 7 {
+        return Err(ProtocolError::InvalidSlot);
+    }
+
+    println!("9: {}", ctx.time());
+
+    unsafe {
+        ctx.files[write_slot]
+            .set(file)
+            .map_err(|_| ProtocolError::StorageFailure)?;
+        println!("10: {}", ctx.time());
+    }
+    ctx.rebuild_fat(k_auth)?;
+    // 0.08 seconds total writing flash
+    println!("11: {}", ctx.time());
+
+    // delay until UART is about to send
+    while ctx.time() < end_time {}
+
+    Message::write(Opcode::Receive, MessagePort::UART0, &[]).map_err(ProtocolError::Message)
 }
 
 /// Listens for any Receive or Interrogate command from an adjacent board to
