@@ -580,11 +580,11 @@ pub fn delayed_write(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
     let Budget(_, max_time, max_bytes) = TIME_BUDGET_MS.iter().find(|b| b.0 == opcode).unwrap();
     let uart_time = (max_bytes * 5700) >> 16; // approximately * 0.0868
 
-    // end with enough time to send uart (plus 250ms margin
+    // end with enough time to send uart (plus 50ms margin
     // because timing doesn't include list start, etc)
     let uart_end = (start + max_time)
         .saturating_sub(uart_time)
-        .saturating_sub(250);
+        .saturating_sub(50);
 
     let res = match opcode {
         Opcode::List => handle_list(ctx, msg_len, uart_end),
