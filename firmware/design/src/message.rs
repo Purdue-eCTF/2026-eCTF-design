@@ -1,11 +1,16 @@
+use core::cell::RefCell;
+
 use bytemuck::bytes_of_mut;
-use design_macros::rand_ops;
-use mspm0l222x_hal::trng;
+use cortex_m::interrupt::{self, Mutex};
+use cortex_m::peripheral::NVIC;
 use mspm0l222x_hal::{
     HalError,
-    uart::{uart0, uart1},
+    mspm0l222x_pac::Interrupt,
+    uart::{InterruptCause, RxInterruptThreshold, uart0, uart1},
 };
 use thiserror::Error;
+
+use crate::protocol;
 
 #[derive(Debug, Error)]
 pub enum MessageError {
@@ -215,7 +220,7 @@ impl Message {
     }
 
     /// Reads an ack from UART.
-    fn read_ack(port: MessagePort) -> Result<(), MessageError> {
+    pub fn read_ack(port: MessagePort) -> Result<(), MessageError> {
         let message = Self::read_header(port)?;
 
         if message.opcode != Opcode::Ack {
@@ -263,5 +268,107 @@ impl Message {
         // rand_ops!(trng::trng());
 
         Ok(())
+    }
+}
+
+const ASYNC_RECV_BUFFER_SIZE: usize = size_of::<protocol::EncryptedTransferResponseBody>();
+
+struct AsyncRecvBuffer {
+    target_count: Option<usize>,
+    current_count: usize,
+    buffer: [u8; ASYNC_RECV_BUFFER_SIZE],
+}
+
+// this should be set to values that cause it to end up with all 0s, so it ends in bss section
+static ASYNC_RECV_BUFFER: Mutex<RefCell<AsyncRecvBuffer>> =
+    Mutex::new(RefCell::new(AsyncRecvBuffer {
+        target_count: None,
+        current_count: 0,
+        buffer: [0; _],
+    }));
+
+pub fn start_async_recv(size: usize) {
+    assert!(size <= ASYNC_RECV_BUFFER_SIZE);
+
+    interrupt::free(|token| {
+        let mut recv_buffer = ASYNC_RECV_BUFFER.borrow(token).borrow_mut();
+        recv_buffer.target_count = Some(size);
+        recv_buffer.current_count = 0;
+    });
+
+    uart1().clear_interrupt_cause(InterruptCause::Threshold);
+    NVIC::unpend(Interrupt::UART1);
+    uart1().enable_rx_threshold_interrupt(RxInterruptThreshold::ThreeQuartersFull);
+
+    // safety: no mask based critical sections are in use
+    unsafe {
+        NVIC::unmask(Interrupt::UART1);
+    }
+}
+
+pub fn await_async_recv_done(buffer: &mut [u8]) {
+    // disable interrupts then read the rest out of recv buffer
+    uart1().disable_rx_threshold_interrupt();
+    NVIC::mask(Interrupt::UART1);
+
+    interrupt::free(|token| {
+        let mut recv_buffer = ASYNC_RECV_BUFFER.borrow(token).borrow_mut();
+        // panic if await done not paired with start
+        let target_count = recv_buffer.target_count.unwrap();
+        let current_count = recv_buffer.current_count;
+
+        // read remaining bytes
+        uart1()
+            .read_bytes(&mut recv_buffer.buffer[current_count..target_count])
+            .unwrap();
+
+        // assert after reading bytes
+        assert!(buffer.len() >= target_count);
+
+        buffer[..target_count].copy_from_slice(&mut recv_buffer.buffer);
+
+        recv_buffer.target_count = None;
+        recv_buffer.current_count = 0;
+    })
+}
+
+fn handle_uart_async_recv() {
+    interrupt::free(|token| {
+        let mut recv_buffer = ASYNC_RECV_BUFFER.borrow(token).borrow_mut();
+        let Some(target_count) = recv_buffer.target_count else {
+            return;
+        };
+        let current_count = recv_buffer.current_count;
+
+        if current_count >= target_count {
+            return;
+        }
+
+        let read_count = uart1()
+            .read_bytes_until_empty(&mut recv_buffer.buffer[current_count..target_count])
+            .unwrap();
+
+        recv_buffer.current_count += read_count;
+    });
+
+    uart1().clear_interrupt_cause(InterruptCause::Threshold);
+}
+
+// unsafe to call directly, only called by interrupts
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+unsafe extern "C" fn UART1() {
+    // use crate::println;
+    // match uart1().interrupt_cause() {
+    //     Some(InterruptCause::Threshold) => println!("threshhold"),
+    //     Some(InterruptCause::Timeout) => println!("timeout"),
+    //     Some(InterruptCause::Unknown) => println!("unknown"),
+    //     None => println!("no interrupt"),
+    // }
+    if let Some(cause) = uart1().interrupt_cause() {
+        match cause {
+            InterruptCause::Threshold => handle_uart_async_recv(),
+            _ => uart1().clear_interrupt_cause(cause),
+        }
     }
 }

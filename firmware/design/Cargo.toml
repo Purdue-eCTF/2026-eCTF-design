@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bytemuck = { version = "1.25.0", features = ["derive"] }
+bytemuck = { version = "1.25.0", features = ["derive", "min_const_generics"] }
 argon2 = { version = "0.5.3", default-features = false }
 blake2 = { version = "0.10.6", default-features = false }
 chacha20poly1305 = { version = "0.10.1", default-features = false }
@@ -23,9 +23,16 @@ x25519-dalek = { version = "2.0.1", default-features = false, features = [
     "static_secrets",
     "precomputed-tables",
 ] }
-ed25519-dalek = { version = "2.2.0", default-features = false, features = ["digest", "hazmat", "fast"] }
+ed25519-dalek = { version = "2.2.0", default-features = false, features = [
+    "digest",
+    "hazmat",
+    "fast",
+] }
 common = { path = "../common" }
-subtle = { version = "2.6.1", default-features = false, features = ["const-generics", "nightly"] }
+subtle = { version = "2.6.1", default-features = false, features = [
+    "const-generics",
+    "nightly",
+] }
 design_macros = { path = "../design_macros" }
 # mspm0l222x-hal = { path = "../mspm0l222x-hal", features = ["rt"] }
 

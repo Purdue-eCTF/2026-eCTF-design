@@ -1,3 +1,4 @@
+use common::SymmetricKey;
 use core::{
     fmt::{self, Write},
     sync::atomic::{AtomicU32, Ordering},
@@ -16,7 +17,7 @@ use mspm0l222x_hal::{
 
 use crate::{
     crypto::blake_hash,
-    file::{FatTable, File, FileSlot},
+    file::{FatEntry, FatTable, File, FileSlot},
     flash::FlashEntry,
     message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
     protocol::ProtocolError,
@@ -40,7 +41,7 @@ macro_rules! sensitive {
 /// Prints to the uart port
 #[macro_export]
 macro_rules! print {
-    ($($arg:tt)*) => ($crate::context::write_fmt(Opcode::Debug, format_args!($($arg)*)));
+    ($($arg:tt)*) => ($crate::context::write_fmt($crate::message::Opcode::Debug, format_args!($($arg)*)));
 }
 
 /// Prints to the uart port
@@ -53,7 +54,7 @@ macro_rules! println {
 /// Prints to the uart port
 #[macro_export]
 macro_rules! eprint {
-    ($($arg:tt)*) => ($crate::context::write_fmt(Opcode::Error, format_args!($($arg)*)));
+    ($($arg:tt)*) => ($crate::context::write_fmt($crate::message::Opcode::Error, format_args!($($arg)*)));
 }
 
 /// Prints to the uart port
@@ -63,10 +64,9 @@ macro_rules! eprintln {
     ($($arg:tt)*) => ($crate::eprint!("{}\n", format_args!($($arg)*)));
 }
 
-// TODO: move File/FatEntry to FlashEntry abstraction
 /// The Context contains abstracted access to the flash, including the files,
 /// FAT table, and the salts (boot salt 1, ram salt, and pin salt)
-pub(crate) struct Context {
+pub struct Context {
     pub files: [FlashEntry<File>; 8],
     pub fat: FlashEntry<FatTable>,
     pub boot_salt_1: FlashEntry<Salt>,
@@ -83,7 +83,7 @@ unsafe extern "C" {
 
 impl Context {
     /// Initialize and generate a context object based on the current state of the flash.
-    pub(crate) fn new(
+    pub fn new(
         sysctl: mspm0l222x_hal::mspm0l222x_pac::Sysctl,
         iomux: mspm0l222x_hal::mspm0l222x_pac::Iomux,
         uart0: mspm0l222x_hal::mspm0l222x_pac::Uart0,
@@ -102,11 +102,8 @@ impl Context {
             32_000 - 1, // 1 ms timer interval
         );
 
-        // TODO: PIN salt generation + penalty enforcement
-        // TODO: check for flash write failure
         let iomux = Iomux::new(&iomux);
 
-        // Initialize (turn on) peripherals: UART0, UART1, and the flash.
         Uart0::init(&iomux, uart0);
         println!("starting!");
         Uart1::init(&iomux, uart1);
@@ -153,24 +150,26 @@ impl Context {
         }
     }
 
-    /// Move the salt from flash to ram and delete it from flash (for anti-glitching measures)
-    pub(crate) fn move_salt_to_ram(&mut self) {
+    /// Move the salt from flash to ram and delete it from flash
+    /// to prevent circumventing boot penalty
+    pub fn move_salt_to_ram(&mut self) {
         let salt = self.boot_salt_1.get().unwrap();
         self.ram_salt = Some(*salt);
         unsafe { self.boot_salt_1.erase() };
     }
 
-    /// Move the salt from ram to flash, after which the salt will be deallocated from ram (for anti-glitching measures)
-    pub(crate) fn move_salt_to_flash(&mut self) {
+    /// Move the salt from ram to flash so that
+    /// salt won't be erased on reboot
+    pub fn move_salt_to_flash(&mut self) {
         let Some(salt) = self.ram_salt else {
             panic!("tried to move salt to flash with no ram salt");
         };
         unsafe { self.boot_salt_1.set(&salt).unwrap() };
+        self.ram_salt = None;
     }
 
     #[inline(never)]
-    pub(crate) fn k_auth(&self, pin: &[u8; 6]) -> Result<[u8; 32], ProtocolError> {
-        // generate and fill storage blocks
+    pub fn k_auth(&self, pin: &[u8; 6]) -> Result<SymmetricKey, ProtocolError> {
         let mut k_auth = [0; 32];
         let mut input = [0; 32 + 6];
         input[..6].copy_from_slice(pin);
@@ -183,19 +182,35 @@ impl Context {
             return Err(ProtocolError::InvalidPin);
         }
 
-        Ok(k_auth)
+        Ok(SymmetricKey(k_auth))
+    }
+
+    pub fn rebuild_fat(&self, k_auth: &SymmetricKey) -> Result<(), ProtocolError> {
+        let mut entries = [FatEntry::empty(); 8];
+        for (i, file) in self.files.iter().enumerate() {
+            if let Some(file) = file.get() {
+                entries[i] = file.to_fat(k_auth)?;
+            }
+        }
+
+        unsafe {
+            self.fat
+                .set(&FatTable { entries })
+                .map_err(|_| ProtocolError::StorageFailure)?;
+        }
+
+        Ok(())
     }
 
     /// TODO Retrieve the TICK timer's current value (in ticks) .
     #[allow(static_mut_refs)]
-    pub(crate) fn time(&self) -> u32 {
-        // TODO: how long does it take for this to overflow? does that cause any issues?
+    pub fn time(&self) -> u32 {
         unsafe { TICKS.load(Ordering::Relaxed) }
     }
 
     /// Reset TICK timer's value to 0.
     #[allow(static_mut_refs)]
-    pub(crate) fn reset_time(&self) {
+    pub fn reset_time(&self) {
         unsafe { TICKS.store(0, Ordering::Relaxed) }
     }
 }
@@ -230,12 +245,30 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
     }
 
     unsafe {
-        // flash executable
+        // flash readable
         mpu.set_region(
             0,
             0x0,
             MpuRegionSize::KibiByte256,
             0,
+            MpuPerms {
+                read: true,
+                write: false,
+                execute: false,
+            },
+            MemoryCacheType::StronglyOrdered,
+        )
+        .unwrap();
+
+        // approximate region with code is executable
+        // make sure not to overlap files
+        // TODO: possible reduce to just a whole 128 kibibyte region, text might fit, make a bit bigger for now
+        // disable the 3 highest regions
+        mpu.set_region(
+            1,
+            0x0,
+            MpuRegionSize::KibiByte256,
+            0b11100000,
             MpuPerms {
                 read: true,
                 write: false,
@@ -247,7 +280,7 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
 
         // ram read write
         mpu.set_region(
-            1,
+            2,
             0x2020_0000,
             MpuRegionSize::KibiByte32,
             0,
@@ -262,7 +295,7 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
 
         // mmio read write
         mpu.set_region(
-            2,
+            3,
             0x4000_0000,
             MpuRegionSize::MibiByte512,
             0,
@@ -278,7 +311,7 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
 
         // make stack canary read only
         mpu.set_region(
-            3,
+            4,
             0x2020_0000,
             MpuRegionSize::Bytes32,
             0,
@@ -293,12 +326,12 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
 
         // first guard: stop flashcat type attack reading out file data
         let files_guard = (&_files_app1 as *const u8 as usize) - MPU_MIN_SIZE;
-        add_mpu_guard(mpu, 4, files_guard as u32);
+        add_mpu_guard(mpu, 5, files_guard as u32);
 
         // set FAT as no RWX, because we regenerate every time from file contents
         // and flash doesn't hit the memory system
         mpu.set_region(
-            5,
+            6,
             &_filetable as *const u8 as u32,
             MpuRegionSize::KibiByte1,
             0,
@@ -315,7 +348,6 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
         // - before secret keys
         // - end of stack (before global data)
 
-        mpu.clear_region(6).unwrap();
         mpu.clear_region(7).unwrap();
 
         mpu.enable();
@@ -323,14 +355,13 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
 }
 
 static mut TICKS: AtomicU32 = AtomicU32::new(0);
-/// MPU cycles per clock tick.
-const CYCLES_PER_TICK: u32 = mspm0l222x_hal::SYSOSC_FREQUENCY / 10_000;
-/// Iterate TICK timer using the system clock.
+
+/// We use the systick timer to count ms since the last time reset
 #[allow(static_mut_refs)]
 #[exception]
 fn SysTick() {
     // All access must be atomic, so this should be safe.
-    let current = unsafe { TICKS.load(Ordering::Relaxed) };
+    let current = unsafe { TICKS.load(Ordering::SeqCst) };
     unsafe {
         TICKS.store(current + 1, Ordering::Relaxed);
     }
@@ -390,6 +421,9 @@ impl Write for UartWriter {
 /// Called internally by print and println macros.
 ///
 /// Prints formatted info as debug messages.
+// inline never because UartWriter has a big stack buffer
+// excessive inlining can combine with other calls to stack overflow
+#[inline(never)]
 pub fn write_fmt(opcode: Opcode, args: fmt::Arguments) {
     let mut writer = UartWriter::new(opcode);
     let _ = writer.write_fmt(args);

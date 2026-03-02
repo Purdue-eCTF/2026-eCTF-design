@@ -8,24 +8,23 @@ use argon2::password_hash::rand_core::RngCore;
 use argon2::{Algorithm, Argon2, Params, Version};
 use blake2::{Blake2s256, Digest};
 use chacha20poly1305::aead::OsRng;
-use common::{EncryptedGroupKey, GroupKey, SymmetricKey};
+use common::{AsymmetricKey, EncryptedGroupKey, GroupKey, SymmetricKey};
 use ed25519_dalek::VerifyingKey;
 use serde::Deserialize;
 use x25519_dalek::{PublicKey, StaticSecret};
 
-/// From a private key, generate its public key with x25519_dalek. This is for asymmetric
-/// encryption.
-fn public_encryption_key(secret_key: &SymmetricKey) -> SymmetricKey {
+/// From a private key, generate its public key with x25519_dalek. This is for the
+/// Diffie-Hellman key exchange
+fn public_encryption_key(secret_key: &AsymmetricKey) -> AsymmetricKey {
     let secret_key = StaticSecret::from(secret_key.0);
     let public_key = PublicKey::from(&secret_key);
-    SymmetricKey(public_key.to_bytes())
+    AsymmetricKey(public_key.to_bytes())
 }
 
-/// From a private signing key, generate its public key. This is for signature verification.
-fn public_signing_key(secret_key: &SymmetricKey) -> SymmetricKey {
-    let secret_key = common::expand_private_key(&secret_key.0);
+fn public_signing_key(secret_key: &AsymmetricKey) -> AsymmetricKey {
+    let secret_key = common::expand_private_key(&secret_key);
     let public_key = VerifyingKey::from(&secret_key);
-    SymmetricKey(public_key.to_bytes())
+    AsymmetricKey(public_key.to_bytes())
 }
 
 impl From<GroupSecretKeys> for GroupKey {
@@ -46,11 +45,11 @@ impl From<GroupSecretKeys> for GroupKey {
 #[repr(C)]
 struct GroupSecretKeys {
     /// The private key for signature generation.
-    pub sk_sign: SymmetricKey,
+    pub sk_sign: AsymmetricKey,
     /// The private key used in the read function.
-    pub sk_read: SymmetricKey,
+    pub sk_read: AsymmetricKey,
     /// The private key used in the transfer function.
-    pub sk_trans: SymmetricKey,
+    pub sk_trans: AsymmetricKey,
     /// The private key used in the interrogate function.
     pub k_inter: SymmetricKey,
     /// The private key used to protect UUIDs.
@@ -337,8 +336,6 @@ struct PinSalts {
     /// The hashed boot salt 0. TODO (should this be included) Stored in flash, wiped before every
     /// operation and restored after.
     boot_salt_1: Salt,
-    /// The hashed boot salt 1, which should only be stored in RAM.
-    pin_salt: Salt,
     /// A key created by hashing a provided pin with the pin salt.
     k_auth: SymmetricKey,
     /// Random bytes stored in flash.
@@ -368,7 +365,6 @@ impl PinSalts {
         PinSalts {
             boot_salt_0,
             boot_salt_1,
-            pin_salt,
             k_auth: SymmetricKey(k_auth),
             k_auth_salt,
             k_auth_hash,

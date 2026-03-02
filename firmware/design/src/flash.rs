@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use bytemuck::{NoUninit, Pod, Zeroable};
+use bytemuck::NoUninit;
 use mspm0l222x_hal::flash::FLASH_PAGE_SIZE;
 
 // TODO: automatically handle partial page writes
@@ -15,7 +15,7 @@ pub struct FlashEntry<T: NoUninit> {
 
 impl<T: NoUninit> FlashEntry<T> {
     /// Create a new flash entry at a specified location and return it
-    pub(crate) unsafe fn new(location: u32) -> Self {
+    pub unsafe fn new(location: u32) -> Self {
         // Flash entry must be sector-aligned
         assert!(
             location.is_multiple_of(FLASH_PAGE_SIZE as u32),
@@ -35,9 +35,12 @@ impl<T: NoUninit> FlashEntry<T> {
     }
 
     /// Erase everything in contained flash entry
-    pub(crate) unsafe fn erase(&self) {
+    pub unsafe fn erase(&self) {
         let flash = mspm0l222x_hal::flash::flash();
-        for page in 0..self.pages {
+
+        // erase page with magic word first so that
+        // partially deleted entry is treated as empty
+        for page in (0..self.pages).rev() {
             unsafe {
                 let _ = flash.erase_page(self.location + page * FLASH_PAGE_SIZE as u32);
             }
@@ -45,7 +48,7 @@ impl<T: NoUninit> FlashEntry<T> {
     }
 
     /// Write contents into flash entry, erasing it on error
-    pub(crate) unsafe fn set(&self, data: &T) -> Result<(), mspm0l222x_hal::HalError> {
+    pub unsafe fn set(&self, data: &T) -> Result<(), mspm0l222x_hal::HalError> {
         let res = self.set_inner(data);
         if res.is_err() {
             // prevent partial writes
@@ -55,8 +58,9 @@ impl<T: NoUninit> FlashEntry<T> {
         res
     }
 
-    /// Check if there is content in the flash entry
-    pub(crate) fn is_set(&self) -> bool {
+    /// Check if there is content in the flash entry.
+    /// Prefer using `FlashEntry::get` to calling this and transmuting into T
+    pub fn is_set(&self) -> bool {
         (unsafe { *((self.location + size_of::<T>() as u32) as *const u64) }) == FLASH_MAGIC
     }
 
@@ -72,13 +76,7 @@ impl<T: NoUninit> FlashEntry<T> {
 
         // reset all pages before writing
         flash.write_unprotect(self.location, self.pages * FLASH_PAGE_SIZE as u32);
-        for page in 0..self.pages {
-            unsafe {
-                flash.erase_page(self.location + page * FLASH_PAGE_SIZE as u32)?;
-            }
-        }
-
-        flash.write_unprotect(self.location, self.pages * FLASH_PAGE_SIZE as u32);
+        unsafe { self.erase() };
 
         // Write data by chunks into pages
         let magic_bytes = FLASH_MAGIC.to_le_bytes();
@@ -91,11 +89,12 @@ impl<T: NoUninit> FlashEntry<T> {
             unsafe { flash.write_word(self.location + i as u32 * 8, word)? };
         }
 
+        flash.write_protect(self.location, self.pages * FLASH_PAGE_SIZE as u32);
         Ok(())
     }
 
     /// Safely retrieve data from a flash entry if it exists
-    pub(crate) fn get(&self) -> Option<&T> {
+    pub fn get(&self) -> Option<&T> {
         if self.is_set() {
             Some(unsafe { &*(self.location as *const T) })
         } else {

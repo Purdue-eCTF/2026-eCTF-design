@@ -7,14 +7,11 @@ Main HSM firmware.
 2. `cargo run --release`
 3. To debug:
 ```
-$ openocd -f run.cfg &
-$ gdb
-> target remote localhost:3333
+$ openocd -f openocd/run.cfg
+$ gdb -x run.gbd # in another tab
 ```
 
-TODO: does this still work with bootloader? if not, update instructions
-
-TODO: integrate w/ infra
+The name of the device in run.sh varies between platforms, so you will likely need to update it.
 
 ## Files
 - `src/`
@@ -31,3 +28,8 @@ TODO: integrate w/ infra
 - `build.rs`: build script to include generated secrets in the firmware
 - `link.x`: flash layout as described by functional requirements
 - `memory.x`: locations of flash + memory
+
+## Crates
+
+- `firmware/common`: code shared between build.rs and HSM code
+- `firmware/design_macros`: proc-macros for anti-glitching
