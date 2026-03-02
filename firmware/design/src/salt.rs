@@ -6,8 +6,6 @@ use crate::secrets::{
 use argon2::Block;
 use argon2::{Algorithm, Argon2, Params, Version};
 use bytemuck::{Pod, Zeroable};
-use design_macros::rand_ops;
-use mspm0l222x_hal::trng;
 
 const ARGON_M_COST_USIZE: usize = ARGON_M_COST as usize;
 

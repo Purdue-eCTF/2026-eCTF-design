@@ -40,7 +40,7 @@ macro_rules! sensitive {
 /// Prints to the uart port
 #[macro_export]
 macro_rules! print {
-    ($($arg:tt)*) => ($crate::context::write_fmt(Opcode::Debug, format_args!($($arg)*)));
+    ($($arg:tt)*) => ($crate::context::write_fmt($crate::message::Opcode::Debug, format_args!($($arg)*)));
 }
 
 /// Prints to the uart port
@@ -53,7 +53,7 @@ macro_rules! println {
 /// Prints to the uart port
 #[macro_export]
 macro_rules! eprint {
-    ($($arg:tt)*) => ($crate::context::write_fmt(Opcode::Error, format_args!($($arg)*)));
+    ($($arg:tt)*) => ($crate::context::write_fmt($crate::message::Opcode::Error, format_args!($($arg)*)));
 }
 
 /// Prints to the uart port
@@ -64,7 +64,7 @@ macro_rules! eprintln {
 }
 
 // TODO: move File/FatEntry to FlashEntry abstraction
-pub(crate) struct Context {
+pub struct Context {
     pub files: [FlashEntry<File>; 8],
     pub fat: FlashEntry<FatTable>,
     pub boot_salt_1: FlashEntry<Salt>,
@@ -80,7 +80,7 @@ unsafe extern "C" {
 }
 
 impl Context {
-    pub(crate) fn new(
+    pub fn new(
         sysctl: mspm0l222x_hal::mspm0l222x_pac::Sysctl,
         iomux: mspm0l222x_hal::mspm0l222x_pac::Iomux,
         uart0: mspm0l222x_hal::mspm0l222x_pac::Uart0,
@@ -148,13 +148,13 @@ impl Context {
         }
     }
 
-    pub(crate) fn move_salt_to_ram(&mut self) {
+    pub fn move_salt_to_ram(&mut self) {
         let salt = self.boot_salt_1.get().unwrap();
         self.ram_salt = Some(*salt);
         unsafe { self.boot_salt_1.erase() };
     }
 
-    pub(crate) fn move_salt_to_flash(&mut self) {
+    pub fn move_salt_to_flash(&mut self) {
         let Some(salt) = self.ram_salt else {
             panic!("tried to move salt to flash with no ram salt");
         };
@@ -162,7 +162,7 @@ impl Context {
     }
 
     #[inline(never)]
-    pub(crate) fn k_auth(&self, pin: &[u8; 6]) -> Result<[u8; 32], ProtocolError> {
+    pub fn k_auth(&self, pin: &[u8; 6]) -> Result<[u8; 32], ProtocolError> {
         let mut k_auth = [0; 32];
         let mut input = [0; 32 + 6];
         input[..6].copy_from_slice(pin);
@@ -177,7 +177,7 @@ impl Context {
         Ok(k_auth)
     }
 
-    pub(crate) fn rebuild_fat(&self, k_auth: &[u8; 32]) -> Result<(), ProtocolError> {
+    pub fn rebuild_fat(&self, k_auth: &[u8; 32]) -> Result<(), ProtocolError> {
         let mut entries = [FatEntry::empty(); 8];
         for (i, file) in self.files.iter().enumerate() {
             if let Some(file) = file.get() {
@@ -195,13 +195,12 @@ impl Context {
     }
 
     #[allow(static_mut_refs)]
-    pub(crate) fn time(&self) -> u32 {
-        // TODO: how long does it take for this to overflow? does that cause any issues?
+    pub fn time(&self) -> u32 {
         unsafe { TICKS.load(Ordering::Relaxed) }
     }
 
     #[allow(static_mut_refs)]
-    pub(crate) fn reset_time(&self) {
+    pub fn reset_time(&self) {
         unsafe { TICKS.store(0, Ordering::Relaxed) }
     }
 }
@@ -327,7 +326,6 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
 }
 
 static mut TICKS: AtomicU32 = AtomicU32::new(0);
-const CYCLES_PER_TICK: u32 = mspm0l222x_hal::SYSOSC_FREQUENCY / 10_000;
 #[allow(static_mut_refs)]
 #[exception]
 fn SysTick() {

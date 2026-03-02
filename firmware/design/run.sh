@@ -1,7 +1,7 @@
 #!/bin/sh
 
 binary="$1"
-device="/dev/cu.usbmodemML2200011"
+device="/dev/cu.usbmodemM43210051"
 
 
 arm-none-eabi-objcopy -O binary "$binary" "$binary.bin"
