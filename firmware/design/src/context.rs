@@ -234,12 +234,30 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
     }
 
     unsafe {
-        // flash executable
+        // flash readable
         mpu.set_region(
             0,
             0x0,
             MpuRegionSize::KibiByte256,
             0,
+            MpuPerms {
+                read: true,
+                write: false,
+                execute: false,
+            },
+            MemoryCacheType::StronglyOrdered,
+        )
+        .unwrap();
+
+        // approximate region with code is executable
+        // make sure not to overlap files
+        // TODO: possible reduce to just a whole 128 kibibyte region, text might fit, make a bit bigger for now
+        // disable the 3 highest regions
+        mpu.set_region(
+            1,
+            0x0,
+            MpuRegionSize::KibiByte256,
+            0b11100000,
             MpuPerms {
                 read: true,
                 write: false,
@@ -251,7 +269,7 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
 
         // ram read write
         mpu.set_region(
-            1,
+            2,
             0x2020_0000,
             MpuRegionSize::KibiByte32,
             0,
@@ -266,7 +284,7 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
 
         // mmio read write
         mpu.set_region(
-            2,
+            3,
             0x4000_0000,
             MpuRegionSize::MibiByte512,
             0,
@@ -282,7 +300,7 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
 
         // make stack canary read only
         mpu.set_region(
-            3,
+            4,
             0x2020_0000,
             MpuRegionSize::Bytes32,
             0,
@@ -297,12 +315,12 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
 
         // first guard: stop flashcat type attack reading out file data
         let files_guard = (&_files_app1 as *const u8 as usize) - MPU_MIN_SIZE;
-        add_mpu_guard(mpu, 4, files_guard as u32);
+        add_mpu_guard(mpu, 5, files_guard as u32);
 
         // set FAT as no RWX, because we regenerate every time from file contents
         // and flash doesn't hit the memory system
         mpu.set_region(
-            5,
+            6,
             &_filetable as *const u8 as u32,
             MpuRegionSize::KibiByte1,
             0,
@@ -319,7 +337,6 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
         // - before secret keys
         // - end of stack (before global data)
 
-        mpu.clear_region(6).unwrap();
         mpu.clear_region(7).unwrap();
 
         mpu.enable();
