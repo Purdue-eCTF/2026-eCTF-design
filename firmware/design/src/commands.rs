@@ -600,6 +600,8 @@ pub fn delayed_write(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
         e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
     };
 
+    while ctx.time() < uart_end {}
+
     if let Err(e) = res {
         panic!("handler failed: {e}");
     }
