@@ -2,10 +2,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::{
     context::*,
-    crypto::{
-        SymmetricMetadata, decrypt_payload_pub, encrypt_payload_pub, sign_file,
-        verify_signature_bytes,
-    },
+    crypto::{PubKeyMetadata, SymmetricMetadata, sign_file, verify_signature_bytes},
     file::{self, File, FileMeta, FileName, UUID},
     listen,
     message::{CHUNK_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
@@ -140,23 +137,20 @@ fn handle_read_inner(
     let ad = file.protected.associated_data();
 
     // decrypt the file into buffer
-    let sk_read = group_key.sk_read.ok_or(ProtocolError::InvalidGroup)?;
-    decrypt_payload_pub(
-        &mut protected[..file_length],
-        &file.protected.gn,
-        &file.protected.nonce,
-        &file.protected.tag,
-        &sk_read.0,
-        &ad,
-    )?;
-
-    let total_length = file::NAME_SIZE + file_length;
+    let sk_read = group_key.sk_read.ok_or(ProtocolError::InvalidGroup)?.0;
+    file.protected
+        .contents_ct_metadata
+        .decrypt(&mut protected[..file_length], &sk_read, &ad)?;
 
     // delay until UART is about to send
     while ctx.time() < end_time {}
 
-    Message::write(Opcode::Read, MessagePort::UART0, &buffer[..total_length])
-        .map_err(ProtocolError::Message)
+    Message::write(
+        Opcode::Read,
+        MessagePort::UART0,
+        &buffer[..file::NAME_SIZE + file_length],
+    )
+    .map_err(ProtocolError::Message)
 }
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
@@ -229,11 +223,6 @@ fn handle_write_inner(
         return Err(ProtocolError::InvalidSlot);
     }
 
-    // retrieve signing and read encryption keys with pin
-    let enc_group_keys = get_enc_group_keys(group)?;
-    let group_key = enc_group_keys.decrypt(k_auth);
-    let pk_read = group_key.pk_read.ok_or(ProtocolError::InvalidGroup)?.0;
-
     // start w/ empty file and fill in fields
     let mut file = File::empty();
 
@@ -261,15 +250,14 @@ fn handle_write_inner(
 
     println!("2.5: {}", ctx.time());
 
+    // retrieve signing and read encryption keys with k_auth
+    let enc_group_keys = get_enc_group_keys(group)?;
+    let group_key = enc_group_keys.decrypt(k_auth);
+
     // encrypt everything
-    encrypt_payload_pub(
-        &mut protected.contents.0[..data_len],
-        &mut protected.gn,
-        &mut protected.nonce,
-        &mut protected.tag,
-        &pk_read,
-        &ad,
-    )?;
+    let pk_read = group_key.pk_read.ok_or(ProtocolError::InvalidGroup)?.0;
+    protected.contents_ct_metadata =
+        PubKeyMetadata::encrypt(&mut protected.contents.0[..data_len], &pk_read, &ad)?;
 
     let k_uuid = group_key.k_uuid.ok_or(ProtocolError::InvalidGroup)?;
     protected.uuid_ct_metadata =

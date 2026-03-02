@@ -71,23 +71,6 @@ impl PubKeyMetadata {
     }
 }
 
-/// Given a message like msg || SymmetricMetadata, decrypts and validates the message, and returns msg
-pub fn unwrap_pub_message<'a>(
-    msg: &'a mut [u8],
-    secret_key: &[u8; 32],
-    associated_data: &[u8],
-) -> Result<&'a mut [u8], ProtocolError> {
-    if msg.len() < size_of::<PubKeyMetadata>() {
-        return Err(CryptoError::InvalidDecryptionPayload.into());
-    }
-
-    let (msg_inner, metadata) = msg.split_at_mut(msg.len() - size_of::<PubKeyMetadata>());
-    let metadata: &PubKeyMetadata = bytemuck::from_bytes(metadata);
-    metadata.decrypt(msg_inner, secret_key, associated_data)?;
-
-    Ok(msg_inner)
-}
-
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct SymmetricMetadata {
@@ -125,23 +108,6 @@ impl SymmetricMetadata {
 
         Ok(())
     }
-}
-
-/// Given a message like msg || SymmetricMetadata, decrypts and validates the message, and returns msg
-pub fn unwrap_symmetric_message<'a>(
-    msg: &'a mut [u8],
-    key: &[u8; 32],
-    associated_data: &[u8],
-) -> Result<&'a mut [u8], ProtocolError> {
-    if msg.len() < size_of::<SymmetricMetadata>() {
-        return Err(CryptoError::InvalidDecryptionPayload.into());
-    }
-
-    let (msg_inner, metadata) = msg.split_at_mut(msg.len() - size_of::<SymmetricMetadata>());
-    let metadata: &SymmetricMetadata = bytemuck::from_bytes(metadata);
-    metadata.decrypt(msg_inner, key, associated_data)?;
-
-    Ok(msg_inner)
 }
 
 // TODO: Tests

@@ -2,7 +2,12 @@ use core::ops::Index;
 
 use bytemuck::{NoUninit, Pod, Zeroable};
 
-use crate::{crypto::SymmetricMetadata, flash, protocol::ProtocolError, secrets};
+use crate::{
+    crypto::{PubKeyMetadata, SymmetricMetadata},
+    flash,
+    protocol::ProtocolError,
+    secrets,
+};
 
 pub const CONTENT_SIZE: usize = 8192;
 pub const UUID_SIZE: usize = 16;
@@ -38,9 +43,7 @@ pub struct FileMeta {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct ProtectedFileData {
-    pub nonce: [u8; 24],
-    pub tag: [u8; 16],
-    pub gn: [u8; 32],
+    pub contents_ct_metadata: PubKeyMetadata,
     pub name: FileName,
     pub uuid: UUID,
     pub uuid_ct_metadata: SymmetricMetadata,
@@ -52,9 +55,7 @@ pub struct ProtectedFileData {
 impl ProtectedFileData {
     pub const fn empty() -> Self {
         Self {
-            nonce: [0; 24],
-            tag: [0; 16],
-            gn: [0; 32],
+            contents_ct_metadata: PubKeyMetadata::empty(),
             name: FileName([0; NAME_SIZE]),
             uuid: UUID([0; UUID_SIZE]),
             uuid_ct_metadata: SymmetricMetadata::empty(),
@@ -81,8 +82,6 @@ pub struct File {
 }
 
 impl File {
-    pub const EMPTY: u64 = 0xd8b1f12cd454a41d;
-    pub const FULL: u64 = 0xc0aa73e0c260426e;
     pub const fn empty() -> Self {
         Self {
             signature: [0; _],
