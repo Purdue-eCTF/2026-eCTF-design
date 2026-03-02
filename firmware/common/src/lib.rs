@@ -32,22 +32,35 @@ impl SymmetricKey {
     }
 }
 
+#[derive(Default, Pod, Zeroable, Clone, Copy, Debug)]
+#[repr(transparent)]
+pub struct AsymmetricKey(pub [u8; 32]);
+
+impl AsymmetricKey {
+    pub const fn empty() -> Self {
+        Self([0; _])
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.ct_eq(&[0; 32]).into()
+    }
+}
+
 #[derive(Default, Clone)]
 pub struct GroupKey {
-    pub sk_sign: Option<SymmetricKey>,
-    pub sk_read: Option<SymmetricKey>,
-    pub pk_read: Option<SymmetricKey>,
-    pub sk_trans: Option<SymmetricKey>,
+    pub sk_sign: Option<AsymmetricKey>,
+    pub sk_read: Option<AsymmetricKey>,
+    pub pk_read: Option<AsymmetricKey>,
+    pub sk_trans: Option<AsymmetricKey>,
     pub k_uuid: Option<SymmetricKey>,
 }
 
 #[derive(Default, Clone, Copy, Zeroable, Pod)]
 #[repr(C)]
 pub struct GroupKeyBlob {
-    pub sk_sign: SymmetricKey,
-    pub sk_read: SymmetricKey,
-    pub pk_read: SymmetricKey,
-    pub sk_trans: SymmetricKey,
+    pub sk_sign: AsymmetricKey,
+    pub sk_read: AsymmetricKey,
+    pub pk_read: AsymmetricKey,
+    pub sk_trans: AsymmetricKey,
     pub k_uuid: SymmetricKey,
 }
 
@@ -62,10 +75,10 @@ impl From<GroupKey> for GroupKeyBlob {
         } = value;
 
         GroupKeyBlob {
-            sk_sign: sk_sign.unwrap_or(SymmetricKey::empty()),
-            sk_read: sk_read.unwrap_or(SymmetricKey::empty()),
-            pk_read: pk_read.unwrap_or(SymmetricKey::empty()),
-            sk_trans: sk_trans.unwrap_or(SymmetricKey::empty()),
+            sk_sign: sk_sign.unwrap_or(AsymmetricKey::empty()),
+            sk_read: sk_read.unwrap_or(AsymmetricKey::empty()),
+            pk_read: pk_read.unwrap_or(AsymmetricKey::empty()),
+            sk_trans: sk_trans.unwrap_or(AsymmetricKey::empty()),
             k_uuid: k_uuid.unwrap_or(SymmetricKey::empty()),
         }
     }
@@ -97,8 +110,8 @@ pub struct EncryptedGroupKey {
     pub blob: [u8; core::mem::size_of::<GroupKeyBlob>()],
     pub tag: [u8; 16],
     pub nonce: [u8; 24],
-    pub pk_sign: SymmetricKey,
-    pub pk_trans: SymmetricKey,
+    pub pk_sign: AsymmetricKey,
+    pub pk_trans: AsymmetricKey,
     pub k_inter: SymmetricKey,
 }
 
@@ -126,8 +139,8 @@ impl EncryptedGroupKey {
         group: u16,
         group_keys: &GroupKey,
         k_auth: &SymmetricKey,
-        pk_sign: SymmetricKey,
-        pk_trans: SymmetricKey,
+        pk_sign: AsymmetricKey,
+        pk_trans: AsymmetricKey,
         k_inter: SymmetricKey,
     ) -> Self {
         let group_key_blob: GroupKeyBlob = group_keys.clone().into();
@@ -166,11 +179,11 @@ pub fn expand_private_key(key: &[u8; 32]) -> ExpandedSecretKey {
     ExpandedSecretKey::from_bytes(expanded_bytes)
 }
 
-// traitslop
+// traits to deserialize from hex
 
-struct SymmetricKeyParser;
-impl SymmetricKeyParser {
-    fn fromhex(s: &str) -> Option<SymmetricKey> {
+struct KeyParser;
+impl KeyParser {
+    fn fromhex(s: &str) -> Option<[u8; 32]> {
         if s.len() != 64 {
             return None;
         }
@@ -184,22 +197,22 @@ impl SymmetricKeyParser {
             value[i] = hex;
         }
 
-        Some(SymmetricKey(value))
+        Some(value)
     }
 }
 
-impl<'de> Visitor<'de> for SymmetricKeyParser {
-    type Value = SymmetricKey;
+impl<'de> Visitor<'de> for KeyParser {
+    type Value = [u8; 32];
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("64-character (32-byte) hex string")
     }
 
-    fn visit_str<E>(self, value: &str) -> Result<SymmetricKey, E>
+    fn visit_str<E>(self, value: &str) -> Result<[u8; 32], E>
     where
         E: de::Error,
     {
-        SymmetricKeyParser::fromhex(value).ok_or(de::Error::invalid_value(
+        KeyParser::fromhex(value).ok_or(de::Error::invalid_value(
             de::Unexpected::Str(value),
             &"A hex string",
         ))
@@ -211,6 +224,19 @@ impl<'de> Deserialize<'de> for SymmetricKey {
     where
         D: serde::Deserializer<'de>,
     {
-        deserializer.deserialize_str(SymmetricKeyParser)
+        deserializer
+            .deserialize_str(KeyParser)
+            .map(|key| SymmetricKey(key))
+    }
+}
+
+impl<'de> Deserialize<'de> for AsymmetricKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer
+            .deserialize_str(KeyParser)
+            .map(|key| AsymmetricKey(key))
     }
 }

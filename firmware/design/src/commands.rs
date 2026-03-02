@@ -255,13 +255,13 @@ fn handle_write_inner(
     let group_key = enc_group_keys.decrypt(k_auth);
 
     // encrypt everything
-    let pk_read = group_key.pk_read.ok_or(ProtocolError::InvalidGroup)?.0;
+    let pk_read = group_key.pk_read.ok_or(ProtocolError::InvalidGroup)?;
     protected.contents_ct_metadata =
         PubKeyMetadata::encrypt(&mut protected.contents.0[..data_len], &pk_read, &ad)?;
 
     let k_uuid = group_key.k_uuid.ok_or(ProtocolError::InvalidGroup)?;
     protected.uuid_ct_metadata =
-        SymmetricMetadata::encrypt(bytemuck::bytes_of_mut(&mut protected.uuid), &k_uuid.0, &ad)?;
+        SymmetricMetadata::encrypt(bytemuck::bytes_of_mut(&mut protected.uuid), &k_uuid, &ad)?;
 
     println!("3: {}", ctx.time());
     let sk_sign = group_key.sk_sign.ok_or(ProtocolError::InvalidGroup)?;
@@ -336,7 +336,7 @@ fn handle_interrogate_inner(ctx: &mut Context, end_time: u32) -> Result<(), Prot
     {
         dst.set(group_id);
     }
-    request.encrypt(&INTERROGATE_SEND.0)?;
+    request.encrypt(&INTERROGATE_SEND)?;
 
     println!("3: {}", ctx.time());
 
@@ -367,7 +367,7 @@ fn handle_interrogate_inner(ctx: &mut Context, end_time: u32) -> Result<(), Prot
     // decrypt
     let interrogate_response: &mut protocol::EncryptedInterrogateResponse =
         bytemuck::from_bytes_mut(&mut buf);
-    interrogate_response.decrypt(&INTERROGATE_RECV.0)?;
+    interrogate_response.decrypt(&INTERROGATE_RECV)?;
     let count = interrogate_response.protected.file_count as usize;
     if count > protocol::MAX_NUM_FILES {
         return Err(ProtocolError::InvalidMessageLength);
@@ -391,7 +391,7 @@ fn handle_interrogate_inner(ctx: &mut Context, end_time: u32) -> Result<(), Prot
         let group_id = ifile.group_id.get();
         let group_keys = secrets::get_enc_group_keys(group_id)?;
 
-        ifile.decrypt(&group_keys.k_inter.0)?;
+        ifile.decrypt(&group_keys.k_inter)?;
 
         *dst = FileMeta {
             slot: ifile.protected.slot,
@@ -461,7 +461,7 @@ fn handle_receive_inner(
         protected: protocol::TransferRequest::new(read_slot),
         metadata: SymmetricMetadata::empty(),
     };
-    request.encrypt(&TRANSFER_SEND.0)?;
+    request.encrypt(&TRANSFER_SEND)?;
 
     Message::write(
         Opcode::Receive,
@@ -489,7 +489,7 @@ fn handle_receive_inner(
 
     let transfer_response: &mut protocol::EncryptedTransferResponse =
         bytemuck::from_bytes_mut(&mut buffer);
-    transfer_response.decrypt(&TRANSFER_RECV.0)?;
+    transfer_response.decrypt(&TRANSFER_RECV)?;
     let group_id = transfer_response.protected.group_id.get();
 
     println!("5: {}", ctx.time());

@@ -28,7 +28,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
     }
 
     let request: &mut EncryptedInterrogateRequest = bytemuck::from_bytes_mut(body);
-    request.decrypt(&INTERROGATE_SEND.0)?;
+    request.decrypt(&INTERROGATE_SEND)?;
 
     let request_count = request.protected.group_count as usize;
     if request_count > request.protected.groups.len() {
@@ -57,7 +57,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
                     group_id: GroupId::new(metadata.group),
                     metadata: SymmetricMetadata::empty(),
                 };
-                ifile.encrypt(&group_keys.k_inter.0)?;
+                ifile.encrypt(&group_keys.k_inter)?;
 
                 count += 1;
             }
@@ -65,7 +65,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
     }
 
     response.protected.file_count = count as u8;
-    response.encrypt(&INTERROGATE_RECV.0)?;
+    response.encrypt(&INTERROGATE_RECV)?;
 
     Message::write(
         Opcode::Interrogate,
@@ -83,7 +83,7 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolEr
     }
 
     let request: &mut EncryptedTransferRequest = bytemuck::from_bytes_mut(body);
-    request.decrypt(&TRANSFER_SEND.0)?;
+    request.decrypt(&TRANSFER_SEND)?;
 
     let slot: usize = request.protected.slot as usize;
 
@@ -103,8 +103,8 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolEr
         metadata: SymmetricMetadata::empty(),
     };
 
-    response.protected.encrypt(&group_keys.pk_trans.0)?;
-    response.encrypt(&TRANSFER_RECV.0)?;
+    response.protected.encrypt(&group_keys.pk_trans)?;
+    response.encrypt(&TRANSFER_RECV)?;
 
     Message::write(
         Opcode::Receive,

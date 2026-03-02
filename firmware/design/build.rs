@@ -8,21 +8,21 @@ use argon2::password_hash::rand_core::RngCore;
 use argon2::{Algorithm, Argon2, Params, Version};
 use blake2::{Blake2s256, Digest};
 use chacha20poly1305::aead::OsRng;
-use common::{EncryptedGroupKey, GroupKey, SymmetricKey};
+use common::{AsymmetricKey, EncryptedGroupKey, GroupKey, SymmetricKey};
 use ed25519_dalek::VerifyingKey;
 use serde::Deserialize;
 use x25519_dalek::{PublicKey, StaticSecret};
 
-fn public_encryption_key(secret_key: &SymmetricKey) -> SymmetricKey {
+fn public_encryption_key(secret_key: &AsymmetricKey) -> AsymmetricKey {
     let secret_key = StaticSecret::from(secret_key.0);
     let public_key = PublicKey::from(&secret_key);
-    SymmetricKey(public_key.to_bytes())
+    AsymmetricKey(public_key.to_bytes())
 }
 
-fn public_signing_key(secret_key: &SymmetricKey) -> SymmetricKey {
+fn public_signing_key(secret_key: &AsymmetricKey) -> AsymmetricKey {
     let secret_key = common::expand_private_key(&secret_key.0);
     let public_key = VerifyingKey::from(&secret_key);
-    SymmetricKey(public_key.to_bytes())
+    AsymmetricKey(public_key.to_bytes())
 }
 
 impl From<GroupSecretKeys> for GroupKey {
@@ -41,9 +41,9 @@ impl From<GroupSecretKeys> for GroupKey {
 #[derive(Default, Debug, Clone, Copy, Deserialize)]
 #[repr(C)]
 struct GroupSecretKeys {
-    pub sk_sign: SymmetricKey,
-    pub sk_read: SymmetricKey,
-    pub sk_trans: SymmetricKey,
+    pub sk_sign: AsymmetricKey,
+    pub sk_read: AsymmetricKey,
+    pub sk_trans: AsymmetricKey,
     pub k_inter: SymmetricKey,
     pub k_uuid: SymmetricKey,
 }

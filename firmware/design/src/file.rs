@@ -98,7 +98,7 @@ impl File {
         let ad = self.protected.associated_data();
         self.protected.uuid_ct_metadata.decrypt(
             bytemuck::bytes_of_mut(&mut uuid),
-            &group_keys.k_uuid.ok_or(ProtocolError::InvalidGroup)?.0,
+            &group_keys.k_uuid.ok_or(ProtocolError::InvalidGroup)?,
             &ad,
         )?;
 

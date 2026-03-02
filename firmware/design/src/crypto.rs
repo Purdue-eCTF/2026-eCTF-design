@@ -2,6 +2,7 @@ use blake2::{Blake2b512, Blake2s256, Digest as BlakeDigest};
 use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::aead::generic_array::GenericArray;
 use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
+use common::{AsymmetricKey, SymmetricKey};
 use ed25519_dalek::hazmat::{raw_sign_prehashed, raw_verify_prehashed};
 use ed25519_dalek::{Signature, VerifyingKey};
 use mspm0l222x_hal::trng;
@@ -35,7 +36,7 @@ impl PubKeyMetadata {
 
     pub fn encrypt(
         msg: &mut [u8],
-        public_key: &[u8; 32],
+        public_key: &AsymmetricKey,
         associated_data: &[u8],
     ) -> Result<Self, ProtocolError> {
         let mut out = Self::empty();
@@ -88,12 +89,12 @@ impl SymmetricMetadata {
 
     pub fn encrypt(
         msg: &mut [u8],
-        key: &[u8; 32],
+        key: &SymmetricKey,
         associated_data: &[u8],
     ) -> Result<Self, ProtocolError> {
         let mut out = Self::empty();
 
-        encrypt_payload_symmetric(msg, &mut out.nonce, &mut out.tag, key, associated_data)?;
+        encrypt_payload_symmetric(msg, &mut out.nonce, &mut out.tag, &key, associated_data)?;
 
         Ok(out)
     }
@@ -101,7 +102,7 @@ impl SymmetricMetadata {
     pub fn decrypt(
         &self,
         ct: &mut [u8],
-        key: &[u8; 32],
+        key: &SymmetricKey,
         associated_data: &[u8],
     ) -> Result<(), ProtocolError> {
         decrypt_payload_symmetric(ct, &self.nonce, &self.tag, key, associated_data)?;
@@ -186,7 +187,7 @@ pub fn decrypt_payload_pub<'a>(
     // use kdf as recommended by rfc
     // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
     // TODO: maybe add per key salt
-    let sym_key = blake_hash(&shared, &PUB_ENCRYPT_SALT);
+    let sym_key = SymmetricKey(blake_hash(&shared, &PUB_ENCRYPT_SALT));
 
     // decrypt payload already have rand ops
     decrypt_payload_symmetric(payload, nonce, tag, &sym_key, associated_data)?;
@@ -199,12 +200,12 @@ pub fn encrypt_payload_pub<'a>(
     gn: &'a mut [u8; GN_SIZE],
     nonce: &'a mut [u8; NONCE_SIZE],
     tag: &'a mut [u8; TAG_SIZE],
-    public_key: &[u8; 32],
+    public_key: &AsymmetricKey,
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
     // rand_ops!(trng::trng());
 
-    let pk = PublicKey::from(*public_key);
+    let pk = PublicKey::from(public_key.0);
     let mut n_bytes = [0; 32];
 
     let trng = trng::trng();
@@ -224,7 +225,7 @@ pub fn encrypt_payload_pub<'a>(
     // use kdf as recommended by rfc
     // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
     // TODO: maybe add per key salt
-    let secret = blake_hash(&shared, &PUB_ENCRYPT_SALT);
+    let secret = SymmetricKey(blake_hash(&shared, &PUB_ENCRYPT_SALT));
 
     encrypt_payload_symmetric(payload, nonce, tag, &secret, associated_data)?;
     Ok(payload)
@@ -234,13 +235,12 @@ pub fn decrypt_payload_symmetric<'a>(
     payload: &'a mut [u8],
     nonce: &'a [u8; NONCE_SIZE],
     tag: &'a [u8; TAG_SIZE],
-    key: &[u8; 32],
+    key: &SymmetricKey,
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
     // rand_ops!(trng::trng());
 
-    let cipher = XChaCha20Poly1305::new_from_slice(key)
-        .map_err(|_| CryptoError::InvalidDecryptionPayload)?;
+    let cipher = XChaCha20Poly1305::new(&key.0.into());
 
     let nonce_ga = GenericArray::from_slice(nonce);
     let tag_ga = GenericArray::from_slice(tag);
@@ -257,7 +257,7 @@ pub fn encrypt_payload_symmetric<'a>(
     payload: &'a mut [u8],
     nonce_slot: &'a mut [u8; NONCE_SIZE],
     tag_slot: &'a mut [u8; TAG_SIZE],
-    key: &[u8; 32],
+    key: &SymmetricKey,
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
     // rand_ops!(trng::trng());
@@ -267,8 +267,7 @@ pub fn encrypt_payload_symmetric<'a>(
         chunk.copy_from_slice(&trng.word().to_le_bytes());
     }
 
-    let cipher = XChaCha20Poly1305::new_from_slice(key)
-        .map_err(|_| CryptoError::InvalidEncryptionPayload)?;
+    let cipher = XChaCha20Poly1305::new(&key.0.into());
 
     let nonce_ga = GenericArray::from_slice(nonce_slot);
     let tag = cipher
