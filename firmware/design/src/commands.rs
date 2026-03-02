@@ -7,10 +7,10 @@ use crate::{
         unwrap_symmetric_message, verify_signature_bytes,
     },
     file::{self, File, FileMeta, FileName, UUID},
-    listen::{self, EncryptedInterrogateInfo},
+    listen,
     message::{CHUNK_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
     println,
-    protocol::{self, ProtocolError},
+    protocol::{self, ProtocolError, SymEncryptable},
     secrets::{
         self, COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV,
         get_enc_group_keys,
@@ -466,28 +466,35 @@ fn handle_interrogate(
 
 #[inline(never)]
 fn handle_interrogate_inner(ctx: &mut Context, end_time: u32) -> Result<(), ProtocolError> {
-    // TODO: maybe send bitmask
-    const GROUPS_BYTE_LEN: usize = COPY_PERM_GROUPS.len() * size_of::<u16>();
-    let mut buf = [0u8; GROUPS_BYTE_LEN + size_of::<SymmetricMetadata>()];
-    let (payload, metadata) = buf.split_at_mut(GROUPS_BYTE_LEN);
-    let metadata: &mut SymmetricMetadata = bytemuck::from_bytes_mut(metadata);
+    if COPY_PERM_GROUPS.len() > protocol::INTERROGATE_MAX_GROUPS {
+        return Err(ProtocolError::InvalidMessageLength);
+    }
 
-    // copy list of interrogatable groups
-    payload.copy_from_slice(bytemuck::cast_slice(&COPY_PERM_GROUPS));
-
-    // encrypt
-    *metadata =
-        SymmetricMetadata::encrypt(payload, &INTERROGATE_SEND.0, &[Opcode::Interrogate.into()])?;
+    let mut request = protocol::EncryptedInterrogateRequest::zeroed();
+    request.protected.group_count = COPY_PERM_GROUPS.len() as u8;
+    for (dst, group_id) in request
+        .protected
+        .groups
+        .iter_mut()
+        .zip(COPY_PERM_GROUPS.iter().copied())
+    {
+        dst.set(group_id);
+    }
+    request.encrypt(&INTERROGATE_SEND.0)?;
 
     println!("3: {}", ctx.time());
 
     // send message
-    Message::write(Opcode::Interrogate, MessagePort::UART1, &buf)?;
+    Message::write(
+        Opcode::Interrogate,
+        MessagePort::UART1,
+        bytemuck::bytes_of(&request),
+    )?;
 
     println!("4: {}", ctx.time());
 
     // receive interrogate response
-    let mut buf = [0u8; size_of::<EncryptedInterrogateInfo>() * 8 + size_of::<SymmetricMetadata>()];
+    let mut buf = [0u8; size_of::<protocol::EncryptedInterrogateResponse>()];
     let response = Message::read(MessagePort::UART1, &mut buf)?;
     if response.opcode == Opcode::Error {
         return Err(ProtocolError::PeerBoardError);
@@ -495,42 +502,51 @@ fn handle_interrogate_inner(ctx: &mut Context, end_time: u32) -> Result<(), Prot
     if response.opcode != Opcode::Interrogate {
         return Err(ProtocolError::InvalidOpcode);
     }
-    let payload = &mut buf[..response.length as usize];
+    if response.length as usize != buf.len() {
+        return Err(ProtocolError::InvalidMessageLength);
+    }
 
     println!("5: {}", ctx.time());
 
     // decrypt
-    let payload =
-        unwrap_symmetric_message(payload, &INTERROGATE_RECV.0, &[Opcode::Interrogate.into()])?;
-    let interrogate_info: &mut [EncryptedInterrogateInfo] = bytemuck::cast_slice_mut(payload);
-    let count = interrogate_info.len();
+    let interrogate_response: &mut protocol::EncryptedInterrogateResponse =
+        bytemuck::from_bytes_mut(&mut buf);
+    interrogate_response.decrypt(&INTERROGATE_RECV.0)?;
+    let count = interrogate_response.protected.file_count as usize;
+    if count > protocol::MAX_NUM_FILES {
+        return Err(ProtocolError::InvalidMessageLength);
+    }
 
     println!("6: {}", ctx.time());
 
     // allocate response buffer of the maximum size
-    let mut buffer = [0u8; 4 + 8 * size_of::<listen::InterrogateFile>()];
+    let mut buffer = [0u8; 4 + protocol::MAX_NUM_FILES * size_of::<FileMeta>()];
     let response = &mut buffer;
 
     // split num_files off from the list and set it
     let (num_files, list) = response.split_at_mut(4);
     num_files.copy_from_slice(&(count as u32).to_le_bytes());
+    let list: &mut [FileMeta; protocol::MAX_NUM_FILES] = bytemuck::from_bytes_mut(list);
 
-    for (i, ifile) in interrogate_info.iter_mut().enumerate() {
-        let group_keys = secrets::get_enc_group_keys(ifile.file.group())?;
+    for (dst, ifile) in list
+        .iter_mut()
+        .zip(interrogate_response.protected.files[..count].iter_mut())
+    {
+        let group_id = ifile.group_id.get();
+        let group_keys = secrets::get_enc_group_keys(group_id)?;
 
         ifile.decrypt(&group_keys.k_inter.0)?;
 
-        // copy to the correct offset in list
-        let list_offset = i * size_of::<listen::InterrogateFile>();
-        let list_entry = &mut list[list_offset..list_offset + size_of::<listen::InterrogateFile>()];
-        list_entry[0] = ifile.file.protected.slot;
-        list_entry[1..3].copy_from_slice(&u16::to_le_bytes(ifile.file.group()));
-        list_entry[3..].copy_from_slice(&ifile.file.protected.name.0);
+        *dst = FileMeta {
+            slot: ifile.protected.slot,
+            group: group_id,
+            name: ifile.protected.name,
+        };
     }
 
     println!("7: {}", ctx.time());
 
-    let actual_message_size = 4 + count * size_of::<listen::InterrogateFile>();
+    let actual_message_size = 4 + count * size_of::<FileMeta>();
 
     // delay until UART is about to send
     while ctx.time() < end_time {}
