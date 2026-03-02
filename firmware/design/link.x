@@ -129,6 +129,12 @@ SECTIONS {
         ASSERT(_esalt - _salt == 1024, "boot_salt_1 section has incorrect length");
     } > APP2
 
+    .secrets : {
+        _secrets = .;
+        *(.secrets);
+        _esecrets = .;
+    } > APP2
+
     .filetable : {
         _filetable = .;
         KEEP(*(.filetable.default));

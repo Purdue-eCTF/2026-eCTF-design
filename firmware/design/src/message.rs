@@ -3,6 +3,8 @@ use core::cell::RefCell;
 use bytemuck::bytes_of_mut;
 use cortex_m::interrupt::{self, Mutex};
 use cortex_m::peripheral::NVIC;
+use design_macros::rand_ops;
+use mspm0l222x_hal::trng;
 use mspm0l222x_hal::{
     HalError,
     mspm0l222x_pac::Interrupt,
