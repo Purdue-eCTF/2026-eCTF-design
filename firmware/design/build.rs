@@ -186,9 +186,11 @@ pub const T_COST_K_AUTH: u32 = {};
 
 #[unsafe(link_section=\".secrets\")]
 pub static BOOT_SALT_0: [u8; 32] = {:?};
-// TODO: make in special section of flash
-#[unsafe(link_section=\".secrets\")]
-pub static BOOT_SALT_1: [u8; 32] = {:?};
+
+// boot salt 1 in salt page
+#[unsafe(link_section = \".salt.default\")]
+#[unsafe(no_mangle)]
+pub static __SALT: ([u8; core::mem::size_of::<crate::salt::Salt>()], u64) = ({:?}, crate::flash::FLASH_MAGIC);
 
 #[unsafe(link_section=\".secrets\")]
 pub static K_AUTH_SALT: [u8; 32] = {:?};
@@ -216,16 +218,13 @@ pub static DERIVE_SALT: &[u8] = &{:?};
 #[unsafe(link_section=\".secrets\")]
 pub static PUB_ENCRYPT_SALT: [u8; 32] = {:?};
 
-// TODO: must be sorted by group
 #[unsafe(link_section=\".secrets\")]
 pub static GROUP_KEYS_ENC: [EncryptedGroupKey; {}] = [{}];
 
-#[unsafe(link_section=\".secrets\")]
-pub static COPY_PERM_GROUPS: [u16; {}] = {:?};
+pub const COPY_PERM_GROUPS: [u16; {}] = {:?};
 
 #[unsafe(link_section=\".secrets\")]
 pub static STACK_CANARY_START_VALUE: usize = {};
-
 ",
         ARGON_M_COST,
         ARGON_P_COST,
