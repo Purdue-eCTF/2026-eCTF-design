@@ -1,6 +1,7 @@
 use crate::file::{File, FileName};
 use crate::message::{MessageError, Opcode};
 use bytemuck::{Pod, Zeroable, bytes_of, bytes_of_mut};
+use common::{AsymmetricKey, SymmetricKey};
 use thiserror::Error;
 
 use crate::crypto::{CryptoError, PubKeyMetadata, SymmetricMetadata};
@@ -60,7 +61,7 @@ pub struct EncryptionDetails<'a, T> {
 pub trait SymEncryptable {
     fn details(&mut self) -> EncryptionDetails<'_, SymmetricMetadata>;
 
-    fn encrypt(&mut self, key: &[u8; 32]) -> Result<(), ProtocolError> {
+    fn encrypt(&mut self, key: &SymmetricKey) -> Result<(), ProtocolError> {
         let details = self.details();
         *details.metadata = SymmetricMetadata::encrypt(details.body, key, details.associated_data)?;
         Ok(())
@@ -68,7 +69,7 @@ pub trait SymEncryptable {
 
     fn encrypt_with_associated_data(
         &mut self,
-        key: &[u8; 32],
+        key: &SymmetricKey,
         associated_data: &[u8],
     ) -> Result<(), ProtocolError> {
         let details = self.details();
@@ -76,7 +77,7 @@ pub trait SymEncryptable {
         Ok(())
     }
 
-    fn decrypt(&mut self, key: &[u8; 32]) -> Result<(), ProtocolError> {
+    fn decrypt(&mut self, key: &SymmetricKey) -> Result<(), ProtocolError> {
         let details = self.details();
         details
             .metadata
@@ -86,7 +87,7 @@ pub trait SymEncryptable {
 
     fn decrypt_with_associated_data(
         &mut self,
-        key: &[u8; 32],
+        key: &SymmetricKey,
         associated_data: &[u8],
     ) -> Result<(), ProtocolError> {
         let details = self.details();
@@ -100,13 +101,13 @@ pub trait SymEncryptable {
 pub trait PubEncryptable {
     fn details(&mut self) -> EncryptionDetails<'_, PubKeyMetadata>;
 
-    fn encrypt(&mut self, key: &[u8; 32]) -> Result<(), ProtocolError> {
+    fn encrypt(&mut self, key: &AsymmetricKey) -> Result<(), ProtocolError> {
         let details = self.details();
-        *details.metadata = PubKeyMetadata::encrypt(details.body, key, details.associated_data)?;
+        *details.metadata = PubKeyMetadata::encrypt(details.body, &key, details.associated_data)?;
         Ok(())
     }
 
-    fn decrypt(&mut self, key: &[u8; 32]) -> Result<(), ProtocolError> {
+    fn decrypt(&mut self, key: &AsymmetricKey) -> Result<(), ProtocolError> {
         let details = self.details();
         details
             .metadata

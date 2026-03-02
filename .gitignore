@@ -6,3 +6,4 @@ global.secrets
 build/
 .idea
 *.egg-info
+*.bin

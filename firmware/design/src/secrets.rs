@@ -1,5 +1,5 @@
 use crate::protocol::ProtocolError;
-use common::{EncryptedGroupKey, SymmetricKey};
+use common::{AsymmetricKey, EncryptedGroupKey, SymmetricKey};
 
 pub fn get_enc_group_keys(group: u16) -> Result<&'static EncryptedGroupKey, ProtocolError> {
     for key in GROUP_KEYS_ENC.iter() {

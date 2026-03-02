@@ -1,3 +1,4 @@
+use common::SymmetricKey;
 use core::{
     fmt::{self, Write},
     sync::atomic::{AtomicU32, Ordering},
@@ -162,7 +163,7 @@ impl Context {
     }
 
     #[inline(never)]
-    pub fn k_auth(&self, pin: &[u8; 6]) -> Result<[u8; 32], ProtocolError> {
+    pub fn k_auth(&self, pin: &[u8; 6]) -> Result<SymmetricKey, ProtocolError> {
         let mut k_auth = [0; 32];
         let mut input = [0; 32 + 6];
         input[..6].copy_from_slice(pin);
@@ -174,10 +175,10 @@ impl Context {
             return Err(ProtocolError::InvalidPin);
         }
 
-        Ok(k_auth)
+        Ok(SymmetricKey(k_auth))
     }
 
-    pub fn rebuild_fat(&self, k_auth: &[u8; 32]) -> Result<(), ProtocolError> {
+    pub fn rebuild_fat(&self, k_auth: &SymmetricKey) -> Result<(), ProtocolError> {
         let mut entries = [FatEntry::empty(); 8];
         for (i, file) in self.files.iter().enumerate() {
             if let Some(file) = file.get() {

@@ -29,7 +29,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
     }
 
     let request: &mut EncryptedInterrogateRequest = bytemuck::from_bytes_mut(body);
-    request.decrypt(&INTERROGATE_SEND.0)?;
+    request.decrypt(&INTERROGATE_SEND)?;
 
     let request_count = request.protected.group_count as usize;
     if request_count > request.protected.groups.len() {
@@ -58,7 +58,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
                     group_id: GroupId::new(metadata.group),
                     metadata: SymmetricMetadata::empty(),
                 };
-                ifile.encrypt(&group_keys.k_inter.0)?;
+                ifile.encrypt(&group_keys.k_inter)?;
 
                 count += 1;
             }
@@ -66,7 +66,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
     }
 
     response.protected.file_count = count as u8;
-    response.encrypt(&INTERROGATE_RECV.0)?;
+    response.encrypt(&INTERROGATE_RECV)?;
 
     Message::write(
         Opcode::Interrogate,
@@ -84,7 +84,7 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolEr
     }
 
     let request: &mut EncryptedTransferRequest = bytemuck::from_bytes_mut(body);
-    request.decrypt(&TRANSFER_SEND.0)?;
+    request.decrypt(&TRANSFER_SEND)?;
 
     let slot: usize = request.protected.slot as usize;
 
@@ -112,13 +112,13 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolEr
     // perform encryptions
     response_header.protected.pub_metadata = PubKeyMetadata::encrypt(
         bytemuck::bytes_of_mut(&mut response_body.protected),
-        &group_keys.pk_trans.0,
+        &group_keys.pk_trans,
         &file_src.protected.group.to_le_bytes(),
     )?;
 
-    response_header.encrypt(&TRANSFER_RECV.0)?;
+    response_header.encrypt(&TRANSFER_RECV)?;
     response_body
-        .encrypt_with_associated_data(&TRANSFER_RECV.0, bytemuck::bytes_of(&response_header))?;
+        .encrypt_with_associated_data(&TRANSFER_RECV, bytemuck::bytes_of(&response_header))?;
 
     Message::write(
         Opcode::Receive,

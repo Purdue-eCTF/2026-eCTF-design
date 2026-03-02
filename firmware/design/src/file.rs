@@ -1,6 +1,7 @@
 use core::ops::Index;
 
 use bytemuck::{NoUninit, Pod, Zeroable};
+use common::SymmetricKey;
 
 use crate::{
     crypto::{PubKeyMetadata, SymmetricMetadata},
@@ -90,7 +91,7 @@ impl File {
         }
     }
 
-    pub fn to_fat(&self, k_auth: &[u8; 32]) -> Result<FatEntry, ProtocolError> {
+    pub fn to_fat(&self, k_auth: &SymmetricKey) -> Result<FatEntry, ProtocolError> {
         let enc_group_keys = secrets::get_enc_group_keys(self.protected.group)?;
         let group_keys = enc_group_keys.decrypt(k_auth);
 
@@ -98,7 +99,7 @@ impl File {
         let ad = self.protected.associated_data();
         self.protected.uuid_ct_metadata.decrypt(
             bytemuck::bytes_of_mut(&mut uuid),
-            &group_keys.k_uuid.ok_or(ProtocolError::InvalidGroup)?.0,
+            &group_keys.k_uuid.ok_or(ProtocolError::InvalidGroup)?,
             &ad,
         )?;
 
