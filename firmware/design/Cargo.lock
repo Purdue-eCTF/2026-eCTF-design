@@ -463,7 +463,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 [[package]]
 name = "mspm0l222x-hal"
 version = "0.1.0"
-source = "git+https://github.com/Purdue-eCTF/mspm0l222x-hal.git#c0542a473f3226198362d076d4a3940d07a19121"
+source = "git+https://github.com/Purdue-eCTF/mspm0l222x-hal.git#b60ddae9e6e0736d7250fcb35bb3dbb2ce9181f7"
 dependencies = [
  "bytemuck",
  "cortex-m",
