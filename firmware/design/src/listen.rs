@@ -116,8 +116,10 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
         let group = u16::from_le_bytes([chunk[0], chunk[1]]);
 
         for i in 0..8 {
-            let file = ctx.files[i].get().ok_or(ProtocolError::InvalidFile)?;
-            // check if the slot is full and the group id matches
+            let Some(file) = ctx.files[i].get() else {
+                continue;
+            };
+            // check if the group id matches
             let metadata = &file.protected;
             // if a valid file matches the group, add it to the list
             if metadata.group == group {
@@ -172,7 +174,11 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
     )?;
 
     let payload_size = body_size + size_of::<crypto::SymmetricMetadata>();
-    Message::write(Opcode::Interrogate, MessagePort::UART1, &payload[..payload_size])?;
+    Message::write(
+        Opcode::Interrogate,
+        MessagePort::UART1,
+        &payload[..payload_size],
+    )?;
 
     Ok(())
 }

@@ -92,10 +92,8 @@ impl File {
     }
 
     pub fn to_fat(&self, k_auth: &[u8; 32]) -> Result<FatEntry, ProtocolError> {
-        crate::println!("fat group: {}", self.protected.group);
         let enc_group_keys = secrets::get_enc_group_keys(self.protected.group)?;
         let group_keys = enc_group_keys.decrypt(k_auth);
-        crate::println!("group keys uuid: {}", group_keys.k_uuid.is_some());
 
         let mut uuid = self.protected.uuid;
         let ad = self.protected.associated_data();
