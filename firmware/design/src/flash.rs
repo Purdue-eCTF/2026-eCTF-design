@@ -5,6 +5,8 @@ use mspm0l222x_hal::flash::FLASH_PAGE_SIZE;
 
 // TODO: automatically handle partial page writes
 pub const FLASH_MAGIC: u64 = 0x7c79b307cf99d0d6;
+
+/// Location in flash and number of pages.
 pub struct FlashEntry<T: NoUninit> {
     location: u32,
     pages: u32,
@@ -12,6 +14,7 @@ pub struct FlashEntry<T: NoUninit> {
 }
 
 impl<T: NoUninit> FlashEntry<T> {
+    /// Create a new flash entry at a specified location and return it
     pub unsafe fn new(location: u32) -> Self {
         // Flash entry must be sector-aligned
         assert!(
@@ -31,6 +34,7 @@ impl<T: NoUninit> FlashEntry<T> {
         }
     }
 
+    /// Erase everything in contained flash entry
     pub unsafe fn erase(&self) {
         let flash = mspm0l222x_hal::flash::flash();
 
@@ -43,6 +47,7 @@ impl<T: NoUninit> FlashEntry<T> {
         }
     }
 
+    /// Write contents into flash entry, erasing it on error
     pub unsafe fn set(&self, data: &T) -> Result<(), mspm0l222x_hal::HalError> {
         let res = self.set_inner(data);
         if res.is_err() {
@@ -53,10 +58,13 @@ impl<T: NoUninit> FlashEntry<T> {
         res
     }
 
+    /// Check if there is content in the flash entry.
+    /// Prefer using `FlashEntry::get` to calling this and transmuting into T
     pub fn is_set(&self) -> bool {
         (unsafe { *((self.location + size_of::<T>() as u32) as *const u64) }) == FLASH_MAGIC
     }
 
+    /// Write words into flash entry
     #[inline]
     fn set_inner(&self, data: &T) -> Result<(), mspm0l222x_hal::HalError> {
         let flash = mspm0l222x_hal::flash::flash();
@@ -66,9 +74,11 @@ impl<T: NoUninit> FlashEntry<T> {
             unreachable!()
         };
 
+        // reset all pages before writing
         flash.write_unprotect(self.location, self.pages * FLASH_PAGE_SIZE as u32);
         unsafe { self.erase() };
 
+        // Write data by chunks into pages
         let magic_bytes = FLASH_MAGIC.to_le_bytes();
         for (i, word) in words
             .iter()
@@ -83,6 +93,7 @@ impl<T: NoUninit> FlashEntry<T> {
         Ok(())
     }
 
+    /// Safely retrieve data from a flash entry if it exists
     pub fn get(&self) -> Option<&T> {
         if self.is_set() {
             Some(unsafe { &*(self.location as *const T) })

@@ -10,14 +10,19 @@ use crate::{
     secrets,
 };
 
+/// Maximum amount of content a file can store in bytes.
 pub const CONTENT_SIZE: usize = 8192;
+/// Size of a UUID in bytes.
 pub const UUID_SIZE: usize = 16;
+/// Maximum size of a file name in bytes.
 pub const NAME_SIZE: usize = 32;
 
+/// Container for the file name.
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
 #[repr(transparent)]
 pub struct FileName(pub [u8; NAME_SIZE]);
 
+/// Container for the file UUID.
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
 #[repr(transparent)]
 pub struct UUID(pub [u8; UUID_SIZE]);
@@ -33,6 +38,9 @@ unsafe impl Zeroable for FileContents {
     }
 }
 
+/// Container for file metadata, including the number slot the file is located in the FAT, the ID of the
+/// group it belongs to, and it's name.
+
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
 #[repr(C, packed)]
 pub struct FileMeta {
@@ -41,19 +49,27 @@ pub struct FileMeta {
     pub name: FileName,
 }
 
+/// The file's data, metadata, and cryptographic metadata collected in one struct.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct ProtectedFileData {
     pub contents_ct_metadata: PubKeyMetadata,
+    /// The file's name
     pub name: FileName,
+    /// The file's UUID.
     pub uuid: UUID,
+    /// Nonce and tag for the encrypted UUID.
     pub uuid_ct_metadata: SymmetricMetadata,
+    /// The file's owning group.
     pub group: u16,
+    /// The length of the file's contents.
     pub contents_length: u16,
+    /// The contents of the file, which should be encrypted.
     pub contents: FileContents,
 }
 
 impl ProtectedFileData {
+    /// Initialize self, setting all fields to 0.
     pub const fn empty() -> Self {
         Self {
             contents_ct_metadata: PubKeyMetadata::empty(),
@@ -77,12 +93,16 @@ impl ProtectedFileData {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct File {
+    /// ed25519 signature for the file contents, metadata, and cryptographic metadata.
     pub signature: [u8; 64],
+    /// All data associated with a file, including its contents, metadata, and cryptographic
+    /// metadata.
     pub protected: ProtectedFileData,
-    _padding: [u8; 4],
+    _padding: [u8; 4], // pad file to a multiple of 8 as required by FlashEntry
 }
 
 impl File {
+    /// Initialize self, setting all fields to zero.
     pub const fn empty() -> Self {
         Self {
             signature: [0; _],
@@ -112,15 +132,24 @@ impl File {
     }
 }
 
+/// A FAT Entry describes the location and amount of space in flash where a File is to be
+/// contained; each entry has a differentiating UUID.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
+
+/// File allocation table entry used by the eCTF bootloader.
 pub struct FatEntry {
+    /// A FAT entry's unique UUID.
     pub uuid: UUID,
+    /// The length of a FAT entry.
     pub length: u16,
+    /// The padding after the length of a FAT Entry.
     pub padding: u16,
+    /// The address of the FAT Entry in flash.
     pub addr: u32,
 }
 
+/// The FAT Table indexes all FatEntries on the flash.
 impl FatEntry {
     pub const fn empty() -> Self {
         Self {
@@ -133,22 +162,30 @@ impl FatEntry {
 }
 
 #[derive(Debug, Clone, Copy)]
+
+/// File allocation table used by the eCTF bootloader.
 pub struct FatTable {
+    /// The FAT stores a maximum of eight files, and thus has eight FAT entries.
     pub entries: [FatEntry; 8],
 }
 
 impl Index<usize> for FatTable {
     type Output = FatEntry;
+    /// Retrieve a FatEntry by its index on the FatTable.
     fn index(&self, index: usize) -> &Self::Output {
         &self.entries[index]
     }
 }
 unsafe impl NoUninit for FatTable {}
 
+/// The FileSlot contains a file and a identifying magic value to be stored at a corresponding FAT
+/// entry.
 #[repr(align(1024), C)]
 #[derive(Copy, Clone)]
 pub struct FileSlot {
+    /// The (encrypted) file to be stored.
     pub file: File,
+    // A value to identify where the File ends.
     pub magic: u64,
 }
 
@@ -171,6 +208,7 @@ pub static __FILES_APP2: [FileSlot; 2] = [FileSlot {
     magic: 0,
 }; 2];
 
+/// TODO
 #[unsafe(link_section = ".filetable.default")]
 #[unsafe(no_mangle)]
 pub static __FAT: ([u8; core::mem::size_of::<FatTable>()], u64) = ([0; _], flash::FLASH_MAGIC);

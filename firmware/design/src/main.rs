@@ -13,6 +13,7 @@ use design::{
     secrets::STACK_CANARY_START_VALUE,
 };
 
+/// On panic, inform the host with the information associated with the panic and reboot the board.
 #[panic_handler]
 fn handle_panics(info: &PanicInfo) -> ! {
     // #[cfg(debug_assertions)]
@@ -37,6 +38,7 @@ extern "C" fn __stack_chk_fail() -> ! {
 
 #[entry]
 fn main() -> ! {
+    // Startup tasks...
     let peripherals = Peripherals::take().unwrap();
     let Peripherals {
         trng: trng_peripheral,
@@ -53,6 +55,8 @@ fn main() -> ! {
     }
 
     let core_peripherals = CorePeripherals::take().unwrap();
+
+    // Retrieve context. Derives boot salt 1 and PIN salt 1.
     let mut ctx = Context::new(sysctl, iomux, uart0, uart1, flashctl, core_peripherals.MPU);
 
     loop {

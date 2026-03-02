@@ -116,16 +116,11 @@ pub trait PubEncryptable {
     }
 }
 
-///////////////////////////////////////////////////////////////////////////////
-////////// Interrogate                                               //////////
-///////////////////////////////////////////////////////////////////////////////
 
+// Interrogate
 const INTARROGATE_ASSOCIATED_DATA: &'static [u8] = &[Opcode::Interrogate as u8];
 
-/////////////
-// Request //
-/////////////
-
+// Interrogate request
 #[repr(C, packed)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct InterrogateRequest {
@@ -155,10 +150,7 @@ impl SymEncryptable for EncryptedInterrogateRequest {
     }
 }
 
-//////////////
-// Response //
-//////////////
-
+// Interrogate response
 #[repr(C, packed)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 pub struct InterrogateFileProtected {
@@ -219,16 +211,10 @@ impl SymEncryptable for EncryptedInterrogateResponse {
     }
 }
 
-///////////////////////////////////////////////////////////////////////////////
-////////// Transfer                                                  //////////
-///////////////////////////////////////////////////////////////////////////////
-
+// Transfer
 const TRANSFER_ASSOCIATED_DATA: &'static [u8] = &[Opcode::Receive as u8];
 
-/////////////
-// Request //
-/////////////
-
+// Transfer Request
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct TransferRequest {
@@ -263,44 +249,14 @@ impl SymEncryptable for EncryptedTransferRequest {
     }
 }
 
-//////////////
-// Response //
-//////////////
 
+// Transfer response
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct TransferResponseHeader {
     pub pub_metadata: PubKeyMetadata,
     pub group_id: GroupId,
 }
-
-// #[repr(C)]
-// #[derive(Clone, Copy, Pod, Zeroable)]
-// pub struct TransferResponse {
-//     // header is sent first
-//     pub header: TransferResponseHeader,
-//     // file is received async, so shared secret can be computed, and verifying key can also be pre computed
-//     pub file: File,
-// }
-
-// impl PubEncryptable for TransferResponse {
-//     fn details(&mut self) -> EncryptionDetails<'_, PubKeyMetadata> {
-//         let Self {
-//             header:
-//                 TransferResponseHeader {
-//                     pub_metadata,
-//                     group_id,
-//                 },
-//             file,
-//         } = self;
-
-//         EncryptionDetails {
-//             body: bytes_of_mut(file),
-//             associated_data: bytes_of(group_id),
-//             metadata: pub_metadata,
-//         }
-//     }
-// }
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]

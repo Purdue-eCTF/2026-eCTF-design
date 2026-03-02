@@ -13,6 +13,7 @@ use crate::{
     secrets::{self, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, TRANSFER_SEND},
 };
 
+/// Handle a command received in listen mode.
 pub fn recv(ctx: &mut Context, opcode: Opcode, body: &mut [u8]) -> Result<(), ProtocolError> {
     match opcode {
         Opcode::Interrogate => respond_interrogate(ctx, body)?,
@@ -22,6 +23,7 @@ pub fn recv(ctx: &mut Context, opcode: Opcode, body: &mut [u8]) -> Result<(), Pr
     Ok(())
 }
 
+/// Handle an interrogate command from a neighbor HSM, received while in listen mode.
 #[inline(never)]
 fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolError> {
     if body.len() != size_of::<EncryptedInterrogateRequest>() {
@@ -77,6 +79,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
     Ok(())
 }
 
+/// Handle a receive command from a neighbor HSM, received while in listen mode.
 #[inline(never)]
 fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolError> {
     if body.len() != size_of::<EncryptedTransferRequest>() {

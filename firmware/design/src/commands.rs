@@ -28,6 +28,8 @@ struct ListHeader {
 /// List files; requires pin on usage. Sends back a head with total number of
 /// files and length of the message body, and then the data, with the name,
 /// group, and slot of the file.
+///
+/// See the protocol document for more detailed information on the cryptographic measures implemented.
 #[inline(never)]
 fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ListHeader>() {
@@ -98,9 +100,11 @@ struct ReadFileHeader {
     pub slot: u8,
 }
 
-// Read file on given slot, returning to the host the file; requires pin on
-// usage. Since the file is stored on flash encrypted, this function uses the
-// pin to decrypt the file before returning it to the host.
+/// Read file on given slot, returning to the host the file; requires pin on
+/// usage. Since the file is stored on flash encrypted, this function uses the
+/// pin to decrypt the file before returning it to the host.
+///
+/// See the protocol document for more detailed information on the cryptographic measures implemented.
 #[inline(never)]
 fn handle_read(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ReadFileHeader>() {

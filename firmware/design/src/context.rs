@@ -64,7 +64,8 @@ macro_rules! eprintln {
     ($($arg:tt)*) => ($crate::eprint!("{}\n", format_args!($($arg)*)));
 }
 
-// TODO: move File/FatEntry to FlashEntry abstraction
+/// The Context contains abstracted access to the flash, including the files,
+/// FAT table, and the salts (boot salt 1, ram salt, and pin salt)
 pub struct Context {
     pub files: [FlashEntry<File>; 8],
     pub fat: FlashEntry<FatTable>,
@@ -81,6 +82,7 @@ unsafe extern "C" {
 }
 
 impl Context {
+    /// Initialize and generate a context object based on the current state of the flash.
     pub fn new(
         sysctl: mspm0l222x_hal::mspm0l222x_pac::Sysctl,
         iomux: mspm0l222x_hal::mspm0l222x_pac::Iomux,
@@ -100,8 +102,6 @@ impl Context {
             32_000 - 1, // 1 ms timer interval
         );
 
-        // TODO: PIN salt generation + penalty enforcement
-        // TODO: check for flash write failure
         let iomux = Iomux::new(&iomux);
 
         Uart0::init(&iomux, uart0);
@@ -113,6 +113,7 @@ impl Context {
         let flash = mspm0l222x_hal::flash::flash();
         flash.write_protect(0, 256 * FLASH_PAGE_SIZE as u32);
 
+        // Create/initialize all 8 flash entries
         let file_size =
             core::mem::size_of::<FileSlot>().div_ceil(FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE;
         let files = unsafe {
@@ -149,17 +150,22 @@ impl Context {
         }
     }
 
+    /// Move the salt from flash to ram and delete it from flash
+    /// to prevent circumventing boot penalty
     pub fn move_salt_to_ram(&mut self) {
         let salt = self.boot_salt_1.get().unwrap();
         self.ram_salt = Some(*salt);
         unsafe { self.boot_salt_1.erase() };
     }
 
+    /// Move the salt from ram to flash so that
+    /// salt won't be erased on reboot
     pub fn move_salt_to_flash(&mut self) {
         let Some(salt) = self.ram_salt else {
             panic!("tried to move salt to flash with no ram salt");
         };
         unsafe { self.boot_salt_1.set(&salt).unwrap() };
+        self.ram_salt = None;
     }
 
     #[inline(never)]
@@ -170,6 +176,7 @@ impl Context {
         input[6..].copy_from_slice(&self.pin_salt.0);
         Salt::derive_argon(&input, &mut k_auth, T_COST_K_AUTH);
 
+        // confirm k_auth is valid
         let k_auth_hash = blake_hash(&k_auth, &K_AUTH_SALT);
         if !bool::from(K_AUTH_HASH.ct_eq(&k_auth_hash)) {
             return Err(ProtocolError::InvalidPin);
@@ -195,11 +202,13 @@ impl Context {
         Ok(())
     }
 
+    /// TODO Retrieve the TICK timer's current value (in ticks) .
     #[allow(static_mut_refs)]
     pub fn time(&self) -> u32 {
         unsafe { TICKS.load(Ordering::Relaxed) }
     }
 
+    /// Reset TICK timer's value to 0.
     #[allow(static_mut_refs)]
     pub fn reset_time(&self) {
         unsafe { TICKS.store(0, Ordering::Relaxed) }
@@ -208,6 +217,7 @@ impl Context {
 
 const MPU_MIN_SIZE: usize = 32;
 
+/// Add a guard to prevent access to a region of memory.
 unsafe fn add_mpu_guard(mpu: &mut Mpu, index: u32, address: u32) {
     unsafe {
         mpu.set_region(
@@ -226,6 +236,7 @@ unsafe fn add_mpu_guard(mpu: &mut Mpu, index: u32, address: u32) {
     }
 }
 
+/// Setup the MPU mappings for the board.
 fn setup_mpu_mappings(mpu: &mut Mpu) {
     // TODO: remove this check
     // only added because mpu on qemu does not work
@@ -344,24 +355,30 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
 }
 
 static mut TICKS: AtomicU32 = AtomicU32::new(0);
+
+/// We use the systick timer to count ms since the last time reset
 #[allow(static_mut_refs)]
 #[exception]
 fn SysTick() {
     // All access must be atomic, so this should be safe.
-    let current = unsafe { TICKS.load(Ordering::Relaxed) };
+    let current = unsafe { TICKS.load(Ordering::SeqCst) };
     unsafe {
         TICKS.store(current + 1, Ordering::Relaxed);
     }
 }
 
+/// Writer utility for UART0 containing the entire body of a message, the size of the body,
+/// and the associated Opcode of the message.
 struct UartWriter([u8; MAX_BODY_SIZE], usize, Opcode);
 impl UartWriter {
+    /// Initialize self to be empty, with a specified Opcode.
     fn new(opcode: Opcode) -> Self {
         Self([0; _], 0, opcode)
     }
 }
 
 impl UartWriter {
+    /// Write self contained message to UART0 if a message is present and reset message length.
     fn flush(&mut self) {
         if self.1 != 0 {
             let _ = Message::write(self.2, MessagePort::UART0, &self.0[..self.1]);
@@ -371,7 +388,9 @@ impl UartWriter {
 }
 
 impl Write for UartWriter {
+    /// Write a string slice to UART0.
     fn write_str(&mut self, s: &str) -> fmt::Result {
+        // retrieve string slice as bytes
         let raw = s.as_bytes();
         let slice = &mut self.0[self.1..];
         let remaining = slice.len();
