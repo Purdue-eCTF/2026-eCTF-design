@@ -56,7 +56,7 @@ impl PubKeyMetadata {
     pub fn decrypt(
         &self,
         ct: &mut [u8],
-        secret_key: &[u8; 32],
+        secret_key: &AsymmetricKey,
         associated_data: &[u8],
     ) -> Result<(), ProtocolError> {
         decrypt_payload_pub(
@@ -127,9 +127,9 @@ pub enum CryptoError {
 // TODO: Have these keys use a reference to the type instead of a byte array
 // so we don't accidently pass in a pubkey to a function that expects a sym_key
 // and vice versa
-pub fn verify_signature_bytes(file: &File, key: &[u8; 32]) -> Result<(), CryptoError> {
+pub fn verify_signature_bytes(file: &File, key: &AsymmetricKey) -> Result<(), CryptoError> {
     // should never have invalid key and fail
-    let verifying_key = VerifyingKey::from_bytes(key).unwrap();
+    let verifying_key = VerifyingKey::from_bytes(&key.0).unwrap();
     verify_signature(file, &verifying_key)
 }
 
@@ -148,7 +148,7 @@ pub fn verify_signature(file: &File, key: &VerifyingKey) -> Result<(), CryptoErr
     Ok(())
 }
 
-pub fn sign_file(file: &mut File, key: &[u8; 32]) -> Result<(), CryptoError> {
+pub fn sign_file(file: &mut File, key: &AsymmetricKey) -> Result<(), CryptoError> {
     // rand_ops!(trng::trng());
 
     let expanded_key = common::expand_private_key(key);
@@ -173,12 +173,12 @@ pub fn decrypt_payload_pub<'a>(
     gn: &[u8; GN_SIZE],
     nonce: &'a [u8; NONCE_SIZE],
     tag: &'a [u8; TAG_SIZE],
-    secret_key: &[u8; 32],
+    secret_key: &AsymmetricKey,
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
     // rand_ops!(trng::trng());
 
-    let sk = StaticSecret::from(*secret_key);
+    let sk = StaticSecret::from(secret_key.0);
     let pubkey = PublicKey::from(*gn);
     let shared = sk.diffie_hellman(&pubkey).to_bytes();
 

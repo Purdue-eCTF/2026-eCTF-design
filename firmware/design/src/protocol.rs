@@ -85,7 +85,7 @@ pub trait PubEncryptable {
         Ok(())
     }
 
-    fn decrypt(&mut self, key: &[u8; 32]) -> Result<(), ProtocolError> {
+    fn decrypt(&mut self, key: &AsymmetricKey) -> Result<(), ProtocolError> {
         let details = self.details();
         details
             .metadata

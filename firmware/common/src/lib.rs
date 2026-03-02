@@ -116,9 +116,9 @@ pub struct EncryptedGroupKey {
 }
 
 impl EncryptedGroupKey {
-    pub fn decrypt(&self, k_auth: &[u8; 32]) -> GroupKey {
+    pub fn decrypt(&self, k_auth: &SymmetricKey) -> GroupKey {
         let mut blob = self.blob.clone();
-        let cipher = XChaCha20Poly1305::new(k_auth.into());
+        let cipher = XChaCha20Poly1305::new(&k_auth.0.into());
 
         let group_bytes = self.group.to_le_bytes();
         cipher
@@ -167,11 +167,11 @@ impl EncryptedGroupKey {
     }
 }
 
-pub fn expand_private_key(key: &[u8; 32]) -> ExpandedSecretKey {
+pub fn expand_private_key(key: &AsymmetricKey) -> ExpandedSecretKey {
     // expand secret key with blake2b
     // this is pretty much copied what ed25519_dalek does, just with blake2b instead
     let mut hasher = Blake2b512::new();
-    hasher.update(key);
+    hasher.update(key.0);
     let expanded_array = hasher.finalize();
     // unwrap should never fail
     let expanded_bytes = expanded_array.as_array().unwrap();

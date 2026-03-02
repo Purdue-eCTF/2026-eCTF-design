@@ -1,4 +1,5 @@
 use bytemuck::{Pod, Zeroable};
+use common::SymmetricKey;
 
 use crate::{
     context::*,
@@ -116,7 +117,7 @@ fn handle_read(ctx: &mut Context, msg_len: usize, end_time: u32) -> Result<(), P
 fn handle_read_inner(
     ctx: &mut Context,
     slot: usize,
-    k_auth: &[u8; 32],
+    k_auth: &SymmetricKey,
     end_time: u32,
 ) -> Result<(), ProtocolError> {
     let file = ctx.files[slot].get().ok_or(ProtocolError::InvalidFile)?;
@@ -126,7 +127,7 @@ fn handle_read_inner(
     let group = file.protected.group;
     let enc_group_keys = get_enc_group_keys(group)?;
     let group_key = enc_group_keys.decrypt(k_auth);
-    let pk_sign = enc_group_keys.pk_sign.0;
+    let pk_sign = enc_group_keys.pk_sign;
     verify_signature_bytes(file, &pk_sign)?;
 
     // buf = N || PT
@@ -137,7 +138,7 @@ fn handle_read_inner(
     let ad = file.protected.associated_data();
 
     // decrypt the file into buffer
-    let sk_read = group_key.sk_read.ok_or(ProtocolError::InvalidGroup)?.0;
+    let sk_read = group_key.sk_read.ok_or(ProtocolError::InvalidGroup)?;
     file.protected
         .contents_ct_metadata
         .decrypt(&mut protected[..file_length], &sk_read, &ad)?;
@@ -199,7 +200,7 @@ fn handle_write_inner(
     ctx: &mut Context,
     header: WriteFileHeader,
     data: &[u8],
-    k_auth: &[u8; 32],
+    k_auth: &SymmetricKey,
     end_time: u32,
 ) -> Result<(), ProtocolError> {
     let WriteFileHeader {
@@ -265,7 +266,7 @@ fn handle_write_inner(
 
     println!("3: {}", ctx.time());
     let sk_sign = group_key.sk_sign.ok_or(ProtocolError::InvalidGroup)?;
-    sign_file(&mut file, &sk_sign.0)?;
+    sign_file(&mut file, &sk_sign)?;
     println!("4: {}", ctx.time());
 
     unsafe {
@@ -453,7 +454,7 @@ fn handle_receive_inner(
     ctx: &mut Context,
     read_slot: u8,
     write_slot: u8,
-    k_auth: &[u8; 32],
+    k_auth: &SymmetricKey,
     end_time: u32,
 ) -> Result<(), ProtocolError> {
     // request file
@@ -504,7 +505,7 @@ fn handle_receive_inner(
     // about ~0.75-0.8 seconds
     transfer_response
         .protected
-        .decrypt(&group_keys.sk_trans.ok_or(ProtocolError::InvalidGroup)?.0)?;
+        .decrypt(&group_keys.sk_trans.ok_or(ProtocolError::InvalidGroup)?)?;
 
     println!("7: {}", ctx.time());
 
@@ -515,7 +516,7 @@ fn handle_receive_inner(
     }
 
     // verify takes about 0.7 seconds
-    verify_signature_bytes(file, &enc_group_keys.pk_sign.0)?;
+    verify_signature_bytes(file, &enc_group_keys.pk_sign)?;
 
     println!("8: {}", ctx.time());
 
@@ -579,11 +580,11 @@ pub fn delayed_write(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
     let Budget(_, max_time, max_bytes) = TIME_BUDGET_MS.iter().find(|b| b.0 == opcode).unwrap();
     let uart_time = (max_bytes * 5700) >> 16; // approximately * 0.0868
 
-    // end with enough time to send uart (plus 210ms margin
+    // end with enough time to send uart (plus 250ms margin
     // because timing doesn't include list start, etc)
     let uart_end = (start + max_time)
         .saturating_sub(uart_time)
-        .saturating_sub(210);
+        .saturating_sub(250);
 
     let res = match opcode {
         Opcode::List => handle_list(ctx, msg_len, uart_end),
