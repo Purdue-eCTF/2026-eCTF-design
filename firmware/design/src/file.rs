@@ -2,7 +2,7 @@ use core::ops::Index;
 
 use bytemuck::{NoUninit, Pod, Zeroable};
 
-use crate::{context::Context, crypto::SymmetricMetadata, flash, protocol::ProtocolError, secrets};
+use crate::{crypto::SymmetricMetadata, flash, protocol::ProtocolError, secrets};
 
 pub const CONTENT_SIZE: usize = 8192;
 pub const UUID_SIZE: usize = 16;

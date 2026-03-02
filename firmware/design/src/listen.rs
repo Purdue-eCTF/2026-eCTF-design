@@ -6,7 +6,7 @@ use crate::{
         self, PubKeyMetadata, SymmetricMetadata, decrypt_payload_pub, unwrap_symmetric_message,
     },
     file::{File, FileName},
-    message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
+    message::{Message, MessagePort, Opcode},
     protocol::{ProtocolError, TransferM0Encrypted},
     secrets::{self, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV},
 };
@@ -77,25 +77,17 @@ impl EncryptedInterrogateInfo {
     }
 }
 
-pub fn recv(ctx: &mut Context, opcode: Opcode, msg_len: usize) -> Result<(), ProtocolError> {
+pub fn recv(ctx: &mut Context, opcode: Opcode, body: &mut [u8]) -> Result<(), ProtocolError> {
     match opcode {
-        Opcode::Interrogate => respond_interrogate(ctx, msg_len)?,
-        Opcode::Receive => respond_transfer(ctx, msg_len)?,
+        Opcode::Interrogate => respond_interrogate(ctx, body)?,
+        Opcode::Receive => respond_transfer(ctx, body)?,
         _ => return Err(ProtocolError::InvalidOpcode),
     };
     Ok(())
 }
 
 #[inline(never)]
-fn respond_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
-    if msg_len > MAX_BODY_SIZE {
-        return Err(ProtocolError::InvalidMessageLength);
-    }
-
-    let mut body = [0u8; MAX_BODY_SIZE];
-    Message::read_body(MessagePort::UART1, &mut body[..msg_len])?;
-    let body = &mut body[..msg_len];
-
+fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolError> {
     // Expect body = Enc_I0(Group1 || Group2 || ... || GroupN) || SM
     let i0 = INTERROGATE_SEND.0;
 
@@ -192,15 +184,12 @@ fn respond_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), Protocol
 }
 
 #[inline(never)]
-fn respond_transfer(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
-    if msg_len != size_of::<TransferM0Encrypted>() {
+fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolError> {
+    if body.len() != size_of::<TransferM0Encrypted>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
 
-    let mut body = [0u8; size_of::<TransferM0Encrypted>()];
-    Message::read_body(MessagePort::UART1, &mut body)?;
-
-    let enc: &TransferM0Encrypted = bytemuck::from_bytes(&body);
+    let enc: &TransferM0Encrypted = bytemuck::from_bytes(body);
     let m0 = enc.decrypt()?;
 
     let slot: usize = m0.slot as usize;

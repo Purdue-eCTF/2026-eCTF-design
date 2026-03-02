@@ -24,9 +24,9 @@ use crate::{
         SymmetricMetadata, decrypt_payload_pub, encrypt_payload_pub, sign_file, unwrap_pub_message,
         unwrap_symmetric_message, verify_signature_bytes,
     },
-    file::{FatEntry, FatTable, File, FileMeta, FileName, UUID},
+    file::{File, FileMeta, FileName, UUID},
     listen::EncryptedInterrogateInfo,
-    message::{CHUNK_SIZE, Message, MessagePort, Opcode},
+    message::{CHUNK_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
     protocol::ProtocolError,
     secrets::{
         COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, STACK_CANARY_START_VALUE,
@@ -312,7 +312,7 @@ fn handle_write_inner(
     k_auth: &[u8; 32],
 ) -> Result<(), ProtocolError> {
     let WriteFileHeader {
-        pin,
+        pin: _,
         slot,
         group,
         name,
@@ -385,30 +385,13 @@ fn handle_write_inner(
     sign_file(&mut file, &sk_sign.0)?;
     println!("4: {}", ctx.time());
 
-    // TODO: make sure file/fat can't be partially written
-    let new_fat = FatEntry {
-        uuid,
-        length: data_len as u16,
-        padding: 0,
-        addr: ctx.fat.get().ok_or(ProtocolError::InvalidFile)?.entries[slot].addr,
-    };
-
-    // TODO: just write the one fat entry
     unsafe {
         ctx.files[slot]
             .set(&file)
             .map_err(|_| ProtocolError::StorageFailure)?;
     }
     println!("5: {}", ctx.time());
-    let current = ctx.fat.get().ok_or(ProtocolError::InvalidFile)?;
-    // avoid in-place mutation
-    let mut entries = current.entries;
-    entries[slot] = new_fat;
-    unsafe {
-        ctx.fat
-            .set(&FatTable { entries })
-            .map_err(|_| ProtocolError::StorageFailure)?;
-    }
+    ctx.rebuild_fat(k_auth)?;
     println!("6: {}", ctx.time());
 
     Message::write(Opcode::Write, MessagePort::UART0, &[])?;
@@ -526,15 +509,6 @@ fn handle_receive_inner(
 
     println!("8: {}", ctx.time());
 
-    // decrypt uuid
-    let mut uuid = file.protected.uuid;
-    let ad = file.protected.associated_data();
-    file.protected.uuid_ct_metadata.decrypt(
-        bytemuck::bytes_of_mut(&mut uuid),
-        &group_keys.k_uuid.ok_or(ProtocolError::InvalidGroup)?.0,
-        &ad,
-    )?;
-
     let write_slot = write_slot as usize;
     if write_slot > 7 {
         return Err(ProtocolError::InvalidSlot);
@@ -542,24 +516,13 @@ fn handle_receive_inner(
 
     println!("9: {}", ctx.time());
 
-    // TODO: just write the one fat entry
     unsafe {
         ctx.files[write_slot]
             .set(file)
             .map_err(|_| ProtocolError::StorageFailure)?;
         println!("10: {}", ctx.time());
-        // fat can't be read from, so reconstruct from files
-        let mut entries = [FatEntry::empty(); _];
-        for (i, file) in ctx.files.iter().enumerate() {
-            entries[i] = file
-                .get()
-                .ok_or(ProtocolError::InvalidFile)?
-                .to_fat(k_auth)?;
-        }
-        ctx.fat
-            .set(&FatTable { entries })
-            .map_err(|_| ProtocolError::StorageFailure)?;
     }
+    ctx.rebuild_fat(k_auth)?;
 
     // 0.08 seconds total writing flash
     println!("11: {}", ctx.time());
@@ -679,10 +642,10 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
 /// process before sending back the corresponding data.
 fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
     Message::send_ack(MessagePort::UART0);
-    let msg = Message::read_header(MessagePort::UART1)?;
-    Message::send_ack(MessagePort::UART1);
+    let mut body = [0u8; MAX_BODY_SIZE];
+    let msg = Message::read(MessagePort::UART1, &mut body)?;
     println!("listen: got message: {:?}", msg.opcode);
-    listen::recv(ctx, msg.opcode, msg.length as usize)?;
+    listen::recv(ctx, msg.opcode, &mut body[..msg.length as usize])?;
     Ok(())
 }
 
