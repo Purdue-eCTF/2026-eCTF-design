@@ -158,20 +158,21 @@ pub struct FileSlot {
 // first 6 files fit after end of app1
 #[unsafe(link_section = ".files_app1.default")]
 #[unsafe(no_mangle)]
+// magic starts off as 0 for empty file
 pub static __FILES_APP1: [FileSlot; 6] = [FileSlot {
     file: File::empty(),
-    magic: flash::FLASH_MAGIC,
+    magic: 0,
 }; 6];
 
 // last 2 files go after file table before app2
 #[unsafe(link_section = ".files_app2.default")]
 #[unsafe(no_mangle)]
+// magic starts off as 0 for empty file
 pub static __FILES_APP2: [FileSlot; 2] = [FileSlot {
     file: File::empty(),
-    magic: flash::FLASH_MAGIC,
+    magic: 0,
 }; 2];
 
 #[unsafe(link_section = ".filetable.default")]
 #[unsafe(no_mangle)]
-// magic starts off as 0 for empty file
-pub static __FAT: ([u8; core::mem::size_of::<FatTable>()], u64) = ([0; _], 0);
+pub static __FAT: ([u8; core::mem::size_of::<FatTable>()], u64) = ([0; _], flash::FLASH_MAGIC);
