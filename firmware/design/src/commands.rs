@@ -1,6 +1,8 @@
 use bytemuck::{Pod, Zeroable};
 use common::SymmetricKey;
+use design_macros::rand_ops;
 use ed25519_dalek::VerifyingKey;
+use mspm0l222x_hal::trng;
 
 use crate::{
     context::*,
@@ -37,7 +39,7 @@ fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     }
 
     let mut msg = [0; size_of::<ListHeader>()];
-    Message::send_ack(MessagePort::UART0);
+    Message::send_ack_no_rand_ops(MessagePort::UART0);
     Message::read_body(MessagePort::UART0, &mut msg)?;
 
     let ListHeader { pin } = *bytemuck::from_bytes(&msg);
@@ -112,7 +114,7 @@ fn handle_read(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     }
 
     let mut msg = [0; size_of::<ReadFileHeader>()];
-    Message::send_ack(MessagePort::UART0);
+    Message::send_ack_no_rand_ops(MessagePort::UART0);
     Message::read_body(MessagePort::UART0, &mut msg)?;
 
     let ReadFileHeader { pin, slot } = *bytemuck::from_bytes(&msg);
@@ -217,7 +219,7 @@ fn handle_write(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> 
     } else {
         &mut msg_buf
     };
-    Message::send_ack(MessagePort::UART0);
+    Message::send_ack_no_rand_ops(MessagePort::UART0);
     Message::read_body_no_ack(MessagePort::UART0, msg)?;
 
     let (header, data) = msg.split_at(core::mem::size_of::<WriteFileHeader>());
@@ -271,13 +273,15 @@ fn handle_write_inner(
     // we already verified that the data length is correct, so don't check again
     // TODO: do we need to read chunks?
     protected.contents.0[..data.len()].copy_from_slice(data);
-    Message::send_ack(MessagePort::UART0);
+    Message::send_ack_no_rand_ops(MessagePort::UART0);
     if data.len() < data_len {
         Message::read_body(
             MessagePort::UART0,
             &mut protected.contents.0[data.len()..data_len],
         )?;
     }
+    // if no extra data read, need rand ops after ack with no rand ops
+    rand_ops!(trng::trng());
 
     protected.contents.0[data_len..].fill(0);
     protected.contents_length = data_len as u16;
@@ -364,7 +368,7 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
     }
 
     let mut msg = [0; size_of::<InterrogateHeader>()];
-    Message::send_ack(MessagePort::UART0);
+    Message::send_ack_no_rand_ops(MessagePort::UART0);
     Message::read_body(MessagePort::UART0, &mut msg)?;
 
     let InterrogateHeader { pin } = *bytemuck::from_bytes(&msg);
@@ -504,7 +508,7 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
     }
 
     let mut msg = [0; size_of::<ReceiveFileHeader>()];
-    Message::send_ack(MessagePort::UART0);
+    Message::send_ack_no_rand_ops(MessagePort::UART0);
     Message::read_body(MessagePort::UART0, &mut msg)?;
 
     let ReceiveFileHeader {
@@ -682,7 +686,7 @@ fn handle_receive_inner(
 #[inline(never)]
 fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
     let mut buffer = [0u8; MAX_BODY_SIZE];
-    Message::send_ack(MessagePort::UART0);
+    Message::send_ack_no_rand_ops(MessagePort::UART0);
     let msg = Message::read(MessagePort::UART1, &mut buffer)?;
     listen::recv(ctx, msg.opcode, &mut buffer[..msg.length as usize])?;
     Ok(())

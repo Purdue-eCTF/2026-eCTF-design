@@ -239,7 +239,7 @@ impl Message {
     }
 
     /// Writes an ack to UART.
-    fn send_ack_no_rand_ops(port: MessagePort) {
+    pub fn send_ack_no_rand_ops(port: MessagePort) {
         Self::write_header(Opcode::Ack, 0, port);
     }
 

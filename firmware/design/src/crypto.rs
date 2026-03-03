@@ -3,6 +3,7 @@ use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::aead::generic_array::GenericArray;
 use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
 use common::{AsymmetricKey, SymmetricKey};
+use design_macros::rand_ops;
 use ed25519_dalek::hazmat::{raw_sign_prehashed, raw_verify_prehashed};
 use ed25519_dalek::{Signature, VerifyingKey};
 use mspm0l222x_hal::trng;
@@ -164,8 +165,10 @@ pub fn verify_signature(file: &File, key: &VerifyingKey) -> Result<(), CryptoErr
 
 /// Sign a file in place using a corresponding key.
 pub fn sign_file(file: &mut File, key: &AsymmetricKey) -> Result<(), CryptoError> {
-    // rand_ops!(trng::trng());
+    rand_ops!(trng::trng());
 
+    // use raw hazmat so we can replace sha2 with blake2b
+    // decreases code size by having sha2 eliminated as dependency
     let expanded_key = common::expand_private_key(key);
     let public_key = VerifyingKey::from(&expanded_key);
 
@@ -178,7 +181,7 @@ pub fn sign_file(file: &mut File, key: &AsymmetricKey) -> Result<(), CryptoError
             .unwrap()
             .to_bytes();
 
-    // rand_ops!(trng::trng());
+    rand_ops!(trng::trng());
 
     Ok(())
 }
@@ -278,7 +281,7 @@ pub fn decrypt_payload_symmetric<'a>(
     key: &SymmetricKey,
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
-    // rand_ops!(trng::trng());
+    rand_ops!(trng::trng());
 
     let cipher = XChaCha20Poly1305::new(&key.0.into());
 
@@ -289,7 +292,7 @@ pub fn decrypt_payload_symmetric<'a>(
         .decrypt_in_place_detached(nonce_ga, associated_data, payload, tag_ga)
         .map_err(|_| CryptoError::InvalidDecryptionPayload)?;
 
-    // rand_ops!(trng::trng());
+    rand_ops!(trng::trng());
 
     Ok(payload)
 }
@@ -307,7 +310,7 @@ pub fn encrypt_payload_symmetric<'a>(
     key: &SymmetricKey,
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
-    // rand_ops!(trng::trng());
+    rand_ops!(trng::trng());
 
     let trng = trng::trng();
     for chunk in nonce_slot.chunks_exact_mut(4) {
@@ -326,7 +329,7 @@ pub fn encrypt_payload_symmetric<'a>(
     // Copy tag into file
     tag_slot.copy_from_slice(tag.as_slice());
 
-    // rand_ops!(trng::trng());
+    rand_ops!(trng::trng());
 
     Ok(payload)
 }

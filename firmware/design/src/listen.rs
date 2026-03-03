@@ -1,4 +1,6 @@
 use bytemuck::Zeroable;
+use design_macros::rand_ops;
+use mspm0l222x_hal::trng;
 
 use crate::{
     context::Context,
@@ -132,6 +134,7 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolEr
 
     let writer = MessageUart::new(MessagePort::UART1);
     writer.write_bytes(bytemuck::bytes_of(&response_body));
+    rand_ops!(trng::trng());
 
     Ok(())
 }
