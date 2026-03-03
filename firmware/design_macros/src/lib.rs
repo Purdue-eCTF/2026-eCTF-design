@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 
 use blake2::{Blake2s256, Digest};
 use quote::quote;
-use rand::{RngExt, SeedableRng, prelude::IndexedRandom, rngs::StdRng};
+use rand::{RngExt, SeedableRng, prelude::IndexedRandom, rngs::StdRng, seq::SliceRandom};
 use syn::{Expr, parse_macro_input, spanned::Spanned};
 
 const MAGIC_SEED_CONST: u64 = 0xD15E_A5E5_C0DE_C0DE;
@@ -112,23 +112,32 @@ pub fn rand_ops(input: TokenStream) -> TokenStream {
     let check_inc_val: u32 = build_rng.random();
     let num_branches: u32 = build_rng.random_range(3..6);
 
-    let loop_entry_nops = emit_nops(build_rng.random_range(0..=3));
-    let before_break_nops = emit_nops(build_rng.random_range(0..=2));
-    let after_break_nops = emit_nops(build_rng.random_range(0..=2));
+    let loop_body_nops = emit_nops(build_rng.random_range(0..=7));
     let init_nops = emit_nops(build_rng.random_range(0..=2));
-    let post_check_1_nops = emit_nops(build_rng.random_range(0..=2));
-    let post_check_2_nops = emit_nops(build_rng.random_range(0..=2));
-    let post_check_3_nops = emit_nops(build_rng.random_range(0..=2));
+    let post_check_1_nops = emit_nops(build_rng.random_range(0..=3));
+    let post_check_2_nops = emit_nops(build_rng.random_range(0..=3));
+    let post_check_3_nops = emit_nops(build_rng.random_range(0..=3));
 
     let region_size = (u32::MAX / num_branches).wrapping_add(1);
+    let nop_base_count = 24 / num_branches;
     let mut branches = proc_macro2::TokenStream::new();
+
+    let mut nop_starts = (0..num_branches)
+        .map(|i| (i * nop_base_count) as usize)
+        .collect::<Vec<usize>>();
+    nop_starts.shuffle(&mut build_rng);
 
     for branch_idx in 0..num_branches {
         let state_mul = build_rng.random::<u32>() | 1;
         let state_add = build_rng.random::<u32>();
 
-        let before_nops = emit_nops(build_rng.random_range(0..=8));
-        let after_nops = emit_nops(build_rng.random_range(0..=8));
+        let nop_base_count = nop_starts[branch_idx as usize];
+        let nop_count = build_rng.random_range(nop_base_count..=(nop_base_count + 10));
+        let before_count = build_rng.random_range(0..=nop_count);
+        let after_count = nop_count - before_count;
+
+        let before_nops = emit_nops(before_count);
+        let after_nops = emit_nops(after_count);
 
         let branch_body = quote! {{
             #before_nops
@@ -163,23 +172,20 @@ pub fn rand_ops(input: TokenStream) -> TokenStream {
 
     quote! {{
         let mut state = core::hint::black_box(#rng.word());
-        // 1..1025 iterations
-        let mut iteration_count = core::hint::black_box((#rng.word() & 0x2ff) + 1);
+        // 16..1040 iterations
+        let mut iteration_count = core::hint::black_box((#rng.word() & 0x2ff) + 16);
         let mut check = core::hint::black_box(#base_check_val);
         let mut i = core::hint::black_box(0u32);
 
         #init_nops
 
         loop {
-            #loop_entry_nops
+            #loop_body_nops
             #branches
-            #before_break_nops
 
             if core::hint::black_box(i == iteration_count) {
                 break;
             }
-
-            #after_break_nops
 
             i = core::hint::black_box(i.wrapping_add(1));
             check = core::hint::black_box(check.wrapping_add(#check_inc_val));
@@ -205,6 +211,48 @@ pub fn rand_ops(input: TokenStream) -> TokenStream {
         ))) {
             panic!();
         }
+    }}
+    .into()
+}
+
+#[proc_macro]
+pub fn rand_ops_small(input: TokenStream) -> TokenStream {
+    let rng = parse_macro_input!(input as Expr);
+    let mut build_rng = build_rng(&rng);
+
+    let base_check_val: u32 = build_rng.random();
+    let check_inc_val: u32 = build_rng.random();
+
+    let init_nops = emit_nops(build_rng.random_range(0..=2));
+    let loop_body_nops = emit_nops(build_rng.random_range(0..=10));
+    let post_check_1_nops = emit_nops(build_rng.random_range(0..=2));
+
+    quote! {{
+        // 16..1040 iterations
+        let mut iteration_count = core::hint::black_box((#rng.word() & 0x2ff) + 16);
+        let mut check = core::hint::black_box(#base_check_val);
+        let mut i = core::hint::black_box(0u32);
+
+        #init_nops
+
+        loop {
+            #loop_body_nops
+
+            if core::hint::black_box(i == iteration_count) {
+                break;
+            }
+
+            i = core::hint::black_box(i.wrapping_add(1));
+            check = core::hint::black_box(check.wrapping_add(#check_inc_val));
+        }
+
+        #post_check_1_nops
+        if core::hint::black_box(i != iteration_count || check != core::hint::black_box(
+            (#base_check_val).wrapping_add(iteration_count.wrapping_mul(#check_inc_val)),
+        )) {
+            panic!();
+        }
+
     }}
     .into()
 }
