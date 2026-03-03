@@ -61,11 +61,6 @@ fn main() -> ! {
     let mut ctx = Context::new(sysctl, iomux, uart0, uart1, flashctl, core_peripherals.MPU);
 
     loop {
-        println!("test");
-        design_macros::rand_ops!(trng::trng());
-    }
-
-    loop {
         let msg_info = Message::read_header(MessagePort::UART0).unwrap();
 
         println!("Got message {msg_info:?}");
