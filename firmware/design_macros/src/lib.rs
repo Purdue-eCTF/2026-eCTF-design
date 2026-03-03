@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 
 use blake2::{Blake2s256, Digest};
 use quote::quote;
-use rand::{RngExt, SeedableRng, prelude::IndexedRandom, rngs::StdRng, seq::SliceRandom};
+use rand::{RngExt, SeedableRng, prelude::IndexedRandom, rngs::StdRng};
 use syn::{Expr, parse_macro_input, spanned::Spanned};
 
 const MAGIC_SEED_CONST: u64 = 0xD15E_A5E5_C0DE_C0DE;
@@ -103,6 +103,67 @@ pub fn rand_ops_old(input: TokenStream) -> TokenStream {
     .into()
 }
 
+fn generate_rand_ops_body_inner(
+    nop_index: usize,
+    num_nops: usize,
+    total_num_states: usize,
+    state_positions: &[(usize, usize)],
+    build_rng: &mut StdRng,
+) -> proc_macro2::TokenStream {
+    if state_positions.len() == 0 {
+        // there be remaining nops, but they are useless, don't emit them
+        return proc_macro2::TokenStream::new();
+    }
+
+    // +1 means last region will end at at least u32::MAX
+    let region_size = (u32::MAX / total_num_states as u32) + 1;
+    let (nop_position, state_number) = state_positions[0];
+    assert!(nop_position >= nop_index && nop_position <= num_nops);
+
+    let nops = emit_nops(nop_position - nop_index);
+    let body = generate_rand_ops_body_inner(
+        nop_position,
+        num_nops,
+        total_num_states,
+        &state_positions[1..],
+        build_rng,
+    );
+
+    let region_start = region_size * state_number as u32;
+    let region_end = if state_number == total_num_states - 1 {
+        u32::MAX
+    } else {
+        // -1 since we compare with <=
+        region_size * ((state_number as u32) + 1) - 1
+    };
+
+    // TODO: better state transition function
+    let state_mul = build_rng.random::<u32>() | 1;
+    let state_add = build_rng.random::<u32>();
+
+    quote! {{
+        #nops
+        if core::hint::black_box((state >= #region_start) && (state <= #region_end)) {
+            state = core::hint::black_box(state.wrapping_mul(#state_mul).wrapping_add(#state_add));
+        } else {
+            #body
+        }
+    }}
+    .into()
+}
+
+fn generate_rand_ops_body(build_rng: &mut StdRng) -> proc_macro2::TokenStream {
+    let num_nops = build_rng.random_range(24..80);
+    let num_states = build_rng.random_range(4..10);
+
+    let mut state_ranges = (0..num_states)
+        .map(|i| (build_rng.random_range(0..=num_nops), i))
+        .collect::<Vec<_>>();
+    state_ranges.sort_by_key(|(position, _)| *position);
+
+    generate_rand_ops_body_inner(0, num_nops, num_states, &state_ranges, build_rng)
+}
+
 #[proc_macro]
 pub fn rand_ops(input: TokenStream) -> TokenStream {
     let rng = parse_macro_input!(input as Expr);
@@ -110,65 +171,13 @@ pub fn rand_ops(input: TokenStream) -> TokenStream {
 
     let base_check_val: u32 = build_rng.random();
     let check_inc_val: u32 = build_rng.random();
-    let num_branches: u32 = build_rng.random_range(3..6);
 
-    let loop_body_nops = emit_nops(build_rng.random_range(0..=7));
-    let init_nops = emit_nops(build_rng.random_range(0..=2));
+    let init_nops = emit_nops(build_rng.random_range(0..=5));
     let post_check_1_nops = emit_nops(build_rng.random_range(0..=3));
     let post_check_2_nops = emit_nops(build_rng.random_range(0..=3));
     let post_check_3_nops = emit_nops(build_rng.random_range(0..=3));
 
-    let region_size = (u32::MAX / num_branches).wrapping_add(1);
-    let nop_base_count = 24 / num_branches;
-    let mut branches = proc_macro2::TokenStream::new();
-
-    let mut nop_starts = (0..num_branches)
-        .map(|i| (i * nop_base_count) as usize)
-        .collect::<Vec<usize>>();
-    nop_starts.shuffle(&mut build_rng);
-
-    for branch_idx in 0..num_branches {
-        let state_mul = build_rng.random::<u32>() | 1;
-        let state_add = build_rng.random::<u32>();
-
-        let nop_base_count = nop_starts[branch_idx as usize];
-        let nop_count = build_rng.random_range(nop_base_count..=(nop_base_count + 10));
-        let before_count = build_rng.random_range(0..=nop_count);
-        let after_count = nop_count - before_count;
-
-        let before_nops = emit_nops(before_count);
-        let after_nops = emit_nops(after_count);
-
-        let branch_body = quote! {{
-            #before_nops
-            state = core::hint::black_box(
-                state.wrapping_mul(#state_mul).wrapping_add(#state_add),
-            );
-            #after_nops
-        }};
-
-        let upper_bound = region_size.wrapping_mul(branch_idx + 1);
-
-        if branch_idx == 0 {
-            branches.extend(quote! {
-                if core::hint::black_box(state < #upper_bound) {
-                    #branch_body
-                }
-            });
-        } else if branch_idx + 1 < num_branches {
-            branches.extend(quote! {
-                else if core::hint::black_box(state < #upper_bound) {
-                    #branch_body
-                }
-            });
-        } else {
-            branches.extend(quote! {
-                else {
-                    #branch_body
-                }
-            });
-        }
-    }
+    let loop_body = generate_rand_ops_body(&mut build_rng);
 
     quote! {{
         let mut state = core::hint::black_box(#rng.word());
@@ -177,11 +186,12 @@ pub fn rand_ops(input: TokenStream) -> TokenStream {
         let mut check = core::hint::black_box(#base_check_val);
         let mut i = core::hint::black_box(0u32);
 
+        // TODO: idk if keeping init nops is needed, no branches until after randomized loop body which could be glitched
+        // maybe it is still good ot have random nops ran one iteration,  may be hard to measure exactly what they are
         #init_nops
 
         loop {
-            #loop_body_nops
-            #branches
+            #loop_body
 
             if core::hint::black_box(i == iteration_count) {
                 break;
