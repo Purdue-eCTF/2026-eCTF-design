@@ -6,7 +6,7 @@ use common::SymmetricKey;
 use crate::{
     crypto::{PubKeyMetadata, SymmetricMetadata},
     flash,
-    protocol::ProtocolError,
+    protocol::{ProtocolError, SafeError},
     secrets,
 };
 
@@ -119,7 +119,7 @@ impl File {
         let ad = self.protected.associated_data();
         self.protected.uuid_ct_metadata.decrypt(
             bytemuck::bytes_of_mut(&mut uuid),
-            &group_keys.k_uuid.ok_or(ProtocolError::InvalidGroup)?,
+            &group_keys.k_uuid.ok_or(SafeError::InvalidGroup)?,
             &ad,
         )?;
 

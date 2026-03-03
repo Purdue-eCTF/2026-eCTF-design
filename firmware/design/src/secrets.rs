@@ -1,4 +1,4 @@
-use crate::protocol::ProtocolError;
+use crate::protocol::{ProtocolError, SafeError};
 use common::{AsymmetricKey, EncryptedGroupKey, SymmetricKey};
 
 /// Returns the stored keys for a group.
@@ -11,7 +11,7 @@ pub fn get_enc_group_keys(group: u16) -> Result<&'static EncryptedGroupKey, Prot
             return Ok(key);
         }
     }
-    Err(ProtocolError::InvalidGroup)
+    Err(SafeError::InvalidGroup.into())
 }
 
 include!(concat!(env!("OUT_DIR"), "/secrets_generated.rs"));

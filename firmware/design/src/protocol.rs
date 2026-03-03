@@ -12,22 +12,28 @@ pub enum ProtocolError {
     Crypto(#[from] CryptoError),
     #[error("Message failure: {0}")]
     Message(#[from] MessageError),
+    #[error("Invalid file")]
+    InvalidFile,
+    #[error("Peer board returned error packet")]
+    PeerBoardError,
+    #[error("Storage failure")]
+    StorageFailure,
+    #[error("Non-attack error: {0}")]
+    SafeError(#[from] SafeError),
     #[error("Invalid pin")]
     InvalidPin,
+}
+
+#[derive(Debug, Error)]
+pub enum SafeError {
     #[error("Invalid group")]
     InvalidGroup,
     #[error("Invalid message length")]
     InvalidMessageLength,
     #[error("Invalid slot")]
     InvalidSlot,
-    #[error("Invalid file")]
-    InvalidFile,
     #[error("Invalid opcode")]
     InvalidOpcode,
-    #[error("Peer board returned error packet")]
-    PeerBoardError,
-    #[error("Storage failure")]
-    StorageFailure,
 }
 
 pub const INTERROGATE_MAX_GROUPS: usize = 32;
@@ -115,7 +121,6 @@ pub trait PubEncryptable {
         Ok(())
     }
 }
-
 
 // Interrogate
 const INTARROGATE_ASSOCIATED_DATA: &'static [u8] = &[Opcode::Interrogate as u8];
@@ -248,7 +253,6 @@ impl SymEncryptable for EncryptedTransferRequest {
         }
     }
 }
-
 
 // Transfer response
 #[repr(C)]

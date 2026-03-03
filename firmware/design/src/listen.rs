@@ -9,7 +9,7 @@ use crate::{
     protocol::{
         EncryptedInterrogateRequest, EncryptedInterrogateResponse, EncryptedTransferRequest,
         EncryptedTransferResponseBody, EncryptedTransferResponseHeader, GroupId,
-        InterrogateFileInfo, InterrogateFileProtected, ProtocolError, SymEncryptable,
+        InterrogateFileInfo, InterrogateFileProtected, ProtocolError, SafeError, SymEncryptable,
         TransferResponseHeader,
     },
     secrets::{self, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, TRANSFER_SEND},
@@ -20,7 +20,7 @@ pub fn recv(ctx: &mut Context, opcode: Opcode, body: &mut [u8]) -> Result<(), Pr
     match opcode {
         Opcode::Interrogate => respond_interrogate(ctx, body)?,
         Opcode::Receive => respond_transfer(ctx, body)?,
-        _ => return Err(ProtocolError::InvalidOpcode),
+        _ => return Err(SafeError::InvalidOpcode.into()),
     };
     Ok(())
 }
@@ -29,7 +29,7 @@ pub fn recv(ctx: &mut Context, opcode: Opcode, body: &mut [u8]) -> Result<(), Pr
 #[inline(never)]
 fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolError> {
     if body.len() != size_of::<EncryptedInterrogateRequest>() {
-        return Err(ProtocolError::InvalidMessageLength);
+        return Err(SafeError::InvalidMessageLength.into());
     }
 
     let request: &mut EncryptedInterrogateRequest = bytemuck::from_bytes_mut(body);
@@ -37,7 +37,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
 
     let request_count = request.protected.group_count as usize;
     if request_count > request.protected.groups.len() {
-        return Err(ProtocolError::InvalidMessageLength);
+        return Err(SafeError::InvalidMessageLength.into());
     }
 
     let mut response = EncryptedInterrogateResponse::zeroed();
@@ -85,7 +85,7 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
 #[inline(never)]
 fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolError> {
     if body.len() != size_of::<EncryptedTransferRequest>() {
-        return Err(ProtocolError::InvalidMessageLength);
+        return Err(SafeError::InvalidMessageLength.into());
     }
 
     let request: &mut EncryptedTransferRequest = bytemuck::from_bytes_mut(body);
@@ -94,7 +94,7 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolEr
     let slot: usize = request.protected.slot as usize;
 
     if slot > 7 {
-        return Err(ProtocolError::InvalidSlot);
+        return Err(SafeError::InvalidSlot.into());
     }
 
     let file_src = ctx.files[slot].get().ok_or(ProtocolError::InvalidFile)?;

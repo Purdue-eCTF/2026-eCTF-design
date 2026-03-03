@@ -178,7 +178,7 @@ impl Context {
         // confirm k_auth is valid
         let k_auth_hash = blake_hash(&k_auth, &K_AUTH_SALT);
         if !bool::from(K_AUTH_HASH.ct_eq(&k_auth_hash)) {
-            return Err(ProtocolError::InvalidPin);
+            return Err(ProtocolError::InvalidPin.into());
         }
 
         Ok(SymmetricKey(k_auth))

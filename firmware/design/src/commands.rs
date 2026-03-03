@@ -14,7 +14,7 @@ use crate::{
     listen,
     message::{self, CHUNK_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
     println,
-    protocol::{self, ProtocolError, SymEncryptable},
+    protocol::{self, ProtocolError, SafeError, SymEncryptable},
     secrets::{
         self, COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, TRANSFER_SEND,
         get_enc_group_keys,
@@ -35,7 +35,7 @@ struct ListHeader {
 #[inline(never)]
 fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ListHeader>() {
-        return Err(ProtocolError::InvalidMessageLength);
+        return Err(SafeError::InvalidMessageLength.into());
     }
 
     let mut msg = [0; size_of::<ListHeader>()];
@@ -110,7 +110,7 @@ struct ReadFileHeader {
 #[inline(never)]
 fn handle_read(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ReadFileHeader>() {
-        return Err(ProtocolError::InvalidMessageLength);
+        return Err(SafeError::InvalidMessageLength.into());
     }
 
     let mut msg = [0; size_of::<ReadFileHeader>()];
@@ -121,7 +121,7 @@ fn handle_read(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     let slot = slot as usize;
 
     if slot > 7 {
-        return Err(ProtocolError::InvalidSlot);
+        return Err(SafeError::InvalidSlot.into());
     }
 
     let k_auth = ctx.k_auth(&pin)?;
@@ -170,7 +170,7 @@ fn handle_read_inner(
 
     // decrypt the file into buffer
     let bench_start = ctx.time();
-    let sk_read = group_key.sk_read.ok_or(ProtocolError::InvalidGroup)?;
+    let sk_read = group_key.sk_read.ok_or(SafeError::InvalidGroup)?;
     file.protected
         .contents_ct_metadata
         .decrypt(&mut protected[..file_length], &sk_read, &ad)?;
@@ -209,7 +209,7 @@ struct WriteFileHeader {
 #[inline(never)]
 fn handle_write(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len < size_of::<WriteFileHeader>() {
-        return Err(ProtocolError::InvalidMessageLength);
+        return Err(SafeError::InvalidMessageLength.into());
     }
 
     // sizeof WriteFileHeader < CHUNK_SIZE
@@ -252,12 +252,12 @@ fn handle_write_inner(
     // the allocated data has incorrect length
     let data_len = length as usize;
     if data_len > file::CONTENT_SIZE {
-        return Err(ProtocolError::InvalidMessageLength);
+        return Err(SafeError::InvalidMessageLength.into());
     }
 
     let slot = slot as usize;
     if slot > 7 {
-        return Err(ProtocolError::InvalidSlot);
+        return Err(SafeError::InvalidSlot.into());
     }
 
     // start w/ empty file and fill in fields
@@ -303,7 +303,7 @@ fn handle_write_inner(
 
     // encrypt everything
     let bench_start = ctx.time();
-    let pk_read = group_key.pk_read.ok_or(ProtocolError::InvalidGroup)?;
+    let pk_read = group_key.pk_read.ok_or(SafeError::InvalidGroup)?;
     protected.contents_ct_metadata =
         PubKeyMetadata::encrypt(&mut protected.contents.0[..data_len], &pk_read, &ad)?;
     println!(
@@ -311,7 +311,7 @@ fn handle_write_inner(
         ctx.time().saturating_sub(bench_start)
     );
 
-    let k_uuid = group_key.k_uuid.ok_or(ProtocolError::InvalidGroup)?;
+    let k_uuid = group_key.k_uuid.ok_or(SafeError::InvalidGroup)?;
     let bench_start = ctx.time();
     protected.uuid_ct_metadata =
         SymmetricMetadata::encrypt(bytemuck::bytes_of_mut(&mut protected.uuid), &k_uuid, &ad)?;
@@ -320,7 +320,7 @@ fn handle_write_inner(
         ctx.time().saturating_sub(bench_start)
     );
 
-    let sk_sign = group_key.sk_sign.ok_or(ProtocolError::InvalidGroup)?;
+    let sk_sign = group_key.sk_sign.ok_or(SafeError::InvalidGroup)?;
     let bench_start = ctx.time();
     sign_file(&mut file, &sk_sign)?;
     println!(
@@ -364,7 +364,7 @@ struct InterrogateHeader {
 fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     // Command contains just the PIN
     if msg_len != size_of::<InterrogateHeader>() {
-        return Err(ProtocolError::InvalidMessageLength);
+        return Err(SafeError::InvalidMessageLength.into());
     }
 
     let mut msg = [0; size_of::<InterrogateHeader>()];
@@ -383,7 +383,7 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
 fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     let bench_start = ctx.time();
     if COPY_PERM_GROUPS.len() > protocol::INTERROGATE_MAX_GROUPS {
-        return Err(ProtocolError::InvalidMessageLength);
+        return Err(SafeError::InvalidMessageLength.into());
     }
 
     let mut request = protocol::EncryptedInterrogateRequest::zeroed();
@@ -426,10 +426,10 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     match response.opcode {
         Opcode::Error => return Err(ProtocolError::PeerBoardError),
         Opcode::Interrogate => (),
-        _ => return Err(ProtocolError::InvalidOpcode),
+        _ => return Err(SafeError::InvalidOpcode.into()),
     };
     if response.length as usize != buf.len() {
-        return Err(ProtocolError::InvalidMessageLength);
+        return Err(SafeError::InvalidMessageLength.into());
     }
 
     // decrypt
@@ -440,7 +440,7 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
 
     let count = interrogate_response.protected.file_count as usize;
     if count > protocol::MAX_NUM_FILES {
-        return Err(ProtocolError::InvalidMessageLength);
+        return Err(SafeError::InvalidMessageLength.into());
     }
     println!(
         "bench interrogate.decrypt_response: {}",
@@ -504,7 +504,7 @@ struct ReceiveFileHeader {
 #[inline(never)]
 fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ReceiveFileHeader>() {
-        return Err(ProtocolError::InvalidMessageLength);
+        return Err(SafeError::InvalidMessageLength.into());
     }
 
     let mut msg = [0; size_of::<ReceiveFileHeader>()];
@@ -532,7 +532,7 @@ fn handle_receive_inner(
     let bench_start = ctx.time();
     let write_slot = write_slot as usize;
     if write_slot > 7 {
-        return Err(ProtocolError::InvalidSlot);
+        return Err(SafeError::InvalidSlot.into());
     }
 
     // request file
@@ -569,10 +569,10 @@ fn handle_receive_inner(
     match response.opcode {
         Opcode::Error => return Err(ProtocolError::PeerBoardError),
         Opcode::Receive => (),
-        _ => return Err(ProtocolError::InvalidOpcode),
+        _ => return Err(SafeError::InvalidOpcode.into()),
     };
     if response.length as usize != buffer.len() {
-        return Err(ProtocolError::InvalidMessageLength);
+        return Err(SafeError::InvalidMessageLength.into());
     }
 
     // start async recv, send ack to signify async recv is started
@@ -607,7 +607,7 @@ fn handle_receive_inner(
     );
 
     // while file data is being received, derive the shared secret used for the inner payload
-    let sk_trans = group_keys.sk_trans.ok_or(ProtocolError::InvalidGroup)?.0;
+    let sk_trans = group_keys.sk_trans.ok_or(SafeError::InvalidGroup)?.0;
     let bench_start = ctx.time();
     let shared_secret = derive_assymetric_key(&sk_trans, &header.protected.pub_metadata.gn);
     println!(
@@ -648,7 +648,7 @@ fn handle_receive_inner(
     // check inner file data
     let file = &body.protected;
     if file.protected.group != group_id {
-        return Err(ProtocolError::InvalidGroup);
+        return Err(SafeError::InvalidGroup.into());
     }
 
     // verify takes about 0.7 seconds
@@ -720,8 +720,10 @@ pub fn handle_any(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
         e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
     };
 
-    if let Err(e) = res {
-        panic!("handler failed: {e}");
+    match res {
+        Ok(_) => (),
+        Err(ProtocolError::SafeError(_)) => (),
+        Err(e) => panic!("handler failed: {e}"),
     }
 
     // no need to delay, because if the command succeeded, there wasn't any issue
