@@ -180,9 +180,10 @@ pub fn rand_ops(input: TokenStream) -> TokenStream {
     let loop_body = generate_rand_ops_body(&mut build_rng);
 
     quote! {{
-        let mut state = core::hint::black_box(#rng.word());
+        let mut rng = #rng;
+        let mut state = core::hint::black_box(rng.word());
         // 16..1040 iterations
-        let mut iteration_count = core::hint::black_box((#rng.word() & 0x2ff) + 16);
+        let iteration_count = core::hint::black_box((rng.word() & 0x2ff) + 16);
         let mut check = core::hint::black_box(#base_check_val);
         let mut i = core::hint::black_box(0u32);
 
