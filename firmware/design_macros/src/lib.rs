@@ -39,7 +39,12 @@ fn emit_nops(count: usize) -> proc_macro2::TokenStream {
 
     for _ in 0..count {
         tokens.extend(quote! {
-            cortex_m::asm::nop();
+            unsafe {
+                core::arch::asm!(
+                    "nop",
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
         });
     }
 
@@ -111,7 +116,6 @@ pub fn rand_ops(input: TokenStream) -> TokenStream {
     let before_break_nops = emit_nops(build_rng.random_range(0..=2));
     let after_break_nops = emit_nops(build_rng.random_range(0..=2));
     let init_nops = emit_nops(build_rng.random_range(0..=2));
-    let expected_check_nops = emit_nops(build_rng.random_range(0..=2));
     let post_check_1_nops = emit_nops(build_rng.random_range(0..=2));
     let post_check_2_nops = emit_nops(build_rng.random_range(0..=2));
     let post_check_3_nops = emit_nops(build_rng.random_range(0..=2));
@@ -180,23 +184,24 @@ pub fn rand_ops(input: TokenStream) -> TokenStream {
             check = core::hint::black_box(check.wrapping_add(#check_inc_val));
         }
 
-        #expected_check_nops
-        let expected_check = core::hint::black_box(
-            (#base_check_val).wrapping_add(iteration_count.wrapping_mul(#check_inc_val)),
-        );
-
         #post_check_1_nops
-        if core::hint::black_box(i != iteration_count || check != expected_check) {
+        if core::hint::black_box(i != iteration_count || check != core::hint::black_box(
+            (#base_check_val).wrapping_add(iteration_count.wrapping_mul(#check_inc_val)),
+        )) {
             panic!();
         }
 
         #post_check_2_nops
-        if core::hint::black_box(check != expected_check || i != iteration_count) {
+        if core::hint::black_box(check != core::hint::black_box(
+            (#base_check_val).wrapping_add(iteration_count.wrapping_mul(#check_inc_val)),
+        ) || i != iteration_count) {
             panic!();
         }
 
         #post_check_3_nops
-        if core::hint::black_box((i != iteration_count) | (check != expected_check)) {
+        if core::hint::black_box((i != iteration_count) | (check != core::hint::black_box(
+            (#base_check_val).wrapping_add(iteration_count.wrapping_mul(#check_inc_val)),
+        ))) {
             panic!();
         }
     }}
