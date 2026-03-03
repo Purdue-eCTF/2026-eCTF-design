@@ -22,7 +22,7 @@ fn public_encryption_key(secret_key: &AsymmetricKey) -> AsymmetricKey {
 }
 
 fn public_signing_key(secret_key: &AsymmetricKey) -> AsymmetricKey {
-    let secret_key = common::expand_private_key(&secret_key);
+    let secret_key = common::expand_private_key(secret_key);
     let public_key = VerifyingKey::from(&secret_key);
     AsymmetricKey(public_key.to_bytes())
 }

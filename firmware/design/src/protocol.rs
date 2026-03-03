@@ -22,14 +22,14 @@ pub enum ProtocolError {
     SafeError(#[from] SafeError),
     #[error("Invalid pin")]
     InvalidPin,
+    #[error("Invalid message length")]
+    InvalidMessageLength,
 }
 
 #[derive(Debug, Error)]
 pub enum SafeError {
     #[error("Invalid group")]
     InvalidGroup,
-    #[error("Invalid message length")]
-    InvalidMessageLength,
     #[error("Invalid slot")]
     InvalidSlot,
     #[error("Invalid opcode")]
@@ -109,7 +109,7 @@ pub trait PubEncryptable {
 
     fn encrypt(&mut self, key: &AsymmetricKey) -> Result<(), ProtocolError> {
         let details = self.details();
-        *details.metadata = PubKeyMetadata::encrypt(details.body, &key, details.associated_data)?;
+        *details.metadata = PubKeyMetadata::encrypt(details.body, key, details.associated_data)?;
         Ok(())
     }
 
@@ -123,7 +123,7 @@ pub trait PubEncryptable {
 }
 
 // Interrogate
-const INTARROGATE_ASSOCIATED_DATA: &'static [u8] = &[Opcode::Interrogate as u8];
+const INTARROGATE_ASSOCIATED_DATA: &[u8] = &[Opcode::Interrogate as u8];
 
 // Interrogate request
 #[repr(C, packed)]
@@ -217,7 +217,7 @@ impl SymEncryptable for EncryptedInterrogateResponse {
 }
 
 // Transfer
-const TRANSFER_ASSOCIATED_DATA: &'static [u8] = &[Opcode::Receive as u8];
+const TRANSFER_ASSOCIATED_DATA: &[u8] = &[Opcode::Receive as u8];
 
 // Transfer Request
 #[repr(C)]

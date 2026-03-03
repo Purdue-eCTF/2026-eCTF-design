@@ -371,7 +371,7 @@ pub fn await_async_recv_done(buffer: &mut [u8]) {
         // assert after reading bytes
         assert!(buffer.len() >= target_count);
 
-        buffer[..target_count].copy_from_slice(&mut recv_buffer.buffer);
+        buffer[..target_count].copy_from_slice(&recv_buffer.buffer);
 
         recv_buffer.target_count = None;
         recv_buffer.current_count = 0;

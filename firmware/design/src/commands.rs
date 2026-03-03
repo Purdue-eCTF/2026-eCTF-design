@@ -35,7 +35,7 @@ struct ListHeader {
 #[inline(never)]
 fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ListHeader>() {
-        return Err(SafeError::InvalidMessageLength.into());
+        return Err(ProtocolError::InvalidMessageLength);
     }
 
     let mut msg = [0; size_of::<ListHeader>()];
@@ -110,7 +110,7 @@ struct ReadFileHeader {
 #[inline(never)]
 fn handle_read(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ReadFileHeader>() {
-        return Err(SafeError::InvalidMessageLength.into());
+        return Err(ProtocolError::InvalidMessageLength);
     }
 
     let mut msg = [0; size_of::<ReadFileHeader>()];
@@ -209,7 +209,7 @@ struct WriteFileHeader {
 #[inline(never)]
 fn handle_write(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len < size_of::<WriteFileHeader>() {
-        return Err(SafeError::InvalidMessageLength.into());
+        return Err(ProtocolError::InvalidMessageLength);
     }
 
     // sizeof WriteFileHeader < CHUNK_SIZE
@@ -252,7 +252,7 @@ fn handle_write_inner(
     // the allocated data has incorrect length
     let data_len = length as usize;
     if data_len > file::CONTENT_SIZE {
-        return Err(SafeError::InvalidMessageLength.into());
+        return Err(ProtocolError::InvalidMessageLength);
     }
 
     let slot = slot as usize;
@@ -364,7 +364,7 @@ struct InterrogateHeader {
 fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     // Command contains just the PIN
     if msg_len != size_of::<InterrogateHeader>() {
-        return Err(SafeError::InvalidMessageLength.into());
+        return Err(ProtocolError::InvalidMessageLength);
     }
 
     let mut msg = [0; size_of::<InterrogateHeader>()];
@@ -383,7 +383,7 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
 fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     let bench_start = ctx.time();
     if COPY_PERM_GROUPS.len() > protocol::INTERROGATE_MAX_GROUPS {
-        return Err(SafeError::InvalidMessageLength.into());
+        return Err(ProtocolError::InvalidMessageLength);
     }
 
     let mut request = protocol::EncryptedInterrogateRequest::zeroed();
@@ -429,7 +429,7 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
         _ => return Err(SafeError::InvalidOpcode.into()),
     };
     if response.length as usize != buf.len() {
-        return Err(SafeError::InvalidMessageLength.into());
+        return Err(ProtocolError::InvalidMessageLength);
     }
 
     // decrypt
@@ -440,7 +440,7 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
 
     let count = interrogate_response.protected.file_count as usize;
     if count > protocol::MAX_NUM_FILES {
-        return Err(SafeError::InvalidMessageLength.into());
+        return Err(ProtocolError::InvalidMessageLength);
     }
     println!(
         "bench interrogate.decrypt_response: {}",
@@ -504,7 +504,7 @@ struct ReceiveFileHeader {
 #[inline(never)]
 fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ReceiveFileHeader>() {
-        return Err(SafeError::InvalidMessageLength.into());
+        return Err(ProtocolError::InvalidMessageLength);
     }
 
     let mut msg = [0; size_of::<ReceiveFileHeader>()];
@@ -572,7 +572,7 @@ fn handle_receive_inner(
         _ => return Err(SafeError::InvalidOpcode.into()),
     };
     if response.length as usize != buffer.len() {
-        return Err(SafeError::InvalidMessageLength.into());
+        return Err(ProtocolError::InvalidMessageLength);
     }
 
     // start async recv, send ack to signify async recv is started

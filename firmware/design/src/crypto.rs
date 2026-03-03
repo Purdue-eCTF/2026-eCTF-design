@@ -106,7 +106,7 @@ impl SymmetricMetadata {
     ) -> Result<Self, ProtocolError> {
         let mut out = Self::empty();
 
-        encrypt_payload_symmetric(msg, &mut out.nonce, &mut out.tag, &key, associated_data)?;
+        encrypt_payload_symmetric(msg, &mut out.nonce, &mut out.tag, key, associated_data)?;
 
         Ok(out)
     }
