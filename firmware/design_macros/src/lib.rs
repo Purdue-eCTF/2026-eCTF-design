@@ -163,7 +163,8 @@ pub fn rand_ops(input: TokenStream) -> TokenStream {
 
     quote! {{
         let mut state = core::hint::black_box(#rng.word());
-        let mut iteration_count = core::hint::black_box(#rng.word());
+        // 1..1025 iterations
+        let mut iteration_count = core::hint::black_box((#rng.word() & 0x2ff) + 1);
         let mut check = core::hint::black_box(#base_check_val);
         let mut i = core::hint::black_box(0u32);
 
