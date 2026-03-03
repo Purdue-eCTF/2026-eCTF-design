@@ -105,7 +105,6 @@ impl Context {
         let iomux = Iomux::new(&iomux);
 
         Uart0::init(&iomux, uart0);
-        println!("starting!");
         Uart1::init(&iomux, uart1);
         FlashController::init(flashctl);
 
@@ -421,7 +420,6 @@ impl Write for UartWriter {
 /// Prints formatted info as debug messages.
 // inline never because UartWriter has a big stack buffer
 // excessive inlining can combine with other calls to stack overflow
-#[inline(never)]
 pub fn write_fmt(opcode: Opcode, args: fmt::Arguments) {
     let mut writer = UartWriter::new(opcode);
     let _ = writer.write_fmt(args);

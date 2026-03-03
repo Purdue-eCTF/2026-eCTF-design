@@ -15,10 +15,11 @@ use design::{
 
 /// On panic, inform the host with the information associated with the panic and reboot the board.
 #[panic_handler]
-fn handle_panics(info: &PanicInfo) -> ! {
+fn handle_panics(_info: &PanicInfo) -> ! {
     // #[cfg(debug_assertions)]
     {
-        eprintln!("{info}");
+        // cant format panic info, it adds too much to code size with random ops
+        eprintln!("panic");
     }
 
     cortex_m::peripheral::SCB::sys_reset();
@@ -65,7 +66,6 @@ fn main() -> ! {
         println!("Got message {msg_info:?}");
 
         sensitive!(ctx, {
-            // rand_ops!(trng::trng());
             handle_any(msg_info.opcode, &mut ctx, msg_info.length as usize);
         });
     }
