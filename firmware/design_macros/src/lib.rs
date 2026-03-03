@@ -17,13 +17,10 @@ fn hash_seed(build_seed: &str, file: &str, line: u32, column: u32) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-#[proc_macro]
-pub fn rand_ops(input: TokenStream) -> TokenStream {
-    let rng = parse_macro_input!(input as Expr);
-
+fn build_rng(expr: &Expr) -> StdRng {
     let build_seed = std::env::var("BUILD_SEED").unwrap_or("temp_seed".to_string());
 
-    let call_site = rng.span();
+    let call_site = expr.span();
     let call_site_start = call_site.start();
     let call_site_file = call_site.file();
 
@@ -34,7 +31,25 @@ pub fn rand_ops(input: TokenStream) -> TokenStream {
         call_site_start.column as u32,
     );
 
-    let mut rand_rng = StdRng::from_seed(seed);
+    StdRng::from_seed(seed)
+}
+
+fn emit_nops(count: usize) -> proc_macro2::TokenStream {
+    let mut tokens = proc_macro2::TokenStream::new();
+
+    for _ in 0..count {
+        tokens.extend(quote! {
+            cortex_m::asm::nop();
+        });
+    }
+
+    tokens
+}
+
+#[proc_macro]
+pub fn rand_ops_old(input: TokenStream) -> TokenStream {
+    let rng = parse_macro_input!(input as Expr);
+    let mut rand_rng = build_rng(&rng);
 
     let num_ops_xor: u32 = rand_rng.random();
     let n_xor: u32 = rand_rng.random();
@@ -78,6 +93,111 @@ pub fn rand_ops(input: TokenStream) -> TokenStream {
                 #ops
                 _ => panic!("impossible check"),
             }
+        }
+    }}
+    .into()
+}
+
+#[proc_macro]
+pub fn rand_ops(input: TokenStream) -> TokenStream {
+    let rng = parse_macro_input!(input as Expr);
+    let mut build_rng = build_rng(&rng);
+
+    let base_check_val: u32 = build_rng.random();
+    let check_inc_val: u32 = build_rng.random();
+    let num_branches: u32 = build_rng.random_range(3..6);
+
+    let loop_entry_nops = emit_nops(build_rng.random_range(0..=3));
+    let before_break_nops = emit_nops(build_rng.random_range(0..=2));
+    let after_break_nops = emit_nops(build_rng.random_range(0..=2));
+    let init_nops = emit_nops(build_rng.random_range(0..=2));
+    let expected_check_nops = emit_nops(build_rng.random_range(0..=2));
+    let post_check_1_nops = emit_nops(build_rng.random_range(0..=2));
+    let post_check_2_nops = emit_nops(build_rng.random_range(0..=2));
+    let post_check_3_nops = emit_nops(build_rng.random_range(0..=2));
+
+    let region_size = (u32::MAX / num_branches).wrapping_add(1);
+    let mut branches = proc_macro2::TokenStream::new();
+
+    for branch_idx in 0..num_branches {
+        let state_mul = build_rng.random::<u32>() | 1;
+        let state_add = build_rng.random::<u32>();
+
+        let before_nops = emit_nops(build_rng.random_range(0..=8));
+        let after_nops = emit_nops(build_rng.random_range(0..=8));
+
+        let branch_body = quote! {{
+            #before_nops
+            state = core::hint::black_box(
+                state.wrapping_mul(#state_mul).wrapping_add(#state_add),
+            );
+            #after_nops
+        }};
+
+        let upper_bound = region_size.wrapping_mul(branch_idx + 1);
+
+        if branch_idx == 0 {
+            branches.extend(quote! {
+                if core::hint::black_box(state < #upper_bound) {
+                    #branch_body
+                }
+            });
+        } else if branch_idx + 1 < num_branches {
+            branches.extend(quote! {
+                else if core::hint::black_box(state < #upper_bound) {
+                    #branch_body
+                }
+            });
+        } else {
+            branches.extend(quote! {
+                else {
+                    #branch_body
+                }
+            });
+        }
+    }
+
+    quote! {{
+        let mut state = core::hint::black_box(#rng.word());
+        let mut iteration_count = core::hint::black_box(#rng.word());
+        let mut check = core::hint::black_box(#base_check_val);
+        let mut i = core::hint::black_box(0u32);
+
+        #init_nops
+
+        loop {
+            #loop_entry_nops
+            #branches
+            #before_break_nops
+
+            if core::hint::black_box(i == iteration_count) {
+                break;
+            }
+
+            #after_break_nops
+
+            i = core::hint::black_box(i.wrapping_add(1));
+            check = core::hint::black_box(check.wrapping_add(#check_inc_val));
+        }
+
+        #expected_check_nops
+        let expected_check = core::hint::black_box(
+            (#base_check_val).wrapping_add(iteration_count.wrapping_mul(#check_inc_val)),
+        );
+
+        #post_check_1_nops
+        if core::hint::black_box(i != iteration_count || check != expected_check) {
+            panic!();
+        }
+
+        #post_check_2_nops
+        if core::hint::black_box(check != expected_check || i != iteration_count) {
+            panic!();
+        }
+
+        #post_check_3_nops
+        if core::hint::black_box((i != iteration_count) | (check != expected_check)) {
+            panic!();
         }
     }}
     .into()
