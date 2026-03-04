@@ -126,7 +126,7 @@ fn handle_read_inner(
     slot: usize,
     k_auth: &SymmetricKey,
 ) -> Result<(), ProtocolError> {
-    let file = ctx.files[slot].get().ok_or(ProtocolError::InvalidFile)?;
+    let file = ctx.files[slot].get().ok_or(SafeError::InvalidSlot.into())?;
     let file_length = file.protected.contents_length as usize;
 
     // get group key and verify file hasn't been tampered
@@ -539,14 +539,19 @@ fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
 
 #[inline(never)]
 fn handle_listen_request(ctx: &mut Context) -> Result<(), ProtocolError> {
-    if let Err(err) = handle_listen(ctx) {
-        Message::send_error_no_ack(MessagePort::UART1);
-        // returning error will cause uart0 to have error written
-        Err(err)
-    } else {
-        // handle listen has already sent a success response to uart1
-
-        Message::write(Opcode::Listen, MessagePort::UART0, &[]).map_err(ProtocolError::Message)
+    match handle_listen(ctx) {
+        Ok(_) => {
+            // handle listen has already sent a success response to uart1, send uart0 success
+            Message::write(Opcode::Listen, MessagePort::UART0, &[]).map_err(ProtocolError::Message)
+        }
+        e @ Err(ProtocolError::SafeError(_)) => {
+            Message::send_safe_error_no_ack(MessagePort::UART1);
+            e
+        }
+        e @ Err(_) => {
+            Message::send_error_no_ack(MessagePort::UART1);
+            e
+        }
     }
 }
 
@@ -562,7 +567,9 @@ pub fn handle_any(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
         Opcode::Ack => {
             Message::write(opcode, MessagePort::UART0, &[]).map_err(ProtocolError::Message)
         }
-        e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
+        e @ (Opcode::Error | Opcode::Debug | Opcode::SafeError) => {
+            panic!("{e:?} should not be sent to board")
+        }
     };
 
     match res {

@@ -40,6 +40,7 @@ pub enum Opcode {
     Listen,      // N
     Ack,         // A
     Error,       // E
+    SafeError,   // S
     Debug,       // D
 }
 
@@ -92,6 +93,7 @@ impl TryFrom<u8> for Opcode {
             b'N' => Ok(Self::Listen),
             b'A' => Ok(Self::Ack),
             b'E' => Ok(Self::Error),
+            b'S' => Ok(Self::SafeError),
             b'D' => Ok(Self::Debug),
             _ => Err(()),
         }
@@ -109,6 +111,7 @@ impl From<Opcode> for u8 {
             Opcode::Listen => b'N',
             Opcode::Ack => b'A',
             Opcode::Error => b'E',
+            Opcode::SafeError => b'S',
             Opcode::Debug => b'D',
         }
     }
@@ -244,6 +247,12 @@ impl Message {
     /// Writes a zero-length error header without waiting for an ACK.
     pub fn send_error_no_ack(port: MessagePort) {
         Self::write_header_no_rand_ops(Opcode::Error, 0, port);
+        rand_ops!(trng::trng());
+    }
+
+    /// Writes a zero-length safe error header without waiting for an ACK.
+    pub fn send_safe_error_no_ack(port: MessagePort) {
+        Self::write_header_no_rand_ops(Opcode::SafeError, 0, port);
         rand_ops!(trng::trng());
     }
 
