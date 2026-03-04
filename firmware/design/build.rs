@@ -320,9 +320,9 @@ const ARGON_M_COST: u32 = 8;
 const ARGON_P_COST: u32 = 1;
 // TODO: figure out these costs
 // approx. t (ms) = 21 * cost + 10
-const T_COST_BOOT: u32 = 185; // ~3875ms
-const T_COST_PIN: u32 = 45; // ~950ms
-const T_COST_K_AUTH: u32 = 1;
+const T_COST_BOOT: u32 = 210; // ~3878ms
+const T_COST_PIN: u32 = 45; // ~972ms
+const T_COST_K_AUTH: u32 = 1; // ~1ms
 
 const DERIVE_SALT: &[u8] = b"ectf-deriv";
 

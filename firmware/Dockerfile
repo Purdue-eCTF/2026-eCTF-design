@@ -12,4 +12,4 @@ rustup target install --toolchain nightly thumbv6m-none-eabi && \
 rustup component add --toolchain nightly rustc-dev rustfmt
 
 WORKDIR /hsm
-ENTRYPOINT ["/bin/sh", "/hsm/build.sh"]
+ENTRYPOINT ["python3", "/hsm/build.py"]
