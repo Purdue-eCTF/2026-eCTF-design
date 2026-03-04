@@ -3,6 +3,7 @@ use core::marker::PhantomData;
 use bytemuck::NoUninit;
 use mspm0l222x_hal::flash::FLASH_PAGE_SIZE;
 
+// TODO: automatically handle partial page writes
 pub const FLASH_MAGIC: u64 = 0x7c79b307cf99d0d6;
 
 /// Location in flash and number of pages.

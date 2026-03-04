@@ -1,5 +1,10 @@
 use common::SymmetricKey;
-use core::fmt::{self, Write};
+use core::{
+    fmt::{self, Write},
+    sync::atomic::{AtomicU32, Ordering},
+};
+use cortex_m::peripheral::SYST;
+use cortex_m_rt::exception;
 use mspm0l222x_hal::{
     mpu::{MemoryCacheType, MpuPerms, MpuRegionSize},
     timer::Instant,
@@ -17,7 +22,7 @@ use crate::{
     crypto::blake_hash,
     file::{FatEntry, FatTable, File, FileSlot},
     flash::FlashEntry,
-    message::{Message, MessagePort, Opcode},
+    message::{MAX_BODY_SIZE, Message, MessagePort, Opcode},
     protocol::ProtocolError,
 };
 use crate::{
@@ -25,8 +30,9 @@ use crate::{
     secrets::{K_AUTH_HASH, K_AUTH_SALT, T_COST_K_AUTH},
 };
 
+// TODO: glitching prevention or similar
+// TODO: how badly will this hit flash? Can we rotate slots or something?
 #[macro_export]
-/// If the board resets while running an operation, force a 5s lockout
 macro_rules! sensitive {
     ($context:ident, $($body:stmt)+) => {
         $context.move_salt_to_ram();
@@ -35,7 +41,6 @@ macro_rules! sensitive {
     };
 }
 
-// TODO: No prints in final design
 /// Prints to the uart port
 #[macro_export]
 macro_rules! print {
@@ -128,20 +133,13 @@ impl Context {
 
         let boot_salt_1: FlashEntry<Salt> = unsafe { FlashEntry::new(&_salt as *const u8 as u32) };
 
-        // pin salt is always derived
-        let pin_salt;
-
         // if salt isn't set, then the device was restarted during an operation
         if !boot_salt_1.is_set() {
             let derived = Salt::derive_boot_salt_1();
             unsafe { boot_salt_1.set(&derived).unwrap() };
-
-            // include pin salt timing in error handling
-            pin_salt = boot_salt_1.get().unwrap().derive_pin_salt();
-            eprintln!("panic occurred before rebooting");
-        } else {
-            pin_salt = boot_salt_1.get().unwrap().derive_pin_salt();
         }
+        // pin salt always derived
+        let pin_salt = boot_salt_1.get().unwrap().derive_pin_salt();
 
         Self {
             files,
@@ -176,7 +174,6 @@ impl Context {
         let mut input = [0; 32 + 6];
         input[..6].copy_from_slice(pin);
         input[6..].copy_from_slice(&self.pin_salt.0);
-
         Salt::derive_argon(&input, &mut k_auth, T_COST_K_AUTH);
 
         // confirm k_auth is valid
@@ -205,7 +202,6 @@ impl Context {
         Ok(())
     }
 
-    /// Retrieve the TICK timer's current value (in milliseconds).
     pub fn time(&self) -> Instant {
         Instant::now()
     }
@@ -237,12 +233,6 @@ unsafe fn add_mpu_guard(mpu: &mut Mpu, index: u32, address: u32) {
     }
 }
 
-unsafe extern "C" {
-    static __stext: u8;
-    static __etext: u8;
-}
-const REGION_SIZE: u32 = 128 * 1024 / 8;
-
 /// Setup the MPU mappings for the board.
 fn setup_mpu_mappings(mpu: &mut Mpu) {
     // TODO: remove this check
@@ -268,18 +258,14 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
         .unwrap();
 
         // approximate region with code is executable
-        let text_end = &raw const __etext as u32;
-        let text_regions = text_end.div_ceil(REGION_SIZE);
-        // no bootloader code during runtime
-        let bootloader_regions = 0x6000 / REGION_SIZE;
-        let mask =
-            u8::MAX.unbounded_shl(text_regions) | u8::MAX.unbounded_shr(8 - bootloader_regions);
-
+        // make sure not to overlap files
+        // TODO: possible reduce to just a whole 128 kibibyte region, text might fit, make a bit bigger for now
+        // disable the 3 highest regions
         mpu.set_region(
             1,
             0x0,
-            MpuRegionSize::KibiByte128,
-            mask,
+            MpuRegionSize::KibiByte256,
+            0b11100000,
             MpuPerms {
                 read: true,
                 write: false,
@@ -365,8 +351,7 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
 
 /// Writer utility for UART0 containing the entire body of a message, the size of the body,
 /// and the associated Opcode of the message.
-const WRITER_CHUNK_SIZE: usize = 256;
-struct UartWriter([u8; WRITER_CHUNK_SIZE], usize, Opcode);
+struct UartWriter([u8; MAX_BODY_SIZE], usize, Opcode);
 impl UartWriter {
     /// Initialize self to be empty, with a specified Opcode.
     fn new(opcode: Opcode) -> Self {
@@ -401,8 +386,8 @@ impl Write for UartWriter {
             self.flush();
 
             // print or buffer the remaining bytes from input, ignoring errors
-            for chunk in raw[remaining..].chunks(WRITER_CHUNK_SIZE) {
-                if chunk.len() >= WRITER_CHUNK_SIZE {
+            for chunk in raw[remaining..].chunks(MAX_BODY_SIZE) {
+                if chunk.len() >= MAX_BODY_SIZE {
                     let _ = Message::write(self.2, MessagePort::UART0, chunk);
                 } else {
                     self.1 = chunk.len();
