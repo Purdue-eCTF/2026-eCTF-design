@@ -722,7 +722,7 @@ pub fn handle_any(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
 
     match res {
         Ok(_) => (),
-        Err(ProtocolError::SafeError(_)) => (),
+        Err(ProtocolError::SafeError(e)) => crate::eprintln!("error: {e}"),
         Err(e) => panic!("handler failed: {e}"),
     }
 
