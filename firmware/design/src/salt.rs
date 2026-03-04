@@ -39,8 +39,6 @@ impl Salt {
     #[inline(never)]
     pub fn derive_argon(input: &[u8], output: &mut [u8], t_cost: u32) {
         // rand_ops!(trng::trng());
-
-        // TODO: prevent this from overflowing the stack
         let mut mem = [Block::new(); ARGON_M_COST_USIZE];
 
         let params = Params::new(ARGON_M_COST, t_cost, ARGON_P_COST, Some(output.len()))

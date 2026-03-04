@@ -118,9 +118,7 @@ impl From<Opcode> for u8 {
 pub const MAGIC: u8 = b'%';
 
 pub const HEADER_SIZE: usize = 4;
-// TODO: how to chunk files for sending? 8kb is like 1/4 of RAM
-/// Maximum body size for a message: 4.5 KiB
-pub const MAX_BODY_SIZE: usize = 1024; // TODO: this seems far too large
+
 /// Messages get sent in 256-byte chunks, with an ack for each chunk
 pub const CHUNK_SIZE: usize = 256;
 

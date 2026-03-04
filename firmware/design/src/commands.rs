@@ -12,7 +12,7 @@ use crate::{
     },
     file::{self, File, FileMeta, FileName, UUID},
     listen,
-    message::{self, CHUNK_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
+    message::{self, CHUNK_SIZE, Message, MessagePort, Opcode},
     protocol::{self, ProtocolError, SafeError, SymEncryptable},
     secrets::{
         self, COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, TRANSFER_SEND,
@@ -236,7 +236,6 @@ fn handle_write_inner(
 
     // set initial content data
     // we already verified that the data length is correct, so don't check again
-    // TODO: do we need to read chunks?
     protected.contents.0[..data.len()].copy_from_slice(data);
     Message::send_ack_no_rand_ops(MessagePort::UART0);
     if data.len() < data_len {
@@ -531,7 +530,7 @@ fn handle_receive_inner(
 /// process before sending back the corresponding data.
 #[inline(never)]
 fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
-    let mut buffer = [0u8; MAX_BODY_SIZE];
+    let mut buffer = [0u8; 1024];
     Message::send_ack_no_rand_ops(MessagePort::UART0);
     let msg = Message::read(MessagePort::UART1, &mut buffer)?;
     listen::recv(ctx, msg.opcode, &mut buffer[..msg.length as usize])?;

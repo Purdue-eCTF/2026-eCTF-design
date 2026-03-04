@@ -26,9 +26,6 @@ static mut __stack_chk_guard: usize = 0;
 
 #[unsafe(no_mangle)]
 extern "C" fn __stack_chk_fail() -> ! {
-    // TODO: remove print
-    eprintln!("stack smashing detected");
-
     cortex_m::peripheral::SCB::sys_reset();
 }
 
@@ -52,17 +49,14 @@ fn main() -> ! {
 
     let core_peripherals = CorePeripherals::take().unwrap();
 
-    // Retrieve context. Derives boot salt 1 and PIN salt 1.
+    // Set up peripherals and derive boot salt 1/PIN salt 1
     let mut ctx = Context::new(sysctl, iomux, uart0, uart1, flashctl, core_peripherals.MPU);
 
     loop {
         let msg_info = Message::read_header(MessagePort::UART0).unwrap();
 
         sensitive!(ctx, {
-            let start = ctx.time();
             handle_any(msg_info.opcode, &mut ctx, msg_info.length as usize);
-            let end = ctx.time();
-            println!("{:?}:{}", msg_info.opcode, end - start);
         });
     }
 }

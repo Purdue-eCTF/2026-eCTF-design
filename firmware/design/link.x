@@ -95,6 +95,7 @@ SECTIONS {
 
         . = ALIGN(8); /* Pad .text to the alignment to workaround overlapping load section bug in old lld */
         __etext = .;
+        ASSERT(__etext <= 128*1024, "Text region must end before 128kB MPU region");
     } > APP1
 
     .rodata : ALIGN(8) {
