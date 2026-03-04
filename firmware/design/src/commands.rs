@@ -13,7 +13,6 @@ use crate::{
     file::{self, File, FileMeta, FileName, UUID},
     listen,
     message::{self, CHUNK_SIZE, MAX_BODY_SIZE, Message, MessagePort, Opcode},
-    println,
     protocol::{self, ProtocolError, SafeError, SymEncryptable},
     secrets::{
         self, COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, TRANSFER_SEND,
@@ -54,7 +53,7 @@ fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
 fn handle_list_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     // 4 bytes at start for total number of files; file slot, name of file, group id, for 8 files
     const METADATA_SIZE: usize = core::mem::size_of::<FileMeta>();
-    let bench_start = ctx.time();
+
     let mut buffer = [0u8; 4 + 8 * METADATA_SIZE];
     let (num_files_buf, list_entries_buf) = buffer.split_at_mut(4);
     let list_entries: &mut [FileMeta; 8] = bytemuck::from_bytes_mut(list_entries_buf);
@@ -76,22 +75,14 @@ fn handle_list_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     }
     // set number of files listed
     num_files_buf.copy_from_slice(&(counter as u32).to_le_bytes());
-    println!(
-        "bench list.collect_metadata: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
-    let bench_start = ctx.time();
     let result = Message::write(
         Opcode::List,
         MessagePort::UART0,
         &buffer[..4 + counter * METADATA_SIZE],
     )
     .map_err(ProtocolError::Message);
-    println!(
-        "bench list.uart0.write_response: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
+
     result
 }
 
@@ -139,57 +130,33 @@ fn handle_read_inner(
     let file_length = file.protected.contents_length as usize;
 
     // get group key and verify file hasn't been tampered
-    let bench_start = ctx.time();
     let group = file.protected.group;
     let enc_group_keys = get_enc_group_keys(group)?;
     let group_key = enc_group_keys.decrypt(k_auth);
-    println!(
-        "bench read.load_group_keys: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
-    let bench_start = ctx.time();
     let pk_sign = enc_group_keys.pk_sign;
     verify_signature_bytes(file, &pk_sign)?;
-    println!(
-        "bench read.verify_signature: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     // buf = N || PT
-    let bench_start = ctx.time();
     let mut buffer = [0u8; file::NAME_SIZE + file::CONTENT_SIZE];
     let (name, protected) = buffer.split_at_mut(file::NAME_SIZE);
     name.copy_from_slice(&file.protected.name.0);
     protected[..file_length].copy_from_slice(&file.protected.contents.0[..file_length]);
     let ad = file.protected.associated_data();
-    println!(
-        "bench read.prepare_buffer: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     // decrypt the file into buffer
-    let bench_start = ctx.time();
     let sk_read = group_key.sk_read.ok_or(SafeError::InvalidGroup)?;
     file.protected
         .contents_ct_metadata
         .decrypt(&mut protected[..file_length], &sk_read, &ad)?;
-    println!(
-        "bench read.decrypt_file_contents: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
-    let bench_start = ctx.time();
     let result = Message::write(
         Opcode::Read,
         MessagePort::UART0,
         &buffer[..file::NAME_SIZE + file_length],
     )
     .map_err(ProtocolError::Message);
-    println!(
-        "bench read.uart0.write_response: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
+
     result
 }
 
@@ -246,8 +213,6 @@ fn handle_write_inner(
         length,
     } = header;
 
-    let bench_start = ctx.time();
-
     // check if the data from message is larger than allocated data/content area in fat, or whether
     // the allocated data has incorrect length
     let data_len = length as usize;
@@ -287,66 +252,32 @@ fn handle_write_inner(
     protected.contents_length = data_len as u16;
     let ad = protected.associated_data();
 
-    println!(
-        "bench write.prepare_file: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
-
     // retrieve signing and read encryption keys with k_auth
-    let bench_start = ctx.time();
     let enc_group_keys = get_enc_group_keys(group)?;
     let group_key = enc_group_keys.decrypt(k_auth);
-    println!(
-        "bench write.load_group_keys: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     // encrypt everything
-    let bench_start = ctx.time();
     let pk_read = group_key.pk_read.ok_or(SafeError::InvalidGroup)?;
     protected.contents_ct_metadata =
         PubKeyMetadata::encrypt(&mut protected.contents.0[..data_len], &pk_read, &ad)?;
-    println!(
-        "bench write.encrypt_file_contents: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     let k_uuid = group_key.k_uuid.ok_or(SafeError::InvalidGroup)?;
-    let bench_start = ctx.time();
     protected.uuid_ct_metadata =
         SymmetricMetadata::encrypt(bytemuck::bytes_of_mut(&mut protected.uuid), &k_uuid, &ad)?;
-    println!(
-        "bench write.encrypt_uuid: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     let sk_sign = group_key.sk_sign.ok_or(SafeError::InvalidGroup)?;
-    let bench_start = ctx.time();
     sign_file(&mut file, &sk_sign)?;
-    println!(
-        "bench write.sign_file: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
-    let bench_start = ctx.time();
     unsafe {
         ctx.files[slot]
             .set(&file)
             .map_err(|_| ProtocolError::StorageFailure)?;
     }
     ctx.rebuild_fat(k_auth)?;
-    println!(
-        "bench write.persist_file: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
-    let bench_start = ctx.time();
     let result =
         Message::write(Opcode::Write, MessagePort::UART0, &[]).map_err(ProtocolError::Message);
-    println!(
-        "bench write.uart0.write_response: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
+
     result
 }
 
@@ -380,8 +311,7 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
 }
 
 #[inline(never)]
-fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
-    let bench_start = ctx.time();
+fn handle_interrogate_inner(_ctx: &mut Context) -> Result<(), ProtocolError> {
     if COPY_PERM_GROUPS.len() > protocol::INTERROGATE_MAX_GROUPS {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -397,31 +327,17 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
         dst.set(group_id);
     }
     request.encrypt(&INTERROGATE_SEND)?;
-    println!(
-        "bench interrogate.prepare_request: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     // send message
-    let bench_start = ctx.time();
     Message::write(
         Opcode::Interrogate,
         MessagePort::UART1,
         bytemuck::bytes_of(&request),
     )?;
-    println!(
-        "bench interrogate.uart1.write_request: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     // receive interrogate response
     let mut buf = [0u8; size_of::<protocol::EncryptedInterrogateResponse>()];
-    let bench_start = ctx.time();
     let response = Message::read(MessagePort::UART1, &mut buf)?;
-    println!(
-        "bench interrogate.uart1.read_response: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     match response.opcode {
         Opcode::Error => return Err(ProtocolError::PeerBoardError),
@@ -433,7 +349,6 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     }
 
     // decrypt
-    let bench_start = ctx.time();
     let interrogate_response: &mut protocol::EncryptedInterrogateResponse =
         bytemuck::from_bytes_mut(&mut buf);
     interrogate_response.decrypt(&INTERROGATE_RECV)?;
@@ -442,10 +357,6 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     if count > protocol::MAX_NUM_FILES {
         return Err(ProtocolError::InvalidMessageLength);
     }
-    println!(
-        "bench interrogate.decrypt_response: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     // allocate response buffer of the maximum size
     let mut buffer = [0u8; 4 + protocol::MAX_NUM_FILES * size_of::<FileMeta>()];
@@ -456,7 +367,6 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     num_files.copy_from_slice(&(count as u32).to_le_bytes());
     let list: &mut [FileMeta; protocol::MAX_NUM_FILES] = bytemuck::from_bytes_mut(list);
 
-    let bench_start = ctx.time();
     for (dst, ifile) in list
         .iter_mut()
         .zip(interrogate_response.protected.files[..count].iter_mut())
@@ -472,24 +382,15 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
             name: ifile.protected.name,
         };
     }
-    println!(
-        "bench interrogate.process_file_list: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     let actual_message_size = 4 + count * size_of::<FileMeta>();
-
-    let bench_start = ctx.time();
     let result = Message::write(
         Opcode::Interrogate,
         MessagePort::UART0,
         &buffer[..actual_message_size],
     )
     .map_err(ProtocolError::Message);
-    println!(
-        "bench interrogate.uart0.write_response: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
+
     result
 }
 
@@ -529,7 +430,6 @@ fn handle_receive_inner(
     write_slot: u8,
     k_auth: &SymmetricKey,
 ) -> Result<(), ProtocolError> {
-    let bench_start = ctx.time();
     let write_slot = write_slot as usize;
     if write_slot > 7 {
         return Err(SafeError::InvalidSlot.into());
@@ -541,30 +441,16 @@ fn handle_receive_inner(
         metadata: SymmetricMetadata::empty(),
     };
     request.encrypt(&TRANSFER_SEND)?;
-    println!(
-        "bench receive.prepare_request: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
-    let bench_start = ctx.time();
     Message::write(
         Opcode::Receive,
         MessagePort::UART1,
         bytemuck::bytes_of(&request),
     )?;
-    println!(
-        "bench receive.uart1.write_request: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     // receive file
     let mut buffer = [0u8; size_of::<protocol::EncryptedTransferResponseHeader>()];
-    let bench_start = ctx.time();
     let response = Message::read(MessagePort::UART1, &mut buffer)?;
-    println!(
-        "bench receive.uart1.read_header: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     match response.opcode {
         Opcode::Error => return Err(ProtocolError::PeerBoardError),
@@ -575,17 +461,12 @@ fn handle_receive_inner(
         return Err(ProtocolError::InvalidMessageLength);
     }
 
-    let bench_start = ctx.time();
     let header: &mut protocol::EncryptedTransferResponseHeader =
         bytemuck::from_bytes_mut(&mut buffer);
     // store copy for later
     let header_ct = *header;
     header.decrypt(&TRANSFER_RECV)?;
     let group_id = header.protected.group_id.get();
-    println!(
-        "bench receive.decrypt_header: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     let enc_group_keys = secrets::get_enc_group_keys(group_id)?;
     let group_keys = enc_group_keys.decrypt(k_auth);
@@ -598,47 +479,24 @@ fn handle_receive_inner(
     // start async recv only after the header has been validated and the local
     // receive keys are confirmed to exist, otherwise a rejected receive can
     // leave UART1's async path armed for later commands.
-    let bench_start = ctx.time();
     message::start_async_recv(size_of::<protocol::EncryptedTransferResponseBody>());
     Message::send_ack(MessagePort::UART1);
-    println!(
-        "bench receive.uart1.send_async_ack: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     // decrypt correct keys based on group
     let verifying_key = VerifyingKey::from_bytes(&enc_group_keys.pk_sign.0).unwrap();
-    println!(
-        "bench receive.derive_verifying_key: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     // while file data is being received, derive the shared secret used for the inner payload
-    let bench_start = ctx.time();
+
     let shared_secret = derive_assymetric_key(&sk_trans.0, &header.protected.pub_metadata.gn);
-    println!(
-        "bench receive.derive_shared_secret: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     // receive body of message
     let mut body = protocol::EncryptedTransferResponseBody::zeroed();
-    let bench_start = ctx.time();
     message::await_async_recv_done(bytemuck::bytes_of_mut(&mut body));
-    println!(
-        "bench receive.uart1.read_body: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     // decrypt outer file data
-    let bench_start = ctx.time();
     body.decrypt_with_associated_data(&TRANSFER_RECV, bytemuck::bytes_of(&header_ct))?;
-    println!(
-        "bench receive.decrypt_outer_body: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
+
     // decrypt inner assymetric data
-    let bench_start = ctx.time();
     decrypt_payload_symmetric(
         bytemuck::bytes_of_mut(&mut body.protected),
         &header.protected.pub_metadata.nonce,
@@ -646,10 +504,6 @@ fn handle_receive_inner(
         &shared_secret,
         bytemuck::bytes_of(&group_id.to_le_bytes()),
     )?;
-    println!(
-        "bench receive.decrypt_inner_payload: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
     // check inner file data
     let file = &body.protected;
@@ -658,32 +512,18 @@ fn handle_receive_inner(
     }
 
     // verify takes about 0.7 seconds
-    let bench_start = ctx.time();
     verify_signature(file, &verifying_key)?;
-    println!(
-        "bench receive.verify_signature: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
-    let bench_start = ctx.time();
     unsafe {
         ctx.files[write_slot]
             .set(file)
             .map_err(|_| ProtocolError::StorageFailure)?;
     }
     ctx.rebuild_fat(k_auth)?;
-    println!(
-        "bench receive.persist_file: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
 
-    let bench_start = ctx.time();
     let result =
         Message::write(Opcode::Receive, MessagePort::UART0, &[]).map_err(ProtocolError::Message);
-    println!(
-        "bench receive.uart0.write_response: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
+
     result
 }
 

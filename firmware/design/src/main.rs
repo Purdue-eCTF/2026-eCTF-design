@@ -63,10 +63,11 @@ fn main() -> ! {
     loop {
         let msg_info = Message::read_header(MessagePort::UART0).unwrap();
 
-        println!("Got message {msg_info:?}");
-
         sensitive!(ctx, {
+            let start = ctx.time();
             handle_any(msg_info.opcode, &mut ctx, msg_info.length as usize);
+            let end = ctx.time();
+            println!("{:?}:{}", msg_info.opcode, end - start);
         });
     }
 }

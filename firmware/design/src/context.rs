@@ -38,6 +38,7 @@ macro_rules! sensitive {
     };
 }
 
+// TODO: No prints in final design
 /// Prints to the uart port
 #[macro_export]
 macro_rules! print {
@@ -137,6 +138,7 @@ impl Context {
             let derived = Salt::derive_boot_salt_1();
             unsafe { boot_salt_1.set(&derived).unwrap() };
         }
+
         // pin salt always derived
         let pin_salt = boot_salt_1.get().unwrap().derive_pin_salt();
 
@@ -173,6 +175,7 @@ impl Context {
         let mut input = [0; 32 + 6];
         input[..6].copy_from_slice(pin);
         input[6..].copy_from_slice(&self.pin_salt.0);
+
         Salt::derive_argon(&input, &mut k_auth, T_COST_K_AUTH);
 
         // confirm k_auth is valid
