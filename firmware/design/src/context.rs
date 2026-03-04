@@ -133,15 +133,20 @@ impl Context {
 
         let boot_salt_1: FlashEntry<Salt> = unsafe { FlashEntry::new(&_salt as *const u8 as u32) };
 
+        // pin salt is always derived
+        let pin_salt;
+
         // if salt isn't set, then the device was restarted during an operation
         if !boot_salt_1.is_set() {
             let derived = Salt::derive_boot_salt_1();
             unsafe { boot_salt_1.set(&derived).unwrap() };
-            eprintln!("panic occurred before rebooting");
-        }
 
-        // pin salt always derived
-        let pin_salt = boot_salt_1.get().unwrap().derive_pin_salt();
+            // include pin salt timing in error handling
+            pin_salt = boot_salt_1.get().unwrap().derive_pin_salt();
+            eprintln!("panic occurred before rebooting");
+        } else {
+            pin_salt = boot_salt_1.get().unwrap().derive_pin_salt();
+        }
 
         Self {
             files,
