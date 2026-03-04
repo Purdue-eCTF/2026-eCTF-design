@@ -1,5 +1,5 @@
 use core::fmt;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::PathBuf;
 
@@ -81,14 +81,17 @@ fn main() {
         .split(":")
         .map(Perms::from_string)
         .collect();
-    let mut seen_groups = HashMap::new();
+
+    // detect duplicates as errors
+    let mut seen_groups = HashSet::new();
     for perm in &perms {
-        if seen_groups.insert(perm.group, ()).is_some() {
+        if seen_groups.contains(&perm.group) {
             panic!(
                 "duplicate permissions entry for group {:#06x} in PERMISSIONS",
                 perm.group
             );
         }
+        seen_groups.insert(perm.group);
     }
 
     // Retrieve all secrets (keys) from the pregenerated file.

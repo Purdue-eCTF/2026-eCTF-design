@@ -575,15 +575,6 @@ fn handle_receive_inner(
         return Err(ProtocolError::InvalidMessageLength);
     }
 
-    // start async recv, send ack to signify async recv is started
-    let bench_start = ctx.time();
-    message::start_async_recv(size_of::<protocol::EncryptedTransferResponseBody>());
-    Message::send_ack(MessagePort::UART1);
-    println!(
-        "bench receive.uart1.send_async_ack: {}",
-        ctx.time().saturating_sub(bench_start)
-    );
-
     let bench_start = ctx.time();
     let header: &mut protocol::EncryptedTransferResponseHeader =
         bytemuck::from_bytes_mut(&mut buffer);
@@ -596,20 +587,35 @@ fn handle_receive_inner(
         ctx.time().saturating_sub(bench_start)
     );
 
-    // decrypt correct keys based on group
-    let bench_start = ctx.time();
     let enc_group_keys = secrets::get_enc_group_keys(group_id)?;
     let group_keys = enc_group_keys.decrypt(k_auth);
+    // verify we have sk_trans which means we have copy perms before starting async recv
+    let Some(sk_trans) = group_keys.sk_trans else {
+        Message::send_error_no_ack(MessagePort::UART1);
+        return Err(SafeError::InvalidGroup.into());
+    };
+
+    // start async recv only after the header has been validated and the local
+    // receive keys are confirmed to exist, otherwise a rejected receive can
+    // leave UART1's async path armed for later commands.
+    let bench_start = ctx.time();
+    message::start_async_recv(size_of::<protocol::EncryptedTransferResponseBody>());
+    Message::send_ack(MessagePort::UART1);
+    println!(
+        "bench receive.uart1.send_async_ack: {}",
+        ctx.time().saturating_sub(bench_start)
+    );
+
+    // decrypt correct keys based on group
     let verifying_key = VerifyingKey::from_bytes(&enc_group_keys.pk_sign.0).unwrap();
     println!(
-        "bench receive.load_group_keys: {}",
+        "bench receive.derive_verifying_key: {}",
         ctx.time().saturating_sub(bench_start)
     );
 
     // while file data is being received, derive the shared secret used for the inner payload
-    let sk_trans = group_keys.sk_trans.ok_or(SafeError::InvalidGroup)?.0;
     let bench_start = ctx.time();
-    let shared_secret = derive_assymetric_key(&sk_trans, &header.protected.pub_metadata.gn);
+    let shared_secret = derive_assymetric_key(&sk_trans.0, &header.protected.pub_metadata.gn);
     println!(
         "bench receive.derive_shared_secret: {}",
         ctx.time().saturating_sub(bench_start)
@@ -695,7 +701,7 @@ fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
 #[inline(never)]
 fn handle_listen_request(ctx: &mut Context) -> Result<(), ProtocolError> {
     if let Err(err) = handle_listen(ctx) {
-        let _ = Message::write(Opcode::Error, MessagePort::UART1, &[]);
+        Message::send_error_no_ack(MessagePort::UART1);
         // returning error will cause uart0 to have error written
         Err(err)
     } else {

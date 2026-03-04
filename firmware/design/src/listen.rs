@@ -132,7 +132,10 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolEr
         MessagePort::UART1,
         bytemuck::bytes_of(&response_header),
     )?;
-    Message::read_ack(MessagePort::UART1)?;
+    if Message::read_ack(MessagePort::UART1).is_err() {
+        // FIXME: a bit scuffed, need to do this so we don't send an error back, since we got the error
+        return Ok(());
+    }
 
     let writer = MessageUart::new(MessagePort::UART1);
     writer.write_bytes(bytemuck::bytes_of(&response_body));

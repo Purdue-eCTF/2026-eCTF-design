@@ -240,7 +240,13 @@ impl Message {
 
     /// Writes an ack to UART.
     pub fn send_ack_no_rand_ops(port: MessagePort) {
-        Self::write_header(Opcode::Ack, 0, port);
+        Self::write_header_no_rand_ops(Opcode::Ack, 0, port);
+    }
+
+    /// Writes a zero-length error header without waiting for an ACK.
+    pub fn send_error_no_ack(port: MessagePort) {
+        Self::write_header_no_rand_ops(Opcode::Error, 0, port);
+        rand_ops!(trng::trng());
     }
 
     /// Writes an ack to UART.
@@ -270,7 +276,7 @@ impl Message {
     }
 
     /// Writes a header indicating incoming message with given opcode and length
-    fn write_header(opcode: Opcode, length: u16, port: MessagePort) {
+    fn write_header_no_rand_ops(opcode: Opcode, length: u16, port: MessagePort) {
         let writer = MessageUart::new(port);
         writer.write_bytes(&[MAGIC, opcode.into()]);
         writer.write_bytes(&length.to_le_bytes());
@@ -283,7 +289,7 @@ impl Message {
         port: MessagePort,
         buf: &[u8],
     ) -> Result<(), MessageError> {
-        Self::write_header(opcode, buf.len().try_into().unwrap(), port);
+        Self::write_header_no_rand_ops(opcode, buf.len().try_into().unwrap(), port);
         if !NACKS.contains(&opcode) {
             Self::read_ack_no_rand_ops(port)?;
         }
