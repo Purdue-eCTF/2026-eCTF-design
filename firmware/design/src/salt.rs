@@ -13,7 +13,7 @@ const ARGON_M_COST_USIZE: usize = ARGON_M_COST as usize;
 pub struct Salt(pub [u8; 32]);
 
 impl Salt {
-    // CORE BOOT LOGIC (Sec 5.1.1)
+    // Core Boot Logic (Sec 5.1.1)
     // Uses the hardware TRNG and FlashController directly
     /// Generate and return boot salt 1 from boot salt 0 using timing tuned Argon2id.
     ///
@@ -36,10 +36,9 @@ impl Salt {
     /// Use Argon2id with a specified timing cost to hash an input into the output location.
     ///
     /// See the protocol document for more detailed information.
+    #[inline(never)]
     pub fn derive_argon(input: &[u8], output: &mut [u8], t_cost: u32) {
         // rand_ops!(trng::trng());
-
-        // TODO: prevent this from overflowing the stack
         let mut mem = [Block::new(); ARGON_M_COST_USIZE];
 
         let params = Params::new(ARGON_M_COST, t_cost, ARGON_P_COST, Some(output.len()))

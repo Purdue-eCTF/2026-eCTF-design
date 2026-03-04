@@ -208,7 +208,6 @@ pub static __FILES_APP2: [FileSlot; 2] = [FileSlot {
     magic: 0,
 }; 2];
 
-/// TODO
 #[unsafe(link_section = ".filetable.default")]
 #[unsafe(no_mangle)]
 pub static __FAT: ([u8; core::mem::size_of::<FatTable>()], u64) = ([0; _], flash::FLASH_MAGIC);
