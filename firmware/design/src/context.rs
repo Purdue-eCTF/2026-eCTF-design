@@ -208,14 +208,8 @@ impl Context {
 
     /// TODO Retrieve the TICK timer's current value (in ticks) .
     pub fn time_ms(&self) -> u32 {
-        0
+        self.time().time_since_boot().as_millis() as u32
     }
-
-    // /// Reset TICK timer's value to 0.
-    // #[allow(static_mut_refs)]
-    // pub fn reset_time(&self) {
-    //     unsafe { TICKS.store(0, Ordering::Relaxed) }
-    // }
 }
 
 const MPU_MIN_SIZE: usize = 32;
