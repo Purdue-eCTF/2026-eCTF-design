@@ -58,7 +58,15 @@ fn main() -> ! {
     let core_peripherals = CorePeripherals::take().unwrap();
 
     // Retrieve context. Derives boot salt 1 and PIN salt 1.
-    let mut ctx = Context::new(sysctl, iomux, uart0, uart1, flashctl, core_peripherals.MPU);
+    let mut ctx = Context::new(
+        sysctl,
+        iomux,
+        uart0,
+        uart1,
+        flashctl,
+        core_peripherals.MPU,
+        core_peripherals.SYST,
+    );
 
     loop {
         let msg_info = Message::read_header(MessagePort::UART0).unwrap();

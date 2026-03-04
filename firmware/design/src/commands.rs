@@ -1,8 +1,10 @@
+use core::time::Duration;
+
 use bytemuck::{Pod, Zeroable};
 use common::SymmetricKey;
 use design_macros::rand_ops;
 use ed25519_dalek::VerifyingKey;
-use mspm0l222x_hal::trng;
+use mspm0l222x_hal::{timer::Instant, trng};
 
 use crate::{
     context::*,
@@ -33,7 +35,7 @@ struct ListHeader {
 ///
 /// See the protocol document for more detailed information on the cryptographic measures implemented.
 #[inline(never)]
-fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn handle_list(ctx: &mut Context, msg_len: usize, end: Instant) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ListHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -47,14 +49,14 @@ fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     // check that PIN is correct before continuing
     let _k_auth = ctx.k_auth(&pin)?;
 
-    handle_list_inner(ctx)
+    handle_list_inner(ctx, end)
 }
 
 #[inline(never)]
-fn handle_list_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
+fn handle_list_inner(ctx: &mut Context, end: Instant) -> Result<(), ProtocolError> {
     // 4 bytes at start for total number of files; file slot, name of file, group id, for 8 files
     const METADATA_SIZE: usize = core::mem::size_of::<FileMeta>();
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     let mut buffer = [0u8; 4 + 8 * METADATA_SIZE];
     let (num_files_buf, list_entries_buf) = buffer.split_at_mut(4);
     let list_entries: &mut [FileMeta; 8] = bytemuck::from_bytes_mut(list_entries_buf);
@@ -78,10 +80,12 @@ fn handle_list_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     num_files_buf.copy_from_slice(&(counter as u32).to_le_bytes());
     println!(
         "bench list.collect_metadata: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
-    let bench_start = ctx.time();
+    // while Instant::now() < end {}
+
+    let bench_start = ctx.time_ms();
     let result = Message::write(
         Opcode::List,
         MessagePort::UART0,
@@ -90,7 +94,7 @@ fn handle_list_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     .map_err(ProtocolError::Message);
     println!(
         "bench list.uart0.write_response: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
     result
 }
@@ -108,7 +112,7 @@ struct ReadFileHeader {
 ///
 /// See the protocol document for more detailed information on the cryptographic measures implemented.
 #[inline(never)]
-fn handle_read(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn handle_read(ctx: &mut Context, msg_len: usize, end: Instant) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ReadFileHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -126,7 +130,7 @@ fn handle_read(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
 
     let k_auth = ctx.k_auth(&pin)?;
 
-    handle_read_inner(ctx, slot, &k_auth)
+    handle_read_inner(ctx, slot, &k_auth, end)
 }
 
 #[inline(never)]
@@ -134,30 +138,31 @@ fn handle_read_inner(
     ctx: &mut Context,
     slot: usize,
     k_auth: &SymmetricKey,
+    end: Instant,
 ) -> Result<(), ProtocolError> {
     let file = ctx.files[slot].get().ok_or(ProtocolError::InvalidFile)?;
     let file_length = file.protected.contents_length as usize;
 
     // get group key and verify file hasn't been tampered
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     let group = file.protected.group;
     let enc_group_keys = get_enc_group_keys(group)?;
     let group_key = enc_group_keys.decrypt(k_auth);
     println!(
         "bench read.load_group_keys: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     let pk_sign = enc_group_keys.pk_sign;
     verify_signature_bytes(file, &pk_sign)?;
     println!(
         "bench read.verify_signature: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     // buf = N || PT
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     let mut buffer = [0u8; file::NAME_SIZE + file::CONTENT_SIZE];
     let (name, protected) = buffer.split_at_mut(file::NAME_SIZE);
     name.copy_from_slice(&file.protected.name.0);
@@ -165,21 +170,23 @@ fn handle_read_inner(
     let ad = file.protected.associated_data();
     println!(
         "bench read.prepare_buffer: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     // decrypt the file into buffer
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     let sk_read = group_key.sk_read.ok_or(SafeError::InvalidGroup)?;
     file.protected
         .contents_ct_metadata
         .decrypt(&mut protected[..file_length], &sk_read, &ad)?;
     println!(
         "bench read.decrypt_file_contents: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
-    let bench_start = ctx.time();
+    // while Instant::now() < end {}
+
+    let bench_start = ctx.time_ms();
     let result = Message::write(
         Opcode::Read,
         MessagePort::UART0,
@@ -188,7 +195,7 @@ fn handle_read_inner(
     .map_err(ProtocolError::Message);
     println!(
         "bench read.uart0.write_response: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
     result
 }
@@ -207,7 +214,7 @@ struct WriteFileHeader {
 /// Write a file received from host into flash. The file should be encrypted
 /// and signed.
 #[inline(never)]
-fn handle_write(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn handle_write(ctx: &mut Context, msg_len: usize, end: Instant) -> Result<(), ProtocolError> {
     if msg_len < size_of::<WriteFileHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -227,7 +234,7 @@ fn handle_write(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> 
 
     let k_auth = ctx.k_auth(&header.pin)?;
 
-    handle_write_inner(ctx, header, data, &k_auth)
+    handle_write_inner(ctx, header, data, &k_auth, end)
 }
 
 #[inline(never)]
@@ -236,6 +243,7 @@ fn handle_write_inner(
     header: WriteFileHeader,
     data: &[u8],
     k_auth: &SymmetricKey,
+    end: Instant,
 ) -> Result<(), ProtocolError> {
     let WriteFileHeader {
         pin: _,
@@ -246,7 +254,7 @@ fn handle_write_inner(
         length,
     } = header;
 
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
 
     // check if the data from message is larger than allocated data/content area in fat, or whether
     // the allocated data has incorrect length
@@ -289,46 +297,46 @@ fn handle_write_inner(
 
     println!(
         "bench write.prepare_file: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     // retrieve signing and read encryption keys with k_auth
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     let enc_group_keys = get_enc_group_keys(group)?;
     let group_key = enc_group_keys.decrypt(k_auth);
     println!(
         "bench write.load_group_keys: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     // encrypt everything
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     let pk_read = group_key.pk_read.ok_or(SafeError::InvalidGroup)?;
     protected.contents_ct_metadata =
         PubKeyMetadata::encrypt(&mut protected.contents.0[..data_len], &pk_read, &ad)?;
     println!(
         "bench write.encrypt_file_contents: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     let k_uuid = group_key.k_uuid.ok_or(SafeError::InvalidGroup)?;
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     protected.uuid_ct_metadata =
         SymmetricMetadata::encrypt(bytemuck::bytes_of_mut(&mut protected.uuid), &k_uuid, &ad)?;
     println!(
         "bench write.encrypt_uuid: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     let sk_sign = group_key.sk_sign.ok_or(SafeError::InvalidGroup)?;
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     sign_file(&mut file, &sk_sign)?;
     println!(
         "bench write.sign_file: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     unsafe {
         ctx.files[slot]
             .set(&file)
@@ -337,15 +345,17 @@ fn handle_write_inner(
     ctx.rebuild_fat(k_auth)?;
     println!(
         "bench write.persist_file: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
-    let bench_start = ctx.time();
+    // while Instant::now() < end {}
+
+    let bench_start = ctx.time_ms();
     let result =
         Message::write(Opcode::Write, MessagePort::UART0, &[]).map_err(ProtocolError::Message);
     println!(
         "bench write.uart0.write_response: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
     result
 }
@@ -361,7 +371,11 @@ struct InterrogateHeader {
 /// symmetrically and each file's metadata encrypted asymmetrically, all this
 /// will be decrypted before being sent back to host.
 #[inline(never)]
-fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn handle_interrogate(
+    ctx: &mut Context,
+    msg_len: usize,
+    end: Instant,
+) -> Result<(), ProtocolError> {
     // Command contains just the PIN
     if msg_len != size_of::<InterrogateHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
@@ -376,12 +390,12 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
     // check that PIN is correct before continuing
     let _k_auth = ctx.k_auth(&pin)?;
 
-    handle_interrogate_inner(ctx)
+    handle_interrogate_inner(ctx, end)
 }
 
 #[inline(never)]
-fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
-    let bench_start = ctx.time();
+fn handle_interrogate_inner(ctx: &mut Context, end: Instant) -> Result<(), ProtocolError> {
+    let bench_start = ctx.time_ms();
     if COPY_PERM_GROUPS.len() > protocol::INTERROGATE_MAX_GROUPS {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -399,11 +413,11 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     request.encrypt(&INTERROGATE_SEND)?;
     println!(
         "bench interrogate.prepare_request: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     // send message
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     Message::write(
         Opcode::Interrogate,
         MessagePort::UART1,
@@ -411,16 +425,16 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     )?;
     println!(
         "bench interrogate.uart1.write_request: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     // receive interrogate response
     let mut buf = [0u8; size_of::<protocol::EncryptedInterrogateResponse>()];
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     let response = Message::read(MessagePort::UART1, &mut buf)?;
     println!(
         "bench interrogate.uart1.read_response: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     match response.opcode {
@@ -433,7 +447,7 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     }
 
     // decrypt
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     let interrogate_response: &mut protocol::EncryptedInterrogateResponse =
         bytemuck::from_bytes_mut(&mut buf);
     interrogate_response.decrypt(&INTERROGATE_RECV)?;
@@ -444,7 +458,7 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     }
     println!(
         "bench interrogate.decrypt_response: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     // allocate response buffer of the maximum size
@@ -456,7 +470,7 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     num_files.copy_from_slice(&(count as u32).to_le_bytes());
     let list: &mut [FileMeta; protocol::MAX_NUM_FILES] = bytemuck::from_bytes_mut(list);
 
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     for (dst, ifile) in list
         .iter_mut()
         .zip(interrogate_response.protected.files[..count].iter_mut())
@@ -474,12 +488,14 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     }
     println!(
         "bench interrogate.process_file_list: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     let actual_message_size = 4 + count * size_of::<FileMeta>();
 
-    let bench_start = ctx.time();
+    // while Instant::now() < end {}
+
+    let bench_start = ctx.time_ms();
     let result = Message::write(
         Opcode::Interrogate,
         MessagePort::UART0,
@@ -488,7 +504,7 @@ fn handle_interrogate_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     .map_err(ProtocolError::Message);
     println!(
         "bench interrogate.uart0.write_response: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
     result
 }
@@ -502,7 +518,7 @@ struct ReceiveFileHeader {
 }
 
 #[inline(never)]
-fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn handle_receive(ctx: &mut Context, msg_len: usize, end: Instant) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ReceiveFileHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -519,7 +535,7 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
 
     let k_auth = ctx.k_auth(&pin)?;
 
-    handle_receive_inner(ctx, read_slot, write_slot, &k_auth)
+    handle_receive_inner(ctx, read_slot, write_slot, &k_auth, end)
 }
 
 #[inline(never)]
@@ -528,8 +544,9 @@ fn handle_receive_inner(
     read_slot: u8,
     write_slot: u8,
     k_auth: &SymmetricKey,
+    end: Instant,
 ) -> Result<(), ProtocolError> {
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     let write_slot = write_slot as usize;
     if write_slot > 7 {
         return Err(SafeError::InvalidSlot.into());
@@ -543,10 +560,10 @@ fn handle_receive_inner(
     request.encrypt(&TRANSFER_SEND)?;
     println!(
         "bench receive.prepare_request: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     Message::write(
         Opcode::Receive,
         MessagePort::UART1,
@@ -554,16 +571,16 @@ fn handle_receive_inner(
     )?;
     println!(
         "bench receive.uart1.write_request: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     // receive file
     let mut buffer = [0u8; size_of::<protocol::EncryptedTransferResponseHeader>()];
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     let response = Message::read(MessagePort::UART1, &mut buffer)?;
     println!(
         "bench receive.uart1.read_header: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     match response.opcode {
@@ -575,7 +592,7 @@ fn handle_receive_inner(
         return Err(ProtocolError::InvalidMessageLength);
     }
 
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     let header: &mut protocol::EncryptedTransferResponseHeader =
         bytemuck::from_bytes_mut(&mut buffer);
     // store copy for later
@@ -584,7 +601,7 @@ fn handle_receive_inner(
     let group_id = header.protected.group_id.get();
     println!(
         "bench receive.decrypt_header: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     let enc_group_keys = secrets::get_enc_group_keys(group_id)?;
@@ -598,47 +615,47 @@ fn handle_receive_inner(
     // start async recv only after the header has been validated and the local
     // receive keys are confirmed to exist, otherwise a rejected receive can
     // leave UART1's async path armed for later commands.
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     message::start_async_recv(size_of::<protocol::EncryptedTransferResponseBody>());
     Message::send_ack(MessagePort::UART1);
     println!(
         "bench receive.uart1.send_async_ack: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     // decrypt correct keys based on group
     let verifying_key = VerifyingKey::from_bytes(&enc_group_keys.pk_sign.0).unwrap();
     println!(
         "bench receive.derive_verifying_key: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     // while file data is being received, derive the shared secret used for the inner payload
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     let shared_secret = derive_assymetric_key(&sk_trans.0, &header.protected.pub_metadata.gn);
     println!(
         "bench receive.derive_shared_secret: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     // receive body of message
     let mut body = protocol::EncryptedTransferResponseBody::zeroed();
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     message::await_async_recv_done(bytemuck::bytes_of_mut(&mut body));
     println!(
         "bench receive.uart1.read_body: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     // decrypt outer file data
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     body.decrypt_with_associated_data(&TRANSFER_RECV, bytemuck::bytes_of(&header_ct))?;
     println!(
         "bench receive.decrypt_outer_body: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
     // decrypt inner assymetric data
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     decrypt_payload_symmetric(
         bytemuck::bytes_of_mut(&mut body.protected),
         &header.protected.pub_metadata.nonce,
@@ -648,7 +665,7 @@ fn handle_receive_inner(
     )?;
     println!(
         "bench receive.decrypt_inner_payload: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
     // check inner file data
@@ -658,14 +675,14 @@ fn handle_receive_inner(
     }
 
     // verify takes about 0.7 seconds
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     verify_signature(file, &verifying_key)?;
     println!(
         "bench receive.verify_signature: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
-    let bench_start = ctx.time();
+    let bench_start = ctx.time_ms();
     unsafe {
         ctx.files[write_slot]
             .set(file)
@@ -674,15 +691,17 @@ fn handle_receive_inner(
     ctx.rebuild_fat(k_auth)?;
     println!(
         "bench receive.persist_file: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
 
-    let bench_start = ctx.time();
+    // while Instant::now() < end {}
+
+    let bench_start = ctx.time_ms();
     let result =
         Message::write(Opcode::Receive, MessagePort::UART0, &[]).map_err(ProtocolError::Message);
     println!(
         "bench receive.uart0.write_response: {}",
-        ctx.time().saturating_sub(bench_start)
+        ctx.time_ms().saturating_sub(bench_start)
     );
     result
 }
@@ -699,7 +718,7 @@ fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
 }
 
 #[inline(never)]
-fn handle_listen_request(ctx: &mut Context) -> Result<(), ProtocolError> {
+fn handle_listen_request(ctx: &mut Context, end: Instant) -> Result<(), ProtocolError> {
     if let Err(err) = handle_listen(ctx) {
         Message::send_error_no_ack(MessagePort::UART1);
         // returning error will cause uart0 to have error written
@@ -713,18 +732,33 @@ fn handle_listen_request(ctx: &mut Context) -> Result<(), ProtocolError> {
 
 /// convenience function to dispatch to an appropriate command
 pub fn handle_any(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
+    let start = Instant::now();
+
+    let Some(Budget(_, max_time, max_bytes)) = TIME_BUDGET_MS.iter().find(|b| b.0 == opcode) else {
+        // received random ack, ignore
+        return;
+    };
+    let uart_time = (max_bytes * 5700) >> 16; // approximately * 0.0868
+    let operation_time = max_time.saturating_sub(uart_time).saturating_sub(50);
+
+    let end = start + Duration::from_millis(operation_time as u64);
+
     let res = match opcode {
-        Opcode::List => handle_list(ctx, msg_len),
-        Opcode::Read => handle_read(ctx, msg_len),
-        Opcode::Write => handle_write(ctx, msg_len),
-        Opcode::Receive => handle_receive(ctx, msg_len),
-        Opcode::Interrogate => handle_interrogate(ctx, msg_len),
-        Opcode::Listen => handle_listen_request(ctx),
+        Opcode::List => handle_list(ctx, msg_len, end),
+        Opcode::Read => handle_read(ctx, msg_len, end),
+        Opcode::Write => handle_write(ctx, msg_len, end),
+        Opcode::Receive => handle_receive(ctx, msg_len, end),
+        Opcode::Interrogate => handle_interrogate(ctx, msg_len, end),
+        Opcode::Listen => handle_listen_request(ctx, end),
         Opcode::Ack => {
             Message::write(opcode, MessagePort::UART0, &[]).map_err(ProtocolError::Message)
         }
         e @ (Opcode::Error | Opcode::Debug) => panic!("{e:?} should not be sent to board"),
     };
+
+    if opcode != Opcode::Listen {
+        // while Instant::now() < end {}
+    }
 
     match res {
         Ok(_) => (),
