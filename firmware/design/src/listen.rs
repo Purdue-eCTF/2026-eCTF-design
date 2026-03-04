@@ -129,24 +129,18 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolEr
     response_body
         .encrypt_with_associated_data(&TRANSFER_RECV, bytemuck::bytes_of(&response_header))?;
 
-    crate::println!("start send");
-
     Message::write(
         Opcode::Receive,
         MessagePort::UART1,
         bytemuck::bytes_of(&response_header),
     )?;
     if Message::read_ack(MessagePort::UART1).is_err() {
-        crate::println!("error send");
         // FIXME: a bit scuffed, need to do this so we don't send an error back, since we got the error
         return Ok(());
     }
 
-    crate::println!("header sent");
-
     let writer = MessageUart::new(MessagePort::UART1);
     writer.write_bytes(bytemuck::bytes_of(&response_body));
-    crate::println!("body sent");
     rand_ops!(trng::trng());
 
     Ok(())
