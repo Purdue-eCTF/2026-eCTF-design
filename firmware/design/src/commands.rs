@@ -83,7 +83,7 @@ fn handle_list_inner(ctx: &mut Context, end: Instant) -> Result<(), ProtocolErro
         ctx.time_ms().saturating_sub(bench_start)
     );
 
-    // while Instant::now() < end {}
+    while Instant::now() < end {}
 
     let bench_start = ctx.time_ms();
     let result = Message::write(
@@ -184,7 +184,7 @@ fn handle_read_inner(
         ctx.time_ms().saturating_sub(bench_start)
     );
 
-    // while Instant::now() < end {}
+    while Instant::now() < end {}
 
     let bench_start = ctx.time_ms();
     let result = Message::write(
@@ -348,7 +348,7 @@ fn handle_write_inner(
         ctx.time_ms().saturating_sub(bench_start)
     );
 
-    // while Instant::now() < end {}
+    while Instant::now() < end {}
 
     let bench_start = ctx.time_ms();
     let result =
@@ -493,7 +493,7 @@ fn handle_interrogate_inner(ctx: &mut Context, end: Instant) -> Result<(), Proto
 
     let actual_message_size = 4 + count * size_of::<FileMeta>();
 
-    // while Instant::now() < end {}
+    while Instant::now() < end {}
 
     let bench_start = ctx.time_ms();
     let result = Message::write(
@@ -694,7 +694,7 @@ fn handle_receive_inner(
         ctx.time_ms().saturating_sub(bench_start)
     );
 
-    // while Instant::now() < end {}
+    while Instant::now() < end {}
 
     let bench_start = ctx.time_ms();
     let result =
@@ -757,7 +757,7 @@ pub fn handle_any(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
     };
 
     if opcode != Opcode::Listen {
-        // while Instant::now() < end {}
+        while Instant::now() < end {}
     }
 
     match res {
