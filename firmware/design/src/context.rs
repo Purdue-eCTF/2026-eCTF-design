@@ -137,6 +137,7 @@ impl Context {
         if !boot_salt_1.is_set() {
             let derived = Salt::derive_boot_salt_1();
             unsafe { boot_salt_1.set(&derived).unwrap() };
+            eprintln!("panic occurred before rebooting");
         }
 
         // pin salt always derived

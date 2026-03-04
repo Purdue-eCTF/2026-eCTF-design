@@ -16,12 +16,7 @@ use design::{
 /// On panic, inform the host with the information associated with the panic and reboot the board.
 #[panic_handler]
 fn handle_panics(_info: &PanicInfo) -> ! {
-    // #[cfg(debug_assertions)]
-    {
-        // cant format panic info, it adds too much to code size with random ops
-        eprintln!("panic");
-    }
-
+    // if salt page is missing on reboot, error gets sent then
     cortex_m::peripheral::SCB::sys_reset();
 }
 
