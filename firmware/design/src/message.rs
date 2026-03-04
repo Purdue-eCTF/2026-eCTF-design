@@ -175,7 +175,7 @@ impl Message {
     /// Reads a message header from UART without reading the body.
     pub fn read_header(port: MessagePort) -> Result<Self, MessageError> {
         let message = Self::read_header_no_rand_ops(port)?;
-        // rand_ops!(trng::trng());
+        rand_ops!(trng::trng());
         Ok(message)
     }
 
@@ -194,7 +194,7 @@ impl Message {
     /// Reads buf.len() bytes from UART in chunks. Sends ACK after each chunk.
     pub fn read_body(port: MessagePort, buf: &mut [u8]) -> Result<(), MessageError> {
         Self::read_body_no_rand_ops_inner(port, buf)?;
-        // rand_ops!(trng::trng());
+        rand_ops!(trng::trng());
         Ok(())
     }
 
@@ -212,7 +212,7 @@ impl Message {
     /// Reads buf.len() bytes from UART in chunks.
     pub fn read_body_no_ack(port: MessagePort, buf: &mut [u8]) -> Result<(), MessageError> {
         Self::read_body_no_ack_no_rand_ops(port, buf)?;
-        // rand_ops!(trng::trng());
+        rand_ops!(trng::trng());
         Ok(())
     }
 
@@ -234,7 +234,7 @@ impl Message {
     /// Errors if message is too large for buffer.
     pub fn read(port: MessagePort, buf: &mut [u8]) -> Result<Self, MessageError> {
         let message = Self::read_no_rand_ops(port, buf)?;
-        // rand_ops!(trng::trng());
+        rand_ops!(trng::trng());
         Ok(message)
     }
 
@@ -246,7 +246,7 @@ impl Message {
     /// Writes an ack to UART.
     pub fn send_ack(port: MessagePort) {
         Self::send_ack_no_rand_ops(port);
-        // rand_ops!(trng::trng());
+        rand_ops!(trng::trng());
     }
 
     /// Reads an ack from UART.
@@ -265,7 +265,7 @@ impl Message {
     /// Reads an ack from UART.
     pub fn read_ack(port: MessagePort) -> Result<(), MessageError> {
         Self::read_ack_no_rand_ops(port)?;
-        // rand_ops!(trng::trng());
+        rand_ops!(trng::trng());
         Ok(())
     }
 
@@ -294,7 +294,7 @@ impl Message {
     /// This will fail if the buffer size does not fit in u16
     pub fn write(opcode: Opcode, port: MessagePort, buf: &[u8]) -> Result<(), MessageError> {
         Self::write_no_rand_ops(opcode, port, buf)?;
-        // rand_ops!(trng::trng());
+        rand_ops!(trng::trng());
         Ok(())
     }
 
