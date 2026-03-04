@@ -81,6 +81,15 @@ fn main() {
         .split(":")
         .map(Perms::from_string)
         .collect();
+    let mut seen_groups = HashMap::new();
+    for perm in &perms {
+        if seen_groups.insert(perm.group, ()).is_some() {
+            panic!(
+                "duplicate permissions entry for group {:#06x} in PERMISSIONS",
+                perm.group
+            );
+        }
+    }
 
     // Retrieve all secrets (keys) from the pregenerated file.
     let secrets_file =

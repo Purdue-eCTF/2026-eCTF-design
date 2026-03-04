@@ -53,7 +53,9 @@ fn respond_interrogate(ctx: &mut Context, body: &mut [u8]) -> Result<(), Protoco
             // if a valid file matches the group, add it to the list
             if metadata.group == group {
                 let group_keys = secrets::get_enc_group_keys(group)?;
-                let ifile = &mut response.protected.files[count];
+                let Some(ifile) = response.protected.files.get_mut(count) else {
+                    return Err(ProtocolError::InvalidMessageLength);
+                };
                 *ifile = InterrogateFileInfo {
                     protected: InterrogateFileProtected {
                         slot: i as u8,
