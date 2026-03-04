@@ -712,7 +712,11 @@ pub fn handle_any(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
         Opcode::Read => handle_read(ctx, msg_len),
         Opcode::Write => handle_write(ctx, msg_len),
         Opcode::Receive => handle_receive(ctx, msg_len),
-        Opcode::Interrogate => handle_interrogate(ctx, msg_len),
+        Opcode::Interrogate => {
+            let res = handle_interrogate(ctx, msg_len);
+            println!("{res:?}");
+            res
+        }
         Opcode::Listen => handle_listen_request(ctx),
         Opcode::Ack => {
             Message::write(opcode, MessagePort::UART0, &[]).map_err(ProtocolError::Message)
