@@ -3,7 +3,7 @@
 
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
-use design::{eprintln, println, sensitive};
+use design::sensitive;
 use mspm0l222x_hal::{CorePeripherals, Peripherals, Trng, trng};
 
 use design::{

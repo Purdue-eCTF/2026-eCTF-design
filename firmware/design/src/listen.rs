@@ -99,7 +99,9 @@ fn respond_transfer(ctx: &mut Context, body: &mut [u8]) -> Result<(), ProtocolEr
         return Err(SafeError::InvalidSlot.into());
     }
 
-    let file_src = ctx.files[slot].get().ok_or(SafeError::InvalidSlot.into())?;
+    let file_src = ctx.files[slot]
+        .get()
+        .ok_or(ProtocolError::SafeError(SafeError::InvalidSlot))?;
 
     let group_keys = secrets::get_enc_group_keys(file_src.protected.group)?;
 

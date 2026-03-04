@@ -126,7 +126,9 @@ fn handle_read_inner(
     slot: usize,
     k_auth: &SymmetricKey,
 ) -> Result<(), ProtocolError> {
-    let file = ctx.files[slot].get().ok_or(SafeError::InvalidSlot.into())?;
+    let file = ctx.files[slot]
+        .get()
+        .ok_or(ProtocolError::SafeError(SafeError::InvalidSlot))?;
     let file_length = file.protected.contents_length as usize;
 
     // get group key and verify file hasn't been tampered
