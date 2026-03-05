@@ -26,6 +26,12 @@ pub enum ProtocolError {
     InvalidMessageLength,
 }
 
+impl ProtocolError {
+    pub fn is_reset_error(&self) -> bool {
+        !matches!(self, Self::SafeError(_))
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum SafeError {
     #[error("Invalid group")]

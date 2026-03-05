@@ -71,6 +71,8 @@ fn main() {
     println!("cargo:rerun-if-changed=memory.x");
     println!("cargo:rerun-if-env-changed=BUILD_SEED");
 
+    let _ = std::env::var("BUILD_SEED").expect("build seed not set");
+
     println!("cargo:rustc-link-arg=-Xlinker");
     println!("cargo:rustc-link-arg=--print-memory-usage");
 

@@ -563,7 +563,7 @@ fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
 }
 
 #[inline(never)]
-fn handle_listen_request(ctx: &mut Context, end: Instant) -> Result<(), ProtocolError> {
+fn handle_listen_request(ctx: &mut Context) -> Result<(), ProtocolError> {
     match handle_listen(ctx) {
         Ok(_) => {
             // handle listen has already sent a success response to uart1, send uart0 success
@@ -599,7 +599,8 @@ pub fn handle_any(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
         Opcode::Write => handle_write(ctx, msg_len, end),
         Opcode::Receive => handle_receive(ctx, msg_len, end),
         Opcode::Interrogate => handle_interrogate(ctx, msg_len, end),
-        Opcode::Listen => handle_listen_request(ctx, end),
+        // in rules, listen doesn't seem to have an allotted time, just return as soon as done
+        Opcode::Listen => handle_listen_request(ctx),
         Opcode::Ack => {
             Message::write(opcode, MessagePort::UART0, &[]).map_err(ProtocolError::Message)
         }
@@ -615,17 +616,48 @@ pub fn handle_any(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
         }
     }
 
-    // prevent glitching reset check
+    // prevent glitching reset check to skip pin lockout
+    // very unlikely to be able to glitch pin check itself, even if glitched, many errors will arise due to wrong k_auth
+    // all will have to be glitch
+    // just prevent here so lockout isn't skipped
     rand_ops!(trng::trng());
+
+    if core::hint::black_box(should_result(core::hint::black_box(&res))) {
+        panic!()
+    }
+
+    if core::hint::black_box(should_result(core::hint::black_box(&res))) {
+        panic!()
+    }
+
+    rand_ops!(trng::trng());
+
+    if core::hint::black_box(should_result(core::hint::black_box(&res))) {
+        panic!()
+    }
+
+    if core::hint::black_box(should_result(core::hint::black_box(&res))) {
+        panic!()
+    }
 
     match res {
         Ok(_) => (),
-        Err(ProtocolError::SafeError(e)) => crate::eprintln!("error: {e}"),
-        Err(e) => panic!("handler failed: {e}"),
+        Err(ProtocolError::SafeError(_)) => crate::eprintln!("error"),
+        Err(_) => panic!(),
     }
 
     // no need to delay, because if the command succeeded, there wasn't any issue
     // and it restarts if it panicked
+}
+
+fn should_result(result: &Result<(), ProtocolError>) -> bool {
+    if let Err(error) = result
+        && error.is_reset_error()
+    {
+        true
+    } else {
+        false
+    }
 }
 
 // opcode, total budget, max uart bytes sent
