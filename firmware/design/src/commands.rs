@@ -624,9 +624,10 @@ pub struct Budget(pub Opcode, pub u32, pub u32);
 
 pub const TIME_BUDGET_MS: &[Budget] = &[
     Budget(Opcode::List, 500, 288),
-    Budget(Opcode::Read, 3000, 8228),
-    Budget(Opcode::Write, 3000, 4),
-    Budget(Opcode::Receive, 2980, 4),
+    Budget(Opcode::Read, 2960, 8228),
+    Budget(Opcode::Write, 2950, 4),
+    // 50 ms safety
+    Budget(Opcode::Receive, 2950, 4),
     Budget(Opcode::Listen, 3000, 4),
     Budget(Opcode::Interrogate, 1000, 288),
 ];
