@@ -4,6 +4,7 @@
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
 use design::sensitive;
+use design_macros::rand_ops;
 use mspm0l222x_hal::{CorePeripherals, Peripherals, Trng, trng};
 
 use design::{
@@ -31,6 +32,8 @@ extern "C" fn __stack_chk_fail() -> ! {
 
 #[entry]
 fn main() -> ! {
+    rand_ops!(trng::trng());
+
     // Startup tasks...
     let peripherals = Peripherals::take().unwrap();
     let Peripherals {

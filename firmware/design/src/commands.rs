@@ -14,7 +14,7 @@ use crate::{
     },
     file::{self, File, FileMeta, FileName, UUID},
     listen,
-    message::{self, CHUNK_SIZE, Message, MessagePort, Opcode},
+    message::{self, CHUNK_SIZE, Message, MessagePort, Opcode, disable_async_recv},
     protocol::{self, ProtocolError, SafeError, SymEncryptable},
     secrets::{
         self, COPY_PERM_GROUPS, INTERROGATE_RECV, INTERROGATE_SEND, TRANSFER_RECV, TRANSFER_SEND,
@@ -438,7 +438,10 @@ fn handle_receive(ctx: &mut Context, msg_len: usize, end: Instant) -> Result<(),
 
     let k_auth = ctx.k_auth(&pin)?;
 
-    handle_receive_inner(ctx, read_slot, write_slot, &k_auth, end)
+    let result = handle_receive_inner(ctx, read_slot, write_slot, &k_auth, end);
+    // disable in case accidentally left on
+    disable_async_recv();
+    result
 }
 
 #[inline(never)]
@@ -605,9 +608,15 @@ pub fn handle_any(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
         }
     };
 
+    // listen opcode does not have delay
     if opcode != Opcode::Listen {
-        while Instant::now() < end {}
+        while Instant::now() < end {
+            rand_ops!(trng::trng());
+        }
     }
+
+    // prevent glitching reset check
+    rand_ops!(trng::trng());
 
     match res {
         Ok(_) => (),

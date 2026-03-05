@@ -237,12 +237,6 @@ unsafe fn add_mpu_guard(mpu: &mut Mpu, index: u32, address: u32) {
     }
 }
 
-unsafe extern "C" {
-    static __stext: u8;
-    static __etext: u8;
-}
-const REGION_SIZE: u32 = 128 * 1024 / 8;
-
 /// Setup the MPU mappings for the board.
 fn setup_mpu_mappings(mpu: &mut Mpu) {
     // TODO: remove this check

@@ -365,8 +365,7 @@ pub fn start_async_recv(size: usize) {
 
 pub fn await_async_recv_done(buffer: &mut [u8]) {
     // disable interrupts then read the rest out of recv buffer
-    uart1().disable_rx_threshold_interrupt();
-    NVIC::mask(Interrupt::UART1);
+    disable_async_recv();
 
     interrupt::free(|token| {
         let mut recv_buffer = ASYNC_RECV_BUFFER.borrow(token).borrow_mut();
@@ -389,6 +388,11 @@ pub fn await_async_recv_done(buffer: &mut [u8]) {
         recv_buffer.target_count = None;
         recv_buffer.current_count = 0;
     })
+}
+
+pub fn disable_async_recv() {
+    uart1().disable_rx_threshold_interrupt();
+    NVIC::mask(Interrupt::UART1);
 }
 
 fn handle_uart_async_recv() {
@@ -419,13 +423,6 @@ fn handle_uart_async_recv() {
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
 unsafe extern "C" fn UART1() {
-    // use crate::println;
-    // match uart1().interrupt_cause() {
-    //     Some(InterruptCause::Threshold) => println!("threshhold"),
-    //     Some(InterruptCause::Timeout) => println!("timeout"),
-    //     Some(InterruptCause::Unknown) => println!("unknown"),
-    //     None => println!("no interrupt"),
-    // }
     if let Some(cause) = uart1().interrupt_cause() {
         match cause {
             InterruptCause::Threshold => handle_uart_async_recv(),

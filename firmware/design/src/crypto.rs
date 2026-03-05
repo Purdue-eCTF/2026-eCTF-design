@@ -149,7 +149,7 @@ pub fn verify_signature_bytes(file: &File, key: &AsymmetricKey) -> Result<(), Cr
 
 /// Verify a file's contents and metadata with its signature using a corresponding key
 pub fn verify_signature(file: &File, key: &VerifyingKey) -> Result<(), CryptoError> {
-    // rand_ops!(trng::trng());
+    rand_ops!(trng::trng());
 
     let mut hasher = Blake2b512::new();
     hasher.update(bytemuck::bytes_of(&file.protected));
@@ -158,7 +158,7 @@ pub fn verify_signature(file: &File, key: &VerifyingKey) -> Result<(), CryptoErr
     raw_verify_prehashed::<Blake2b512, Blake2b512>(key, hasher, None, &expected_signature)
         .map_err(|_| CryptoError::InvalidSignature)?;
 
-    // rand_ops!(trng::trng());
+    rand_ops!(trng::trng());
 
     Ok(())
 }
@@ -187,6 +187,8 @@ pub fn sign_file(file: &mut File, key: &AsymmetricKey) -> Result<(), CryptoError
 }
 
 pub fn derive_assymetric_key(secret_key: &[u8; 32], gn: &[u8; GN_SIZE]) -> SymmetricKey {
+    rand_ops!(trng::trng());
+
     let sk = StaticSecret::from(*secret_key);
     let pubkey = PublicKey::from(*gn);
     let shared = sk.diffie_hellman(&pubkey).to_bytes();
@@ -237,7 +239,7 @@ pub fn encrypt_payload_pub<'a>(
     public_key: &AsymmetricKey,
     associated_data: &[u8],
 ) -> Result<&'a mut [u8], CryptoError> {
-    // rand_ops!(trng::trng());
+    rand_ops!(trng::trng());
 
     let pk = PublicKey::from(public_key.0);
 
@@ -259,8 +261,6 @@ pub fn encrypt_payload_pub<'a>(
     // Generate shared secret by the Diffie-Hellman key exchange with file and group public
     // keys
     let shared = n.diffie_hellman(&pk).to_bytes();
-
-    // rand_ops!(trng::trng());
 
     // use kdf as recommended by rfc
     // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
@@ -336,13 +336,9 @@ pub fn encrypt_payload_symmetric<'a>(
 
 /// Implement the blake hash on data with a salt and return the resulting hash.
 pub fn blake_hash(input: &[u8], salt: &[u8; 32]) -> [u8; 32] {
-    // rand_ops!(trng::trng());
-
     let mut blake_hasher = Blake2s256::new();
     blake_hasher.update(input);
     blake_hasher.update(salt);
-
-    // rand_ops!(trng::trng());
 
     *blake_hasher.finalize().as_array().unwrap()
 }
