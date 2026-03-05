@@ -267,19 +267,12 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
         )
         .unwrap();
 
-        // approximate region with code is executable
-        let text_end = &raw const __etext as u32;
-        let text_regions = text_end.div_ceil(REGION_SIZE);
-        // no bootloader code during runtime
-        let bootloader_regions = 0x6000 / REGION_SIZE;
-        let mask =
-            u8::MAX.unbounded_shl(text_regions) | u8::MAX.unbounded_shr(8 - bootloader_regions);
-
+        // mark only text region executable
         mpu.set_region(
             1,
             0x0,
-            MpuRegionSize::KibiByte128,
-            mask,
+            MpuRegionSize::KibiByte256,
+            0b11100000,
             MpuPerms {
                 read: true,
                 write: false,
