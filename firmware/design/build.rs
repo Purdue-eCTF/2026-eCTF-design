@@ -322,7 +322,7 @@ const ARGON_P_COST: u32 = 1;
 // experimentally derived
 const T_COST_BOOT: u32 = 210; // ~3878ms
 const T_COST_PIN: u32 = 45; // ~972ms
-const T_COST_K_AUTH: u32 = 11; // ~250ms
+const T_COST_K_AUTH: u32 = 6; // ~160ms
 
 const DERIVE_SALT: &[u8] = b"ectf-deriv";
 
