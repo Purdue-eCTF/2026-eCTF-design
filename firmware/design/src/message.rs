@@ -378,8 +378,6 @@ pub fn await_async_recv_done(buffer: &mut [u8]) {
             .read_bytes(&mut recv_buffer.buffer[current_count..target_count])
             .unwrap();
 
-        rand_ops!(trng::trng());
-
         // assert after reading bytes
         assert!(buffer.len() >= target_count);
 
