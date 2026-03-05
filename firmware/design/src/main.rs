@@ -32,8 +32,6 @@ extern "C" fn __stack_chk_fail() -> ! {
 
 #[entry]
 fn main() -> ! {
-    rand_ops!(trng::trng());
-
     // Startup tasks...
     let peripherals = Peripherals::take().unwrap();
     let Peripherals {
@@ -49,6 +47,8 @@ fn main() -> ! {
     unsafe {
         __stack_chk_guard = trng::trng().word() as usize ^ STACK_CANARY_START_VALUE;
     }
+
+    rand_ops!(trng::trng());
 
     let core_peripherals = CorePeripherals::take().unwrap();
 
