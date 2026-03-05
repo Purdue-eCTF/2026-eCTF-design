@@ -1,11 +1,9 @@
 use common::SymmetricKey;
-use core::{
-    fmt::{self, Write},
-    sync::atomic::{AtomicU32, Ordering},
+use core::fmt::{self, Write};
+use mspm0l222x_hal::{
+    mpu::{MemoryCacheType, MpuPerms, MpuRegionSize},
+    timer::Instant,
 };
-use cortex_m::peripheral::SYST;
-use cortex_m_rt::exception;
-use mspm0l222x_hal::mpu::{MemoryCacheType, MpuPerms, MpuRegionSize};
 use subtle::ConstantTimeEq;
 
 use mspm0l222x_hal::{
@@ -90,6 +88,7 @@ impl Context {
         uart1: mspm0l222x_hal::mspm0l222x_pac::Uart1,
         flashctl: mspm0l222x_hal::mspm0l222x_pac::Flashctl,
         mpu_regs: cortex_m::peripheral::MPU,
+        systick: cortex_m::peripheral::SYST,
     ) -> Self {
         // entire ram not executable
         Mpu::sram_rw_boundary(&sysctl, 0x7fff).expect("failed to set sram rw boundary");
@@ -97,10 +96,7 @@ impl Context {
         let mut mpu = Mpu::new(mpu_regs);
         setup_mpu_mappings(&mut mpu);
 
-        mspm0l222x_hal::timer::SysTickConfig::enable_with_reload(
-            unsafe { &*(SYST::PTR as *const SYST) },
-            32_000 - 1, // 1 ms timer interval
-        );
+        mspm0l222x_hal::timer::init(systick);
 
         let iomux = Iomux::new(&iomux);
 
@@ -210,15 +206,13 @@ impl Context {
     }
 
     /// Retrieve the TICK timer's current value (in milliseconds).
-    #[allow(static_mut_refs)]
-    pub fn time(&self) -> u32 {
-        unsafe { TICKS.load(Ordering::Relaxed) }
+    pub fn time(&self) -> Instant {
+        Instant::now()
     }
 
-    /// Reset TICK timer's value to 0.
-    #[allow(static_mut_refs)]
-    pub fn reset_time(&self) {
-        unsafe { TICKS.store(0, Ordering::Relaxed) }
+    /// TODO Retrieve the TICK timer's current value (in ticks) .
+    pub fn time_ms(&self) -> u32 {
+        self.time().time_since_boot().as_millis() as u32
     }
 }
 
@@ -273,19 +267,12 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
         )
         .unwrap();
 
-        // approximate region with code is executable
-        let text_end = &raw const __etext as u32;
-        let text_regions = text_end.div_ceil(REGION_SIZE);
-        // no bootloader code during runtime
-        let bootloader_regions = 0x6000 / REGION_SIZE;
-        let mask =
-            u8::MAX.unbounded_shl(text_regions) | u8::MAX.unbounded_shr(8 - bootloader_regions);
-
+        // mark only text region executable
         mpu.set_region(
             1,
             0x0,
-            MpuRegionSize::KibiByte128,
-            mask,
+            MpuRegionSize::KibiByte256,
+            0b11100000,
             MpuPerms {
                 read: true,
                 write: false,
@@ -366,19 +353,6 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
         add_mpu_guard(mpu, 7, secrets_guard as u32);
 
         mpu.enable();
-    }
-}
-
-static mut TICKS: AtomicU32 = AtomicU32::new(0);
-
-/// We use the systick timer to count ms since the last time reset
-#[allow(static_mut_refs)]
-#[exception]
-fn SysTick() {
-    // All access must be atomic, so this should be safe.
-    let current = unsafe { TICKS.load(Ordering::SeqCst) };
-    unsafe {
-        TICKS.store(current + 1, Ordering::Relaxed);
     }
 }
 

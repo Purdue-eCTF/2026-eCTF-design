@@ -1,8 +1,10 @@
+use core::time::Duration;
+
 use bytemuck::{Pod, Zeroable};
 use common::SymmetricKey;
 use design_macros::rand_ops;
 use ed25519_dalek::VerifyingKey;
-use mspm0l222x_hal::trng;
+use mspm0l222x_hal::{timer::Instant, trng};
 
 use crate::{
     context::*,
@@ -32,7 +34,7 @@ struct ListHeader {
 ///
 /// See the protocol document for more detailed information on the cryptographic measures implemented.
 #[inline(never)]
-fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn handle_list(ctx: &mut Context, msg_len: usize, end: Instant) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ListHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -46,11 +48,11 @@ fn handle_list(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
     // check that PIN is correct before continuing
     let _k_auth = ctx.k_auth(&pin)?;
 
-    handle_list_inner(ctx)
+    handle_list_inner(ctx, end)
 }
 
 #[inline(never)]
-fn handle_list_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
+fn handle_list_inner(ctx: &mut Context, end: Instant) -> Result<(), ProtocolError> {
     // 4 bytes at start for total number of files; file slot, name of file, group id, for 8 files
     const METADATA_SIZE: usize = core::mem::size_of::<FileMeta>();
 
@@ -76,6 +78,8 @@ fn handle_list_inner(ctx: &mut Context) -> Result<(), ProtocolError> {
     // set number of files listed
     num_files_buf.copy_from_slice(&(counter as u32).to_le_bytes());
 
+    while Instant::now() < end {}
+
     let result = Message::write(
         Opcode::List,
         MessagePort::UART0,
@@ -99,7 +103,7 @@ struct ReadFileHeader {
 ///
 /// See the protocol document for more detailed information on the cryptographic measures implemented.
 #[inline(never)]
-fn handle_read(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn handle_read(ctx: &mut Context, msg_len: usize, end: Instant) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ReadFileHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -117,7 +121,7 @@ fn handle_read(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
 
     let k_auth = ctx.k_auth(&pin)?;
 
-    handle_read_inner(ctx, slot, &k_auth)
+    handle_read_inner(ctx, slot, &k_auth, end)
 }
 
 #[inline(never)]
@@ -125,6 +129,7 @@ fn handle_read_inner(
     ctx: &mut Context,
     slot: usize,
     k_auth: &SymmetricKey,
+    end: Instant,
 ) -> Result<(), ProtocolError> {
     let file = ctx.files[slot]
         .get()
@@ -152,6 +157,8 @@ fn handle_read_inner(
         .contents_ct_metadata
         .decrypt(&mut protected[..file_length], &sk_read, &ad)?;
 
+    while Instant::now() < end {}
+
     let result = Message::write(
         Opcode::Read,
         MessagePort::UART0,
@@ -176,7 +183,7 @@ struct WriteFileHeader {
 /// Write a file received from host into flash. The file should be encrypted
 /// and signed.
 #[inline(never)]
-fn handle_write(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn handle_write(ctx: &mut Context, msg_len: usize, end: Instant) -> Result<(), ProtocolError> {
     if msg_len < size_of::<WriteFileHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -196,7 +203,7 @@ fn handle_write(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> 
 
     let k_auth = ctx.k_auth(&header.pin)?;
 
-    handle_write_inner(ctx, header, data, &k_auth)
+    handle_write_inner(ctx, header, data, &k_auth, end)
 }
 
 #[inline(never)]
@@ -205,6 +212,7 @@ fn handle_write_inner(
     header: WriteFileHeader,
     data: &[u8],
     k_auth: &SymmetricKey,
+    end: Instant,
 ) -> Result<(), ProtocolError> {
     let WriteFileHeader {
         pin: _,
@@ -276,6 +284,8 @@ fn handle_write_inner(
     }
     ctx.rebuild_fat(k_auth)?;
 
+    while Instant::now() < end {}
+
     let result =
         Message::write(Opcode::Write, MessagePort::UART0, &[]).map_err(ProtocolError::Message);
 
@@ -293,7 +303,11 @@ struct InterrogateHeader {
 /// symmetrically and each file's metadata encrypted asymmetrically, all this
 /// will be decrypted before being sent back to host.
 #[inline(never)]
-fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn handle_interrogate(
+    ctx: &mut Context,
+    msg_len: usize,
+    end: Instant,
+) -> Result<(), ProtocolError> {
     // Command contains just the PIN
     if msg_len != size_of::<InterrogateHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
@@ -308,11 +322,11 @@ fn handle_interrogate(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolE
     // check that PIN is correct before continuing
     let _k_auth = ctx.k_auth(&pin)?;
 
-    handle_interrogate_inner(ctx)
+    handle_interrogate_inner(ctx, end)
 }
 
 #[inline(never)]
-fn handle_interrogate_inner(_ctx: &mut Context) -> Result<(), ProtocolError> {
+fn handle_interrogate_inner(_ctx: &mut Context, end: Instant) -> Result<(), ProtocolError> {
     if COPY_PERM_GROUPS.len() > protocol::INTERROGATE_MAX_GROUPS {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -385,6 +399,9 @@ fn handle_interrogate_inner(_ctx: &mut Context) -> Result<(), ProtocolError> {
     }
 
     let actual_message_size = 4 + count * size_of::<FileMeta>();
+
+    while Instant::now() < end {}
+
     let result = Message::write(
         Opcode::Interrogate,
         MessagePort::UART0,
@@ -404,7 +421,7 @@ struct ReceiveFileHeader {
 }
 
 #[inline(never)]
-fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError> {
+fn handle_receive(ctx: &mut Context, msg_len: usize, end: Instant) -> Result<(), ProtocolError> {
     if msg_len != size_of::<ReceiveFileHeader>() {
         return Err(ProtocolError::InvalidMessageLength);
     }
@@ -421,7 +438,7 @@ fn handle_receive(ctx: &mut Context, msg_len: usize) -> Result<(), ProtocolError
 
     let k_auth = ctx.k_auth(&pin)?;
 
-    handle_receive_inner(ctx, read_slot, write_slot, &k_auth)
+    handle_receive_inner(ctx, read_slot, write_slot, &k_auth, end)
 }
 
 #[inline(never)]
@@ -430,6 +447,7 @@ fn handle_receive_inner(
     read_slot: u8,
     write_slot: u8,
     k_auth: &SymmetricKey,
+    end: Instant,
 ) -> Result<(), ProtocolError> {
     let write_slot = write_slot as usize;
     if write_slot > 7 {
@@ -522,6 +540,8 @@ fn handle_receive_inner(
     }
     ctx.rebuild_fat(k_auth)?;
 
+    while Instant::now() < end {}
+
     let result =
         Message::write(Opcode::Receive, MessagePort::UART0, &[]).map_err(ProtocolError::Message);
 
@@ -540,7 +560,7 @@ fn handle_listen(ctx: &mut Context) -> Result<(), ProtocolError> {
 }
 
 #[inline(never)]
-fn handle_listen_request(ctx: &mut Context) -> Result<(), ProtocolError> {
+fn handle_listen_request(ctx: &mut Context, end: Instant) -> Result<(), ProtocolError> {
     match handle_listen(ctx) {
         Ok(_) => {
             // handle listen has already sent a success response to uart1, send uart0 success
@@ -559,13 +579,24 @@ fn handle_listen_request(ctx: &mut Context) -> Result<(), ProtocolError> {
 
 /// convenience function to dispatch to an appropriate command
 pub fn handle_any(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
+    let start = Instant::now();
+
+    let Some(Budget(_, max_time, max_bytes)) = TIME_BUDGET_MS.iter().find(|b| b.0 == opcode) else {
+        // received random ack, ignore
+        return;
+    };
+    let uart_time = (max_bytes * 5700) >> 16; // approximately * 0.0868
+    let operation_time = max_time.saturating_sub(uart_time).saturating_sub(50);
+
+    let end = start + Duration::from_millis(operation_time as u64);
+
     let res = match opcode {
-        Opcode::List => handle_list(ctx, msg_len),
-        Opcode::Read => handle_read(ctx, msg_len),
-        Opcode::Write => handle_write(ctx, msg_len),
-        Opcode::Receive => handle_receive(ctx, msg_len),
-        Opcode::Interrogate => handle_interrogate(ctx, msg_len),
-        Opcode::Listen => handle_listen_request(ctx),
+        Opcode::List => handle_list(ctx, msg_len, end),
+        Opcode::Read => handle_read(ctx, msg_len, end),
+        Opcode::Write => handle_write(ctx, msg_len, end),
+        Opcode::Receive => handle_receive(ctx, msg_len, end),
+        Opcode::Interrogate => handle_interrogate(ctx, msg_len, end),
+        Opcode::Listen => handle_listen_request(ctx, end),
         Opcode::Ack => {
             Message::write(opcode, MessagePort::UART0, &[]).map_err(ProtocolError::Message)
         }
@@ -573,6 +604,10 @@ pub fn handle_any(opcode: Opcode, ctx: &mut Context, msg_len: usize) {
             panic!("{e:?} should not be sent to board")
         }
     };
+
+    if opcode != Opcode::Listen {
+        while Instant::now() < end {}
+    }
 
     match res {
         Ok(_) => (),
@@ -589,9 +624,10 @@ pub struct Budget(pub Opcode, pub u32, pub u32);
 
 pub const TIME_BUDGET_MS: &[Budget] = &[
     Budget(Opcode::List, 500, 288),
-    Budget(Opcode::Read, 3000, 8228),
-    Budget(Opcode::Write, 3000, 4),
-    Budget(Opcode::Receive, 3000, 4),
+    Budget(Opcode::Read, 2960, 8228),
+    Budget(Opcode::Write, 2950, 4),
+    // 50 ms safety
+    Budget(Opcode::Receive, 2950, 4),
     Budget(Opcode::Listen, 3000, 4),
-    Budget(Opcode::Interrogate, 1000, 0),
+    Budget(Opcode::Interrogate, 1000, 288),
 ];
