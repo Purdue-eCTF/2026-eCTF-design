@@ -411,7 +411,7 @@ fn handle_uart_async_recv() {
             .read_bytes_until_empty(&mut recv_buffer.buffer[current_count..target_count])
             .unwrap();
 
-        // TODO: maybe put rand_ops here
+        rand_ops!(trng::trng());
 
         recv_buffer.current_count += read_count;
     });

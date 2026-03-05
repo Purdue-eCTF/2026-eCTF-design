@@ -4,7 +4,6 @@ use std::env;
 use std::path::PathBuf;
 
 use argon2::password_hash::rand_core::RngCore;
-// TODO: ASLR for code and files
 use argon2::{Algorithm, Argon2, Params, Version};
 use blake2::{Blake2s256, Digest};
 use chacha20poly1305::aead::OsRng;
@@ -123,7 +122,6 @@ fn main() {
 
     // Remove secrets that there aren't permissions for
     for perm in perms.iter() {
-        // TODO: permissions for nonexistent groups? how does this happen?
         let Some(entry) = global_secrets.groups.get_mut(&perm.group) else {
             println!("wanted permissions for {perm:?}, but did not find in global secrets");
             println!("{:?}", global_secrets);
@@ -318,11 +316,11 @@ impl Pin {
 
 const ARGON_M_COST: u32 = 8;
 const ARGON_P_COST: u32 = 1;
-// TODO: figure out these costs
-// approx. t (ms) = 21 * cost + 10
+
+// experimentally derived
 const T_COST_BOOT: u32 = 210; // ~3878ms
 const T_COST_PIN: u32 = 45; // ~972ms
-const T_COST_K_AUTH: u32 = 1; // ~1ms
+const T_COST_K_AUTH: u32 = 1; // ~50ms
 
 const DERIVE_SALT: &[u8] = b"ectf-deriv";
 
@@ -355,11 +353,11 @@ fn blake_hash(input: &[u8], salt: &Salt) -> [u8; 32] {
 }
 
 type Salt = [u8; 32];
-/// TODO (is this necessary) A struct containing all salts and keys associated with the pin.
+/// A struct containing all salts and keys associated with the pin
 struct PinSalts {
     /// Random bytes stored in flash, to be used to create boot salt 1.
     boot_salt_0: Salt,
-    /// The hashed boot salt 0. TODO (should this be included) Stored in flash, wiped before every
+    /// The hashed boot salt 0. Stored in flash, wiped before every
     /// operation and restored after.
     boot_salt_1: Salt,
     /// A key created by hashing a provided pin with the pin salt.

@@ -123,7 +123,6 @@ impl SymmetricMetadata {
     }
 }
 
-// TODO: Tests
 /// The errors that happen on a failed cryptography process, usually to do with
 /// an invalid key or pin.
 #[derive(Debug, Error)]
@@ -138,9 +137,6 @@ pub enum CryptoError {
     InvalidSignature,
 }
 
-// TODO: Have these keys use a reference to the type instead of a byte array
-// so we don't accidently pass in a pubkey to a function that expects a sym_key
-// and vice versa
 pub fn verify_signature_bytes(file: &File, key: &AsymmetricKey) -> Result<(), CryptoError> {
     // should never have invalid key and fail
     let verifying_key = VerifyingKey::from_bytes(&key.0).unwrap();
@@ -194,8 +190,6 @@ pub fn derive_assymetric_key(secret_key: &[u8; 32], gn: &[u8; GN_SIZE]) -> Symme
     let shared = sk.diffie_hellman(&pubkey).to_bytes();
 
     // use kdf as recommended by rfc
-    // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
-    // TODO: maybe add per key salt
     SymmetricKey(blake_hash(&shared, &PUB_ENCRYPT_SALT))
 }
 
@@ -243,8 +237,6 @@ pub fn encrypt_payload_pub<'a>(
 
     let pk = PublicKey::from(public_key.0);
 
-    // TODO Generate random bytes from which new asymmetric keys will be made
-    // Generate nonce bytes with the TRNG
     let mut n_bytes = [0; 32];
     let trng = trng::trng();
     for chunk in n_bytes.chunks_exact_mut(4) {
@@ -263,8 +255,6 @@ pub fn encrypt_payload_pub<'a>(
     let shared = n.diffie_hellman(&pk).to_bytes();
 
     // use kdf as recommended by rfc
-    // TODO: maybe use real kdf, not just hash, but can't really afford performance for real kdf
-    // TODO: maybe add per key salt
     let secret = SymmetricKey(blake_hash(&shared, &PUB_ENCRYPT_SALT));
 
     encrypt_payload_symmetric(payload, nonce, tag, &secret, associated_data)?;

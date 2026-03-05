@@ -32,7 +32,7 @@ extern "C" fn __stack_chk_fail() -> ! {
 
 #[entry]
 fn main() -> ! {
-    // Startup tasks...
+    // Startup tasks
     let peripherals = Peripherals::take().unwrap();
     let Peripherals {
         trng: trng_peripheral,

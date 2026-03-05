@@ -35,27 +35,13 @@ macro_rules! sensitive {
     };
 }
 
-// TODO: No prints in final design
-/// Prints to the uart port
-#[macro_export]
-macro_rules! print {
-    ($($arg:tt)*) => ($crate::context::write_fmt($crate::message::Opcode::Debug, format_args!($($arg)*)));
-}
-
-/// Prints to the uart port
-#[macro_export]
-macro_rules! println {
-    () => ($crate::print!("\n"));
-    ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
-}
-
-/// Prints to the uart port
+/// Prints an error to the uart port
 #[macro_export]
 macro_rules! eprint {
     ($($arg:tt)*) => ($crate::context::write_fmt($crate::message::Opcode::Error, format_args!($($arg)*)));
 }
 
-/// Prints to the uart port
+/// Prints an error to the uart port
 #[macro_export]
 macro_rules! eprintln {
     () => ($crate::eprint!("\n"));
