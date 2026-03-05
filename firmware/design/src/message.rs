@@ -378,6 +378,8 @@ pub fn await_async_recv_done(buffer: &mut [u8]) {
             .read_bytes(&mut recv_buffer.buffer[current_count..target_count])
             .unwrap();
 
+        rand_ops!(trng::trng());
+
         // assert after reading bytes
         assert!(buffer.len() >= target_count);
 
@@ -408,8 +410,6 @@ fn handle_uart_async_recv() {
         let read_count = uart1()
             .read_bytes_until_empty(&mut recv_buffer.buffer[current_count..target_count])
             .unwrap();
-
-        rand_ops!(trng::trng());
 
         recv_buffer.current_count += read_count;
     });
