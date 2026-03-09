@@ -89,8 +89,6 @@ SECTIONS {
         *(.HardFaultTrampoline);
         *(.HardFault.*);
 
-        /* todo: write commit page to prevent partial flash writes */
-
         *(.text .text.*);
 
         . = ALIGN(8); /* Pad .text to the alignment to workaround overlapping load section bug in old lld */

@@ -196,7 +196,7 @@ impl Context {
         Instant::now()
     }
 
-    /// TODO Retrieve the TICK timer's current value (in ticks) .
+    /// Retrieve the TICK timer's current value (in ticks) .
     pub fn time_ms(&self) -> u32 {
         self.time().time_since_boot().as_millis() as u32
     }
