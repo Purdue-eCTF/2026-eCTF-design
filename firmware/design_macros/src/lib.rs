@@ -128,48 +128,48 @@ pub fn rand_ops(input: TokenStream) -> TokenStream {
     let loop_body = generate_rand_ops_body(&mut build_rng);
 
     quote! {{
-        let mut rng = #rng;
-        let mut state = core::hint::black_box(rng.word());
-        // 16..1040 iterations
-        let iteration_count = core::hint::black_box((rng.word() & 0x2ff) + 16);
-        let mut check = core::hint::black_box(#base_check_val);
-        let mut i = core::hint::black_box(0u32);
+        // let mut rng = #rng;
+        // let mut state = core::hint::black_box(rng.word());
+        // // 16..1040 iterations
+        // let iteration_count = core::hint::black_box((rng.word() & 0x2ff) + 16);
+        // let mut check = core::hint::black_box(#base_check_val);
+        // let mut i = core::hint::black_box(0u32);
 
-        // TODO: idk if keeping init nops is needed, no branches until after randomized loop body which could be glitched
-        // maybe it is still good ot have random nops ran one iteration,  may be hard to measure exactly what they are
-        #init_nops
+        // // TODO: idk if keeping init nops is needed, no branches until after randomized loop body which could be glitched
+        // // maybe it is still good ot have random nops ran one iteration,  may be hard to measure exactly what they are
+        // #init_nops
 
-        loop {
-            #loop_body
+        // loop {
+        //     #loop_body
 
-            if core::hint::black_box(i == iteration_count) {
-                break;
-            }
+        //     if core::hint::black_box(i == iteration_count) {
+        //         break;
+        //     }
 
-            i = core::hint::black_box(i.wrapping_add(1));
-            check = core::hint::black_box(check.wrapping_add(#check_inc_val));
-        }
+        //     i = core::hint::black_box(i.wrapping_add(1));
+        //     check = core::hint::black_box(check.wrapping_add(#check_inc_val));
+        // }
 
-        #post_check_1_nops
-        if core::hint::black_box(i != iteration_count || check != core::hint::black_box(
-            (#base_check_val).wrapping_add(iteration_count.wrapping_mul(#check_inc_val)),
-        )) {
-            panic!();
-        }
+        // #post_check_1_nops
+        // if core::hint::black_box(i != iteration_count || check != core::hint::black_box(
+        //     (#base_check_val).wrapping_add(iteration_count.wrapping_mul(#check_inc_val)),
+        // )) {
+        //     panic!();
+        // }
 
-        #post_check_2_nops
-        if core::hint::black_box(check != core::hint::black_box(
-            (#base_check_val).wrapping_add(iteration_count.wrapping_mul(#check_inc_val)),
-        ) || i != iteration_count) {
-            panic!();
-        }
+        // #post_check_2_nops
+        // if core::hint::black_box(check != core::hint::black_box(
+        //     (#base_check_val).wrapping_add(iteration_count.wrapping_mul(#check_inc_val)),
+        // ) || i != iteration_count) {
+        //     panic!();
+        // }
 
-        #post_check_3_nops
-        if core::hint::black_box((i != iteration_count) | (check != core::hint::black_box(
-            (#base_check_val).wrapping_add(iteration_count.wrapping_mul(#check_inc_val)),
-        ))) {
-            panic!();
-        }
+        // #post_check_3_nops
+        // if core::hint::black_box((i != iteration_count) | (check != core::hint::black_box(
+        //     (#base_check_val).wrapping_add(iteration_count.wrapping_mul(#check_inc_val)),
+        // ))) {
+        //     panic!();
+        // }
     }}
     .into()
 }

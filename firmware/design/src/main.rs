@@ -3,7 +3,7 @@
 
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
-use design::sensitive;
+use design::{eprintln, sensitive};
 use design_macros::rand_ops;
 use mspm0l222x_hal::{CorePeripherals, Peripherals, Trng, trng};
 
@@ -16,8 +16,9 @@ use design::{
 
 /// On panic, inform the host with the information associated with the panic and reboot the board.
 #[panic_handler]
-fn handle_panics(_info: &PanicInfo) -> ! {
+fn handle_panics(info: &PanicInfo) -> ! {
     // if salt page is missing on reboot, error gets sent then
+    eprintln!("{:?}", info);
     cortex_m::peripheral::SCB::sys_reset();
 }
 
