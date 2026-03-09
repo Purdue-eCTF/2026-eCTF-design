@@ -120,10 +120,10 @@ pub fn rand_ops(input: TokenStream) -> TokenStream {
     let base_check_val: u32 = build_rng.random();
     let check_inc_val: u32 = build_rng.random();
 
-    let init_nops = emit_nops(build_rng.random_range(0..=15));
-    let post_check_1_nops = emit_nops(build_rng.random_range(0..=15));
-    let post_check_2_nops = emit_nops(build_rng.random_range(0..=15));
-    let post_check_3_nops = emit_nops(build_rng.random_range(0..=15));
+    let init_nops = emit_nops(build_rng.random_range(0..=5));
+    let post_check_1_nops = emit_nops(build_rng.random_range(0..=3));
+    let post_check_2_nops = emit_nops(build_rng.random_range(0..=3));
+    let post_check_3_nops = emit_nops(build_rng.random_range(0..=3));
 
     let loop_body = generate_rand_ops_body(&mut build_rng);
 
