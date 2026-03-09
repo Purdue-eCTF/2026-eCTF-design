@@ -65,6 +65,7 @@ lto = "fat"
 opt-level = "s"
 debug = true
 overflow-checks = true
+panic = "abort"
 
 [profile.release.package."*"]
 overflow-checks = false

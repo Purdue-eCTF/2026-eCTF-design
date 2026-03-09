@@ -320,7 +320,7 @@ fn setup_mpu_mappings(mpu: &mut Mpu) {
             MpuRegionSize::KibiByte1,
             0,
             MpuPerms {
-                read: true,
+                read: false,
                 write: false,
                 execute: false,
             },
