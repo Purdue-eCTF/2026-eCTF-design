@@ -12,7 +12,7 @@ use mspm0l222x_hal::{
     println,
     timer::Instant,
     trng,
-    uart::{Uart0, Uart1},
+    uart::{Uart0, Uart1, uart0},
 };
 
 use design::{
@@ -81,7 +81,8 @@ fn main() -> ! {
     FlashController::init(flashctl);
 
     // glitch_loop();
-    glitch_add();
+    glitch_uart_loop();
+    // glitch_add();
 }
 
 #[inline(never)]
@@ -102,6 +103,21 @@ fn glitch_loop() -> ! {
     }
 }
 
+#[inline(never)]
+fn glitch_uart_loop() -> ! {
+    println!("ready");
+
+    let byte_result = uart0().read_byte();
+
+    loop {
+        println!("byte: {:?}", byte_result);
+
+        let end = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < end {}
+    }
+}
+
+#[inline(never)]
 fn glitch_add() -> ! {
     println!("ready");
 
