@@ -3,6 +3,7 @@
 pub mod commands;
 pub mod context;
 pub mod crypto;
+pub mod debug_isr;
 pub mod file;
 pub mod flash;
 pub mod listen;
