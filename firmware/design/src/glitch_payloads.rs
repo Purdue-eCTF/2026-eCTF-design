@@ -32,16 +32,18 @@ pub enum Payload {
     LoopCmp,
     LoopCond,
     LoopSignature,
+    LoopPassword,
     UartLoop,
     Add,
 }
 
 impl Payload {
-    pub const ALL: [Payload; 6] = [
+    pub const ALL: [Payload; 7] = [
         Payload::Loop,
         Payload::LoopCmp,
         Payload::LoopCond,
         Payload::LoopSignature,
+        Payload::LoopPassword,
         Payload::UartLoop,
         Payload::Add,
     ];
@@ -55,6 +57,7 @@ impl Payload {
             Payload::LoopCmp => "loop_cmp",
             Payload::LoopCond => "loop_cond",
             Payload::LoopSignature => "loop_signature",
+            Payload::LoopPassword => "loop_password",
             Payload::UartLoop => "uart_loop",
             Payload::Add => "add",
         }
@@ -83,19 +86,48 @@ impl Payload {
             Payload::LoopCmp => glitch_loop_cmp(),
             Payload::LoopCond => glitch_loop_cond(),
             Payload::LoopSignature => glitch_loop_signature(),
+            Payload::LoopPassword => glitch_password_loop(),
             Payload::UartLoop => glitch_uart_loop(),
             Payload::Add => glitch_add(),
         }
     }
 }
 
-fn glitch_occured() -> ! {
-    loop {
-        println!("glitch occured");
+/// Print `glitch <message>` (message takes the same syntax as `println!`) every 3 seconds, forever. Use it at
+/// the end of a branch in a payload so the host can tell which branch was reached, e.g. `gprint!("occured")`
+/// prints `glitch occured` and `gprint!("bad branch")` prints `glitch bad branch`. With no arguments it
+/// prints `glitch occured`.
+macro_rules! gprint {
+    () => {
+        gprint!("occured")
+    };
+    ($($arg:tt)+) => {
+        loop {
+            println!("glitch {}", format_args!($($arg)+));
 
-        let end = Instant::now() + Duration::from_secs(3);
-        while Instant::now() < end {}
-    }
+            let end = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < end {}
+        }
+    };
+}
+
+/// Call `$func` (an `extern "C" fn()`) in an infinite loop written in assembly: `bl func; b loop`.
+///
+/// The loop is opaque to the compiler, so code after the macro stays reachable (it could only be reached if
+/// a glitch skips the `b`), and the loop itself adds no extra compares or branches in Rust. The function
+/// does its own `gprint!` when it detects something. It must be `#[no_mangle]` + `#[inline(never)]`.
+macro_rules! harness_loop {
+    ($func:path) => {
+        unsafe {
+            core::arch::asm!(
+                "2:",
+                "bl {func}",
+                "b 2b",
+                func = sym $func,
+                clobber_abi("C"),
+            );
+        }
+    };
 }
 
 #[inline(never)]
@@ -106,7 +138,7 @@ fn glitch_loop() -> ! {
         );
     }
 
-    glitch_occured()
+    gprint!();
 }
 
 #[inline(never)]
@@ -119,7 +151,7 @@ fn glitch_loop_cmp() -> ! {
         );
     }
 
-    glitch_occured()
+    gprint!();
 }
 
 #[inline(never)]
@@ -133,7 +165,7 @@ fn glitch_loop_cond() -> ! {
         counter += black_box(1);
     }
 
-    glitch_occured()
+    gprint!();
 }
 
 #[inline(never)]
@@ -162,21 +194,36 @@ fn glitch_loop_signature() -> ! {
         }
     }
 
-    glitch_occured()
+    gprint!();
 }
 
+#[inline(never)]
+fn glitch_password_loop() -> ! {
+    harness_loop!(check_password);
+
+    // only reachable if a glitch skipped the loop branch
+    gprint!("loop");
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+extern "C" fn check_password() {
+    let input = black_box(55u32);
+
+    if black_box(input == 0x6767) {
+        gprint!("authed");
+    }
+}
+
+// this version of uart sends second uart byte instead of usinng debug isr, also special protocol
 #[inline(never)]
 fn glitch_uart_loop() -> ! {
     let byte_result = uart0().read_byte();
 
-    loop {
-        println!("byte: {:?}", byte_result);
-
-        let end = Instant::now() + Duration::from_secs(3);
-        while Instant::now() < end {}
-    }
+    gprint!("{:?}", byte_result);
 }
 
+// special protocol not matching loop
 #[inline(never)]
 fn glitch_add() -> ! {
     let mut x;
