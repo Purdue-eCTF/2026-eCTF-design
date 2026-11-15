@@ -19,12 +19,9 @@ cortex-m-rt = { version = "0.7.2", default-features = false, features = [
     "device",
 ] }
 
-# LOCAL: modified hal/pac checkouts (GPIO interrupts + GROUP0/GROUP1 vectors). Switch back to the
-# git dependency below (and drop the [patch] section) once these are pushed.
-mspm0l222x-hal = { path = "../../../mspm0l222x-hal", features = ["rt"] }
-# mspm0l222x-hal = { git = "https://github.com/Purdue-eCTF/mspm0l222x-hal.git", features = [
-#     "rt",
-# ] }
+mspm0l222x-hal = { git = "https://github.com/Purdue-eCTF/mspm0l222x-hal.git", branch = "gpio_interrupt", features = [
+    "rt",
+] }
 thiserror = { version = "2.0.18", default-features = false }
 x25519-dalek = { version = "2.0.1", default-features = false, features = [
     "static_secrets",
@@ -61,9 +58,6 @@ chacha20poly1305 = { version = "0.10.1", default-features = false, features = [
 rand = { version = "0.10.0", default-features = false, features = [
     "thread_rng",
 ] }
-
-[patch."https://github.com/Purdue-eCTF/mspm0l222x-pac.git"]
-mspm0l222x-pac = { path = "../../../mspm0l222x-pac" }
 
 [features]
 # UART echo debug interrupt on the S2 button. This is a backdoor, never enable it in a final build.

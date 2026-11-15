@@ -1,8 +1,8 @@
 //! Debug interrupt: pressing the user button (S2) drops into a UART liveness check.
 //!
-//! The whole thing is behind the `debug-isr` feature, since it is a backdoor on the UART that
-//! must not ship in the final firmware. Without the feature [`init`] is a no-op and no handler
-//! is linked in.
+//! This module is only compiled with the `debug-isr` feature (see `lib.rs`), since it is a backdoor on the UART that
+//! must not ship in the final firmware. Without the feature the module (and its handler)
+//! is not compiled or linked in at all, and `main.rs` skips the `init` call.
 //!
 //! S2 is GPIOB.21 on the eCTF board (IOMUX PINCM63), pulled to ground when pressed, so we use the
 //! internal pull-up and trigger on the falling edge. (The LP-MSPM0L2228 LaunchPad wires its S2 to
@@ -19,10 +19,10 @@
 //!   anything we don't recognise resets the board rather than leaving an interrupt we can't
 //!   clear pending forever.
 
-use mspm0l222x_hal::{iomux::Iomux, mspm0l222x_pac::Gpiob};
-
-#[cfg(feature = "debug-isr")]
+use crate::regdump::{RegisterDump, SavedRegs, trampoline};
 use mspm0l222x_hal::{
+    iomux::Iomux,
+    mspm0l222x_pac::Gpiob,
     gpio::{self, Edge},
     iomux::{InOut, PullMode},
     println,
@@ -30,27 +30,21 @@ use mspm0l222x_hal::{
 };
 
 /// IOMUX PINCM index of the S2 button (GPIOB.21 on the eCTF board).
-#[cfg(feature = "debug-isr")]
 const BUTTON_PINCM: usize = 63;
 /// GPIOB pin number of the S2 button.
-#[cfg(feature = "debug-isr")]
 const BUTTON_PIN: u8 = 21;
-#[cfg(feature = "debug-isr")]
 const BUTTON_MASK: u32 = 1 << BUTTON_PIN;
 
 /// Byte which exits the echo loop (Ctrl-D).
-#[cfg(feature = "debug-isr")]
 pub const EXIT_BYTE: u8 = 0x04;
 
 /// Cycles to wait after the echo loop to let the button stop bouncing (~50ms at 32MHz).
-#[cfg(feature = "debug-isr")]
 const DEBOUNCE_CYCLES: u32 = 1_600_000;
 
 /// Set up the S2 button interrupt. Does nothing unless the `debug-isr` feature is enabled.
 ///
 /// Must be called after UART0 is initialized, and `gpiob` must not be used for anything else
 /// that was already configured, since this resets the whole GPIOB bank.
-#[cfg(feature = "debug-isr")]
 pub fn init(iomux: &Iomux, gpiob: &Gpiob) {
     gpio::gpiob::power_on(gpiob);
     iomux.connect_pin(BUTTON_PINCM, 1, InOut::Input, PullMode::Up);
@@ -58,14 +52,16 @@ pub fn init(iomux: &Iomux, gpiob: &Gpiob) {
     gpio::enable_group1_interrupt(gpio::GROUP1_DEFAULT_PRIORITY);
 }
 
-#[cfg(not(feature = "debug-isr"))]
-#[inline(always)]
-pub fn init(_iomux: &Iomux, _gpiob: &Gpiob) {}
+/// Key (Ctrl-R) which prints the registers of the code that was interrupted.
+pub const REGS_BYTE: u8 = 0x12;
 
-/// INT_GROUP1 handler (GPIOA / GPIOB / COMP0 / TRNG). See the module docs.
-#[cfg(feature = "debug-isr")]
-#[unsafe(no_mangle)]
-extern "C" fn GROUP1() {
+/// Registers captured at the most recent button press, readable after the fact.
+static mut LAST_DUMP: Option<RegisterDump> = None;
+
+trampoline!(GROUP1, group1_inner);
+
+/// Real INT_GROUP1 handler (GPIOA / GPIOB / COMP0 / TRNG). See the module docs.
+extern "C" fn group1_inner(frame: &[u32; 8], saved: &SavedRegs) {
     if gpio::gpiob::pending() & BUTTON_MASK == 0 {
         // not the button, and we don't know how to clear whatever it is
         cortex_m::peripheral::SCB::sys_reset();
@@ -73,7 +69,10 @@ extern "C" fn GROUP1() {
 
     gpio::gpiob::clear(BUTTON_MASK);
 
-    echo_until_exit();
+    let dump = RegisterDump::new(frame, saved);
+    unsafe { LAST_DUMP = Some(dump) };
+
+    echo_until_exit(&dump);
 
     // let the button settle, then drop anything that bounced while we were busy
     cortex_m::asm::delay(DEBOUNCE_CYCLES);
@@ -81,15 +80,18 @@ extern "C" fn GROUP1() {
 }
 
 /// Echo every byte received on UART0 back to the sender until [`EXIT_BYTE`] is received.
-#[cfg(feature = "debug-isr")]
-fn echo_until_exit() {
+fn echo_until_exit(dump: &RegisterDump) {
     let uart = uart0();
 
-    println!("\r\n[debug] uart echo, send Ctrl-D (0x04) to exit");
+    println!("\r\n[debug] uart echo, Ctrl-R prints registers, Ctrl-D exits");
 
     loop {
         match uart.read_byte() {
             Ok(EXIT_BYTE) => break,
+            Ok(REGS_BYTE) => {
+                println!();
+                dump.print();
+            }
             // terminals send CR for enter, so also send an LF so the cursor goes to the next line
             Ok(b'\r') => uart.write_bytes(b"\r\n"),
             Ok(byte) => uart.write_bytes(&[byte]),

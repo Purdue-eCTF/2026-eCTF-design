@@ -1,3 +1,5 @@
+// keep crypto around in case we want it for glitch testing
+
 use blake2::{Blake2b512, Blake2s256, Digest as BlakeDigest};
 use bytemuck::{Pod, Zeroable};
 use chacha20poly1305::aead::generic_array::GenericArray;
@@ -10,13 +12,14 @@ use mspm0l222x_hal::trng;
 use thiserror::Error;
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use crate::file::File;
 use crate::protocol::ProtocolError;
-use crate::secrets::PUB_ENCRYPT_SALT;
 
 pub const NONCE_SIZE: usize = 24;
 pub const TAG_SIZE: usize = 16;
 pub const GN_SIZE: usize = 32;
+
+// secrets no longer generated, need to compile
+const PUB_ENCRYPT_SALT: [u8; 32] = [0; 32];
 
 /// Metadata to append to a public-key encrypted ciphertext.
 /// Includes a Diffie-Hellman public key for asymmetric enc/decryption
@@ -137,50 +140,50 @@ pub enum CryptoError {
     InvalidSignature,
 }
 
-pub fn verify_signature_bytes(file: &File, key: &AsymmetricKey) -> Result<(), CryptoError> {
-    // should never have invalid key and fail
-    let verifying_key = VerifyingKey::from_bytes(&key.0).unwrap();
-    verify_signature(file, &verifying_key)
-}
+// pub fn verify_signature_bytes(file: &File, key: &AsymmetricKey) -> Result<(), CryptoError> {
+//     // should never have invalid key and fail
+//     let verifying_key = VerifyingKey::from_bytes(&key.0).unwrap();
+//     verify_signature(file, &verifying_key)
+// }
 
 /// Verify a file's contents and metadata with its signature using a corresponding key
-pub fn verify_signature(file: &File, key: &VerifyingKey) -> Result<(), CryptoError> {
-    rand_ops!(trng::trng());
+// pub fn verify_signature(file: &File, key: &VerifyingKey) -> Result<(), CryptoError> {
+//     rand_ops!(trng::trng());
 
-    let mut hasher = Blake2b512::new();
-    hasher.update(bytemuck::bytes_of(&file.protected));
+//     let mut hasher = Blake2b512::new();
+//     hasher.update(bytemuck::bytes_of(&file.protected));
 
-    let expected_signature = Signature::from_bytes(&file.signature);
-    raw_verify_prehashed::<Blake2b512, Blake2b512>(key, hasher, None, &expected_signature)
-        .map_err(|_| CryptoError::InvalidSignature)?;
+//     let expected_signature = Signature::from_bytes(&file.signature);
+//     raw_verify_prehashed::<Blake2b512, Blake2b512>(key, hasher, None, &expected_signature)
+//         .map_err(|_| CryptoError::InvalidSignature)?;
 
-    rand_ops!(trng::trng());
+//     rand_ops!(trng::trng());
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 /// Sign a file in place using a corresponding key.
-pub fn sign_file(file: &mut File, key: &AsymmetricKey) -> Result<(), CryptoError> {
-    rand_ops!(trng::trng());
+// pub fn sign_file(file: &mut File, key: &AsymmetricKey) -> Result<(), CryptoError> {
+//     rand_ops!(trng::trng());
 
-    // use raw hazmat so we can replace sha2 with blake2b
-    // decreases code size by having sha2 eliminated as dependency
-    let expanded_key = common::expand_private_key(key);
-    let public_key = VerifyingKey::from(&expanded_key);
+//     // use raw hazmat so we can replace sha2 with blake2b
+//     // decreases code size by having sha2 eliminated as dependency
+//     let expanded_key = common::expand_private_key(key);
+//     let public_key = VerifyingKey::from(&expanded_key);
 
-    let mut file_hasher = Blake2b512::new();
-    file_hasher.update(bytemuck::bytes_of(&file.protected));
+//     let mut file_hasher = Blake2b512::new();
+//     file_hasher.update(bytemuck::bytes_of(&file.protected));
 
-    // shouldn't fail, context is None
-    file.signature =
-        raw_sign_prehashed::<Blake2b512, Blake2b512>(&expanded_key, file_hasher, &public_key, None)
-            .unwrap()
-            .to_bytes();
+//     // shouldn't fail, context is None
+//     file.signature =
+//         raw_sign_prehashed::<Blake2b512, Blake2b512>(&expanded_key, file_hasher, &public_key, None)
+//             .unwrap()
+//             .to_bytes();
 
-    rand_ops!(trng::trng());
+//     rand_ops!(trng::trng());
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 pub fn derive_assymetric_key(secret_key: &[u8; 32], gn: &[u8; GN_SIZE]) -> SymmetricKey {
     rand_ops!(trng::trng());

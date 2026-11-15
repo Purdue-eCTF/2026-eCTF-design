@@ -119,29 +119,6 @@ SECTIONS {
         _efiles_app2 = .;
     } > FILES_APP2
 
-    .salt : {
-        . = ALIGN(1024);
-        _salt = .;
-        KEEP(*(.salt.default));
-        . = ALIGN(1024);
-        _esalt = .;
-        ASSERT(_esalt - _salt == 1024, "boot_salt_1 section has incorrect length");
-    } > APP2
-
-    .secrets : {
-        _secrets = .;
-        *(.secrets);
-        _esecrets = .;
-    } > APP2
-
-    .filetable : {
-        _filetable = .;
-        KEEP(*(.filetable.default));
-        . = ALIGN(1024);
-        _efiletable = .;
-        ASSERT(_efiletable - _filetable == 1024, "FAT section has incorrect length");
-    } > FILETABLE
-
     /* stack canary at start of ram */
     .stack_canary ORIGIN(RAM) (NOLOAD) : ALIGN(8) {
         KEEP(*(.stack_canary.default));

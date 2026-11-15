@@ -3,7 +3,7 @@
 
 use blake2::{Blake2b512, Digest as BlakeDigest};
 use core::{hint::black_box, panic::PanicInfo, time::Duration};
-use cortex_m_rt::{entry, exception};
+use cortex_m_rt::entry;
 use design::sensitive;
 use design_macros::rand_ops;
 use ed25519_dalek::hazmat::raw_verify_prehashed;
@@ -18,43 +18,13 @@ use mspm0l222x_hal::{
     uart::{Uart0, Uart1, uart0},
 };
 
-use design::{
-    commands::handle_any,
-    context::Context,
-    message::{Message, MessagePort},
-    secrets::STACK_CANARY_START_VALUE,
-};
+use design::context::Context;
 
 /// On panic, inform the host with the information associated with the panic and reboot the board.
 #[panic_handler]
 fn handle_panics(_info: &PanicInfo) -> ! {
     // if salt page is missing on reboot, error gets sent then
     cortex_m::peripheral::SCB::sys_reset();
-}
-
-/// On a CPU fault (HardFault is where all faults escalate on Cortex-M0+), report what we can and
-/// reboot.
-///
-/// The M0+ has no CFSR/HFSR/BFAR/MMFAR, so the hardware does not say what kind of fault it was or
-/// which address was accessed. All we get is the stacked frame (r0-r3, r12, lr, pc, xpsr); `pc` is
-/// the faulting instruction, so look it up with `addr2line`/objdump. Fault address is usually one
-/// of r0-r3 (or a register not stacked) used by that load/store.
-#[exception]
-unsafe fn HardFault(frame: &cortex_m_rt::ExceptionFrame) -> ! {
-    let pc = frame.pc();
-    println!(
-        "fault pc={:08x} lr={:08x} xpsr={:08x} r0={:08x} r1={:08x} r2={:08x} r3={:08x} r12={:08x}",
-        pc,
-        frame.lr(),
-        frame.xpsr(),
-        frame.r0(),
-        frame.r1(),
-        frame.r2(),
-        frame.r3(),
-        frame.r12(),
-    );
-
-    loop {}
 }
 
 #[unsafe(link_section = ".stack_canary.default")]
@@ -82,7 +52,7 @@ fn main() -> ! {
     } = peripherals;
     Trng::init(trng_peripheral);
     unsafe {
-        __stack_chk_guard = trng::trng().word() as usize ^ STACK_CANARY_START_VALUE;
+        __stack_chk_guard = trng::trng().word() as usize;
     }
 
     // rand_ops!(trng::trng());
@@ -108,12 +78,13 @@ fn main() -> ! {
     Uart0::init(&iomux, uart0);
     // Uart1::init(&iomux, uart1);
     FlashController::init(flashctl);
+    #[cfg(feature = "debug-isr")]
     design::debug_isr::init(&iomux, &gpiob);
 
     // glitch_loop();
     // glitch_loop_cmp();
-    // glitch_loop_cond();
-    glitch_loop_signature();
+    glitch_loop_cond();
+    // glitch_loop_signature();
     // glitch_uart_loop();
     // glitch_add();
 }
