@@ -1,8 +1,6 @@
 //! Debug interrupt: pressing the user button (S2) drops into a UART liveness check.
 //!
-//! This module is only compiled with the `debug-isr` feature (see `lib.rs`), since it is a backdoor on the UART that
-//! must not ship in the final firmware. Without the feature the module (and its handler)
-//! is not compiled or linked in at all, and `main.rs` skips the `init` call.
+//! This is a backdoor on the UART that must not ship in the final firmware.
 //!
 //! S2 is GPIOB.21 on the eCTF board (IOMUX PINCM63), pulled to ground when pressed, so we use the
 //! internal pull-up and trigger on the falling edge. (The LP-MSPM0L2228 LaunchPad wires its S2 to
@@ -19,6 +17,7 @@
 //!   anything we don't recognise resets the board rather than leaving an interrupt we can't
 //!   clear pending forever.
 
+use crate::glitch_payloads::Payload;
 use crate::regdump::{RegisterDump, SavedRegs, trampoline};
 use mspm0l222x_hal::{
     iomux::Iomux,
@@ -26,7 +25,7 @@ use mspm0l222x_hal::{
     gpio::{self, Edge},
     iomux::{InOut, PullMode},
     println,
-    uart::uart0,
+    uart::{Uart0, uart0},
 };
 
 /// IOMUX PINCM index of the S2 button (GPIOB.21 on the eCTF board).
@@ -41,7 +40,7 @@ pub const EXIT_BYTE: u8 = 0x04;
 /// Cycles to wait after the echo loop to let the button stop bouncing (~50ms at 32MHz).
 const DEBOUNCE_CYCLES: u32 = 1_600_000;
 
-/// Set up the S2 button interrupt. Does nothing unless the `debug-isr` feature is enabled.
+/// Set up the S2 button interrupt.
 ///
 /// Must be called after UART0 is initialized, and `gpiob` must not be used for anything else
 /// that was already configured, since this resets the whole GPIOB bank.
@@ -54,6 +53,12 @@ pub fn init(iomux: &Iomux, gpiob: &Gpiob) {
 
 /// Key (Ctrl-R) which prints the registers of the code that was interrupted.
 pub const REGS_BYTE: u8 = 0x12;
+
+/// Key (Ctrl-P) which selects the glitch payload; must be followed by a single digit (index into `Payload::ALL`).
+pub const PAYLOAD_BYTE: u8 = 0x10;
+
+/// Key (Ctrl-N) which prints the currently selected glitch payload as `payload <index> <name>`.
+pub const GET_PAYLOAD_BYTE: u8 = 0x0E;
 
 /// Registers captured at the most recent button press, readable after the fact.
 static mut LAST_DUMP: Option<RegisterDump> = None;
@@ -83,7 +88,7 @@ extern "C" fn group1_inner(frame: &[u32; 8], saved: &SavedRegs) {
 fn echo_until_exit(dump: &RegisterDump) {
     let uart = uart0();
 
-    println!("\r\n[debug] uart echo, Ctrl-R prints registers, Ctrl-D exits");
+    println!("\r\n[debug] uart echo, Ctrl-R prints registers, Ctrl-P <digit> selects glitch payload, Ctrl-N prints it, Ctrl-D exits");
 
     loop {
         match uart.read_byte() {
@@ -91,6 +96,12 @@ fn echo_until_exit(dump: &RegisterDump) {
             Ok(REGS_BYTE) => {
                 println!();
                 dump.print();
+            }
+            Ok(PAYLOAD_BYTE) => select_payload(uart),
+            Ok(GET_PAYLOAD_BYTE) => {
+                let current = Payload::selected();
+                let index = Payload::ALL.iter().position(|p| *p == current).unwrap();
+                println!("payload {} {}", index, current.name());
             }
             // terminals send CR for enter, so also send an LF so the cursor goes to the next line
             Ok(b'\r') => uart.write_bytes(b"\r\n"),
@@ -101,4 +112,29 @@ fn echo_until_exit(dump: &RegisterDump) {
     }
 
     println!("\r\n[debug] exiting");
+}
+
+/// Read one digit right after [`PAYLOAD_BYTE`] (index into [`Payload::ALL`]), save that payload to flash and
+/// reset so it runs immediately. Meant to be driven by a script: send `0x10` then e.g. `b"2"`.
+fn select_payload(uart: &Uart0) {
+    let payload = uart
+        .read_byte()
+        .ok()
+        .and_then(|b| (b as char).to_digit(10))
+        .and_then(|i| Payload::ALL.get(i as usize));
+
+    let Some(payload) = payload else {
+        println!("[debug] bad payload");
+        return;
+    };
+
+    match payload.save() {
+        Ok(()) => {
+            println!("[debug] saved {}", payload.name());
+            // let the message drain before resetting
+            cortex_m::asm::delay(DEBOUNCE_CYCLES);
+            cortex_m::peripheral::SCB::sys_reset();
+        }
+        Err(_) => println!("[debug] flash write failed"),
+    }
 }

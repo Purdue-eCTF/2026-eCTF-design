@@ -59,10 +59,6 @@ rand = { version = "0.10.0", default-features = false, features = [
     "thread_rng",
 ] }
 
-[features]
-# UART echo debug interrupt on the S2 button. This is a backdoor, never enable it in a final build.
-debug-isr = []
-
 [profile.release]
 lto = "fat"
 opt-level = "s"
