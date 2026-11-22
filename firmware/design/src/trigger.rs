@@ -8,38 +8,37 @@
 //! normally just times its glitch from the rising edge.
 
 use mspm0l222x_hal::{
-    gpio,
     iomux::{InOut, Iomux, PullMode},
-    mspm0l222x_pac::Gpioa,
+    mspm0l222x_pac::Gpiob,
     uart::uart0,
 };
 
-/// IOMUX PINCM index of the trigger pin (PA12 is PINCM38 on the MSPM0L2228).
-pub const TRIGGER_PINCM: usize = 38;
-/// GPIOA pin number of the trigger pin.
-pub const TRIGGER_PIN: u8 = 12;
+/// IOMUX PINCM index of the trigger pin (PB22 is PINCM64 on the MSPM0L2228).
+pub const TRIGGER_PINCM: usize = 64;
+/// GPIOB pin number of the trigger pin.
+pub const TRIGGER_PIN: u8 = 22;
 pub const TRIGGER_MASK: u32 = 1 << TRIGGER_PIN;
 
 /// Configure the trigger pin as a push-pull output, driven low.
 ///
-/// This resets the whole GPIOA bank, so call it before configuring anything else on GPIOA.
-pub fn init(iomux: &Iomux, gpioa: &Gpioa) {
-    gpio::gpioa::power_on(gpioa);
+/// This does not power on or reset GPIOB: call it *after* `debug_isr::init`, which resets the whole bank
+/// (and would otherwise wipe this pin's configuration).
+pub fn init(iomux: &Iomux, gpiob: &Gpiob) {
     iomux.connect_pin(TRIGGER_PINCM, 1, InOut::Output, PullMode::None);
-    gpioa.gpioa_doutclr31_0().write(|w| unsafe { w.bits(TRIGGER_MASK) });
-    gpioa.gpioa_doeset31_0().write(|w| unsafe { w.bits(TRIGGER_MASK) });
+    gpiob.gpiob_doutclr31_0().write(|w| unsafe { w.bits(TRIGGER_MASK) });
+    gpiob.gpiob_doeset31_0().write(|w| unsafe { w.bits(TRIGGER_MASK) });
 }
 
 /// Address of the register that drives pins in a mask high (write-1-to-set).
 pub fn set_register() -> u32 {
     // SAFETY: only the address is taken, the register is not accessed.
-    unsafe { Gpioa::steal() }.gpioa_doutset31_0().as_ptr() as u32
+    unsafe { Gpiob::steal() }.gpiob_doutset31_0().as_ptr() as u32
 }
 
 /// Address of the register that drives pins in a mask low (write-1-to-clear).
 pub fn clear_register() -> u32 {
     // SAFETY: only the address is taken, the register is not accessed.
-    unsafe { Gpioa::steal() }.gpioa_doutclr31_0().as_ptr() as u32
+    unsafe { Gpiob::steal() }.gpiob_doutclr31_0().as_ptr() as u32
 }
 
 /// Read the loop count the host sends before every triggered run: a `u32`, little-endian.

@@ -67,8 +67,9 @@ fn main() -> ! {
     Uart0::init(&iomux, uart0);
     // Uart1::init(&iomux, uart1);
     FlashController::init(flashctl);
-    design::trigger::init(&iomux, &gpioa);
+    // debug_isr::init resets GPIOB, so the trigger (PB22) must be configured after it
     design::debug_isr::init(&iomux, &gpiob);
+    design::trigger::init(&iomux, &gpiob);
 
     Payload::selected().run()
 }

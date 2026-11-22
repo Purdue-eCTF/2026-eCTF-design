@@ -34,6 +34,7 @@ pub enum Payload {
     LoopCond,
     LoopSignature,
     LoopPassword,
+    TriggerPassword,
     UartLoop,
     Add,
     Triggered,
@@ -41,12 +42,13 @@ pub enum Payload {
 }
 
 impl Payload {
-    pub const ALL: [Payload; 9] = [
+    pub const ALL: [Payload; 10] = [
         Payload::Loop,
         Payload::LoopCmp,
         Payload::LoopCond,
         Payload::LoopSignature,
         Payload::LoopPassword,
+        Payload::TriggerPassword,
         Payload::UartLoop,
         Payload::Add,
         Payload::Triggered,
@@ -63,6 +65,7 @@ impl Payload {
             Payload::LoopCond => "loop_cond",
             Payload::LoopSignature => "loop_signature",
             Payload::LoopPassword => "loop_password",
+            Payload::TriggerPassword => "trigger_password",
             Payload::UartLoop => "uart_loop",
             Payload::Add => "add",
             Payload::Triggered => "triggered",
@@ -94,6 +97,7 @@ impl Payload {
             Payload::LoopCond => glitch_loop_cond(),
             Payload::LoopSignature => glitch_loop_signature(),
             Payload::LoopPassword => glitch_password_loop(),
+            Payload::TriggerPassword => glitch_password_trigger(),
             Payload::UartLoop => glitch_uart_loop(),
             Payload::Add => glitch_add(),
             Payload::Triggered => glitch_triggered(),
@@ -221,6 +225,15 @@ fn glitch_password_loop() -> ! {
     gprint!("loop");
 }
 
+#[inline(never)]
+fn glitch_password_trigger() -> ! {
+    let done = trigger::sequence();
+
+    check_password();
+
+    loop_print!("done {}", done);
+}
+
 #[unsafe(no_mangle)]
 #[inline(never)]
 extern "C" fn check_password() {
@@ -277,8 +290,14 @@ fn glitch_add() -> ! {
 fn glitch_triggered() -> ! {
     let done = trigger::sequence();
 
-    // --- code under test goes here ---
-    loop_print!("done {}", done)
+    // let a = [0, 1, 67, 69, 0, 1, 67, 69];
+    // let b = [0, 0, 0, 0, 0, 0, 0, 0];
+
+    // if black_box(black_box(a) == black_box(b)) {
+    //     gprint!("correct");
+    // }
+
+    loop_print!("done {}", done);
 }
 
 /// Like [`glitch_triggered`] but repeats forever without printing in a loop, so the host can measure how long
