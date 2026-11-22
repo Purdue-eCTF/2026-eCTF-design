@@ -405,7 +405,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "mspm0l222x-hal"
 version = "0.1.0"
-source = "git+https://github.com/Purdue-eCTF/mspm0l222x-hal.git?branch=gpio_interrupt#f6237e1738f1166d528534e51f0e12d992912f12"
+source = "git+https://github.com/Purdue-eCTF/mspm0l222x-hal.git?branch=gpio_interrupt#afef68fc94759ef597e2c385e01d7aea6bf879e4"
 dependencies = [
  "bytemuck",
  "cortex-m",

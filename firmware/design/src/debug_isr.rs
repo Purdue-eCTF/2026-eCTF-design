@@ -135,6 +135,6 @@ fn select_payload(uart: &Uart0) {
             cortex_m::asm::delay(DEBOUNCE_CYCLES);
             cortex_m::peripheral::SCB::sys_reset();
         }
-        Err(_) => println!("[debug] flash write failed"),
+        Err(e) => println!("[debug] flash write failed: {}", e),
     }
 }

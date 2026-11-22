@@ -12,6 +12,7 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use mspm0l222x_hal::{println, timer::Instant, uart::uart0};
 
 use crate::flash::FlashEntry;
+use crate::trigger;
 
 /// Flash page used to persist the selected payload (the FAT page, unused in glitch builds).
 const SELECTION_LOCATION: u32 = 0x3A000;
@@ -35,10 +36,12 @@ pub enum Payload {
     LoopPassword,
     UartLoop,
     Add,
+    Triggered,
+    Calibrate,
 }
 
 impl Payload {
-    pub const ALL: [Payload; 7] = [
+    pub const ALL: [Payload; 9] = [
         Payload::Loop,
         Payload::LoopCmp,
         Payload::LoopCond,
@@ -46,6 +49,8 @@ impl Payload {
         Payload::LoopPassword,
         Payload::UartLoop,
         Payload::Add,
+        Payload::Triggered,
+        Payload::Calibrate,
     ];
 
     /// Payload used when nothing is saved in flash.
@@ -60,6 +65,8 @@ impl Payload {
             Payload::LoopPassword => "loop_password",
             Payload::UartLoop => "uart_loop",
             Payload::Add => "add",
+            Payload::Triggered => "triggered",
+            Payload::Calibrate => "calibrate",
         }
     }
 
@@ -89,8 +96,22 @@ impl Payload {
             Payload::LoopPassword => glitch_password_loop(),
             Payload::UartLoop => glitch_uart_loop(),
             Payload::Add => glitch_add(),
+            Payload::Triggered => glitch_triggered(),
+            Payload::Calibrate => glitch_calibrate(),
         }
     }
+}
+
+/// Print a message (same syntax as `println!`) every 3 seconds, forever, with no prefix.
+macro_rules! loop_print {
+    ($($arg:tt)+) => {
+        loop {
+            println!($($arg)+);
+
+            let end = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < end {}
+        }
+    };
 }
 
 /// Print `glitch <message>` (message takes the same syntax as `println!`) every 3 seconds, forever. Use it at
@@ -102,12 +123,7 @@ macro_rules! gprint {
         gprint!("occured")
     };
     ($($arg:tt)+) => {
-        loop {
-            println!("glitch {}", format_args!($($arg)+));
-
-            let end = Instant::now() + Duration::from_secs(3);
-            while Instant::now() < end {}
-        }
+        loop_print!("glitch {}", format_args!($($arg)+))
     };
 }
 
@@ -251,5 +267,26 @@ fn glitch_add() -> ! {
         }
 
         println!("{}-{}-{}", black_box(total), black_box(x), black_box(y));
+    }
+}
+
+/// Run the trigger sequence (see [`trigger::sequence`]), then the code under test, which is where the host's
+/// glitch lands. The code under test here is a placeholder that reports the iteration count forever; replace it
+/// with whatever should be glitched, or call [`trigger::sequence`] at the start of any other payload.
+#[inline(never)]
+fn glitch_triggered() -> ! {
+    let done = trigger::sequence();
+
+    // --- code under test goes here ---
+    loop_print!("done {}", done)
+}
+
+/// Like [`glitch_triggered`] but repeats forever without printing in a loop, so the host can measure how long
+/// the trigger pin stays high for many loop counts without resetting the board between them.
+#[inline(never)]
+fn glitch_calibrate() -> ! {
+    loop {
+        let done = trigger::sequence();
+        println!("done {}", done);
     }
 }

@@ -35,6 +35,7 @@ fn main() -> ! {
         uart0,
         uart1,
         flashctl,
+        gpioa,
         gpiob,
         ..
     } = peripherals;
@@ -66,6 +67,7 @@ fn main() -> ! {
     Uart0::init(&iomux, uart0);
     // Uart1::init(&iomux, uart1);
     FlashController::init(flashctl);
+    design::trigger::init(&iomux, &gpioa);
     design::debug_isr::init(&iomux, &gpiob);
 
     Payload::selected().run()
