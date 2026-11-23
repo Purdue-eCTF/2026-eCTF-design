@@ -1,11 +1,13 @@
 //! Trigger GPIO for the triggered glitch payloads.
 //!
-//! The ChipWhisperer watches this pin (wired to its `tio4`, and through a series resistor to the ADC
-//! measure input while calibrating) and fires its glitch a fixed number of cycles after the rising edge.
-//! [`sequence`] is the function a payload calls *before* the code under test: it reads a loop count from the
-//! UART, raises the pin, runs that many iterations of a fixed loop, lowers the pin and returns. The count only
-//! sets how long the pin stays high (the delay between the rising edge and the code that follows); the host
-//! normally just times its glitch from the rising edge.
+//! The Faultier watches this pin (EXT0/EXT1) and fires its glitch a fixed number of cycles after the
+//! rising edge. [`sequence`] is the function a payload calls *before* the code under test: it waits for
+//! a byte from the host (sent once the Faultier is armed), raises the pin, runs a short hardcoded NOP
+//! sled, lowers the pin and returns.
+//!
+//! The sled is fixed on purpose. Glitch widths are now a few PIO cycles (tens of ns), so the old
+//! UART-supplied loop count is gone; the host positions the pulse by sweeping its delay from the rising
+//! edge instead. [`TRIGGER_NOPS`] sets the pin-high window, which the `calibrate` payload can measure.
 
 use mspm0l222x_hal::{
     iomux::{InOut, Iomux, PullMode},
@@ -18,6 +20,13 @@ pub const TRIGGER_PINCM: usize = 64;
 /// GPIOB pin number of the trigger pin.
 pub const TRIGGER_PIN: u8 = 22;
 pub const TRIGGER_MASK: u32 = 1 << TRIGGER_PIN;
+
+/// Number of NOPs the pin stays high for.
+///
+/// At the 32 MHz target clock one NOP is 31.25 ns, i.e. 7.8 Faultier PIO cycles, so 8 NOPs give a
+/// ~250 ns (62 PIO cycle) window: comfortably longer than the 6..17 cycle pulse the board needs, and
+/// long enough that the pulse (and its tail) can be swept anywhere inside it.
+pub const TRIGGER_NOPS: usize = 8;
 
 /// Configure the trigger pin as a push-pull output, driven low.
 ///
@@ -41,48 +50,41 @@ pub fn clear_register() -> u32 {
     unsafe { Gpiob::steal() }.gpiob_doutclr31_0().as_ptr() as u32
 }
 
-/// Read the loop count the host sends before every triggered run: a `u32`, little-endian.
-fn read_loop_count() -> u32 {
-    let mut bytes = [0u8; 4];
-    // a framing/overrun error leaves the count wrong, which the host sees as a mismatch in the echoed count
-    let _ = uart0().read_bytes(&mut bytes);
-    u32::from_le_bytes(bytes)
+/// Wait for the byte the host sends after arming the Faultier.
+///
+/// The value is irrelevant: it only says "armed, go". A framing/overrun error is ignored; the pin still
+/// pulses, so the host sees a missing result rather than a stuck target.
+fn wait_for_go() {
+    let _ = uart0().read_byte();
 }
 
-/// Raise the trigger pin, run `count` iterations of a fixed assembly loop, lower the pin, and return how
-/// many iterations actually completed.
+/// Raise the trigger pin, run the fixed NOP sled, lower the pin.
 ///
-/// Both pin edges are single `str`s inside the asm so the pin-high time is `c0 + c1 * count` cycles with
-/// nothing from the compiler in between. `count == 0` skips the loop.
+/// Both pin edges are single `str`s inside the asm, with only NOPs between them, so the pin-high time is
+/// exactly [`TRIGGER_NOPS`] target cycles plus the two stores and nothing the compiler can reorder.
 #[inline(never)]
-fn run_counted(count: u32) -> u32 {
-    let done: u32;
+fn run_fixed() {
     unsafe {
         core::arch::asm!(
             "str {mask}, [{set}]",
-            "movs {done}, #0",
-            "cmp {n}, #0",
-            "beq 3f",
-            "2:",
-            "adds {done}, #1",
-            "subs {n}, #1",
-            "bne 2b",
-            "3:",
+            ".rept {nops}",
+            "nop",
+            ".endr",
             "str {mask}, [{clr}]",
-            n = inout(reg) count => _,
-            done = out(reg) done,
+            nops = const TRIGGER_NOPS,
             mask = in(reg) TRIGGER_MASK,
             set = in(reg) set_register(),
             clr = in(reg) clear_register(),
         );
     }
-    done
 }
 
-/// Read a loop count from the UART, raise the trigger pin, run the loop, lower the pin and return how many
-/// iterations completed. Call this right before the code that should be glitched; when it returns, run that
-/// code. The return value is only useful to echo back to the host (or to ignore).
+/// Wait for the host's go byte, raise the trigger pin, run the fixed sled, lower the pin and return.
+///
+/// Call this right before the code that should be glitched; the host times its pulse from the rising
+/// edge. It prints nothing and returns no value: there is no loop count to echo.
 #[inline(never)]
-pub fn sequence() -> u32 {
-    run_counted(read_loop_count())
+pub fn sequence() {
+    wait_for_go();
+    run_fixed();
 }

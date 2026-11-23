@@ -1,5 +1,7 @@
 //! Glitch test payloads. Each payload prints `ready <name>` and then runs a loop that a glitch should
-//! break out of, after which it prints `glitch occured` (or payload-specific output) forever.
+//! break out of, after which it prints `glitch occured` (or payload-specific output) forever. The
+//! `triggered`/`trigger_password` payloads instead wait for the host's go byte, pulse the trigger pin
+//! and run their code under test once.
 //!
 //! The payload to run on boot is stored in a [`FlashEntry`] (on the otherwise unused file allocation table
 //! page) so it persists across resets. It can be changed with the debug ISR (see `debug_isr.rs`).
@@ -227,20 +229,44 @@ fn glitch_password_loop() -> ! {
 
 #[inline(never)]
 fn glitch_password_trigger() -> ! {
-    let done = trigger::sequence();
+    trigger::sequence();
 
     check_password();
 
-    loop_print!("done {}", done);
+    loop_print!("done");
 }
 
+/// Where a hijacked `pc` lands.
+///
+/// Never called from Rust, and `#[inline(never)]` so it stays a real function: its only reference is
+/// the `RECEIVED` array below, which is why LTO and `--gc-sections` keep it.
+///
+/// `check_password` copies `RECEIVED` to `sp + 8` in its frame, and its epilogue is
+/// `add sp, #0x2c; pop {r4, r5, r6, r7, pc}`. A glitch that skips (or shrinks) the `add sp` leaves
+/// `sp` pointing into that copy, so `pop` loads `pc` from one of these words and jumps here instead
+/// of to an unmapped address. Every entry is the same so a one-word misalignment still lands here.
+#[unsafe(no_mangle)]
+#[inline(never)]
+extern "C" fn pc_control() -> ! {
+    gprint!("pc control");
+}
+
+/// The array's element type: a function pointer, so `RECEIVED` holds `pc_control`'s address (Thumb
+/// bit included, keeping the popped `pc` in Thumb mode) rather than a value we would have to cast.
+type PcControl = extern "C" fn() -> !;
+
+static RECEIVED: [PcControl; 4] = [pc_control; 4];
+
+/// The "correct password": plain words, so the check does not pass without a glitch.
 const SECRET: [u32; 4] = [0x6769_6769; 4];
-static RECEIVED: [u32; 4] = [0x4443_4241, 0x4847_4645, 0x4c4b_4a49, 0x504f_4e4d];
 
 #[unsafe(no_mangle)]
 #[inline(never)]
 extern "C" fn check_password() {
     let input = black_box(*black_box(&RECEIVED)); // pointer opaque, copy opaque
+    // Reinterpret the pointer words as plain words (same size, same bits) so the comparison is a
+    // `memcmp`, exactly as it was for the numeric password, and the stack copy stays where it was.
+    let input: [u32; 4] = unsafe { core::mem::transmute(input) };
     if black_box(input == SECRET) {
         gprint!("authed");
     }
@@ -286,11 +312,11 @@ fn glitch_add() -> ! {
 }
 
 /// Run the trigger sequence (see [`trigger::sequence`]), then the code under test, which is where the host's
-/// glitch lands. The code under test here is a placeholder that reports the iteration count forever; replace it
-/// with whatever should be glitched, or call [`trigger::sequence`] at the start of any other payload.
+/// glitch lands. The code under test here is a placeholder that prints `done` forever; replace it with whatever
+/// should be glitched, or call [`trigger::sequence`] at the start of any other payload.
 #[inline(never)]
 fn glitch_triggered() -> ! {
-    let done = trigger::sequence();
+    trigger::sequence();
 
     // let a = [0, 1, 67, 69, 0, 1, 67, 69];
     // let b = [0, 0, 0, 0, 0, 0, 0, 0];
@@ -299,15 +325,15 @@ fn glitch_triggered() -> ! {
     //     gprint!("correct");
     // }
 
-    loop_print!("done {}", done);
+    loop_print!("done");
 }
 
-/// Like [`glitch_triggered`] but repeats forever without printing in a loop, so the host can measure how long
-/// the trigger pin stays high for many loop counts without resetting the board between them.
+/// Like [`glitch_triggered`] but repeats forever, so the host can measure the fixed trigger window many
+/// times without resetting the board between them.
 #[inline(never)]
 fn glitch_calibrate() -> ! {
     loop {
-        let done = trigger::sequence();
-        println!("done {}", done);
+        trigger::sequence();
+        println!("done");
     }
 }
