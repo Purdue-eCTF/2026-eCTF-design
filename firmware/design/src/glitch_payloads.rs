@@ -234,12 +234,14 @@ fn glitch_password_trigger() -> ! {
     loop_print!("done {}", done);
 }
 
+const SECRET: [u32; 4] = [0x6769_6769; 4];
+static RECEIVED: [u32; 4] = [0x4443_4241, 0x4847_4645, 0x4c4b_4a49, 0x504f_4e4d];
+
 #[unsafe(no_mangle)]
 #[inline(never)]
 extern "C" fn check_password() {
-    let input = black_box(55u32);
-
-    if black_box(input == 0x6767) {
+    let input = black_box(*black_box(&RECEIVED)); // pointer opaque, copy opaque
+    if black_box(input == SECRET) {
         gprint!("authed");
     }
 }
