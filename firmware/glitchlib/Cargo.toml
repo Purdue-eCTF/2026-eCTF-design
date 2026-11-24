@@ -1,0 +1,19 @@
+[package]
+name = "glitchlib"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+cortex-m = "0.7.7"
+# No `rt`: cortex-m-rt would drag a second vector table / Reset into the archive. See README.
+mspm0l222x-pac = { git = "https://github.com/Purdue-eCTF/mspm0l222x-pac.git", branch = "gpio_interrupt", default-features = false }
+
+[profile.release]
+lto = "fat"
+opt-level = "s"
+codegen-units = 1
+panic = "abort"
+debug = true
