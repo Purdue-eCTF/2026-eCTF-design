@@ -23,10 +23,12 @@ pub const TRIGGER_MASK: u32 = 1 << TRIGGER_PIN;
 
 /// Number of NOPs the pin stays high for.
 ///
-/// At the 32 MHz target clock one NOP is 31.25 ns, i.e. 7.8 Faultier PIO cycles, so 8 NOPs give a
-/// ~250 ns (62 PIO cycle) window: comfortably longer than the 6..17 cycle pulse the board needs, and
-/// long enough that the pulse (and its tail) can be swept anywhere inside it.
-pub const TRIGGER_NOPS: usize = 8;
+/// At the 32 MHz target clock one NOP is 31.25 ns, i.e. 7.8 Faultier PIO cycles, so 64 NOPs give a
+/// ~2 us (500 PIO cycle) window. An 8-NOP (250 ns) window was not seen by the edge counter or the
+/// trigger input, while a DC level on the same pin was, so this gives the input/counter plenty of
+/// margin. The window length does not change the glitch width; it only shifts where the code under test
+/// runs, which the offset sweep accounts for.
+pub const TRIGGER_NOPS: usize = 64;
 
 /// Configure the trigger pin as a push-pull output, driven low.
 ///
@@ -34,8 +36,12 @@ pub const TRIGGER_NOPS: usize = 8;
 /// (and would otherwise wipe this pin's configuration).
 pub fn init(iomux: &Iomux, gpiob: &Gpiob) {
     iomux.connect_pin(TRIGGER_PINCM, 1, InOut::Output, PullMode::None);
-    gpiob.gpiob_doutclr31_0().write(|w| unsafe { w.bits(TRIGGER_MASK) });
-    gpiob.gpiob_doeset31_0().write(|w| unsafe { w.bits(TRIGGER_MASK) });
+    gpiob
+        .gpiob_doutclr31_0()
+        .write(|w| unsafe { w.bits(TRIGGER_MASK) });
+    gpiob
+        .gpiob_doeset31_0()
+        .write(|w| unsafe { w.bits(TRIGGER_MASK) });
 }
 
 /// Address of the register that drives pins in a mask high (write-1-to-set).
@@ -56,6 +62,18 @@ pub fn clear_register() -> u32 {
 /// pulses, so the host sees a missing result rather than a stuck target.
 fn wait_for_go() {
     let _ = uart0().read_byte();
+}
+
+/// Drive the trigger pin high immediately (diagnostic / slow-toggle tests).
+pub fn drive_high() {
+    // SAFETY: set_register() is the GPIOB DOUTSET register, write-1-to-set.
+    unsafe { core::ptr::write_volatile(set_register() as *mut u32, TRIGGER_MASK) };
+}
+
+/// Drive the trigger pin low immediately (diagnostic / slow-toggle tests).
+pub fn drive_low() {
+    // SAFETY: clear_register() is the GPIOB DOUTCLR register, write-1-to-clear.
+    unsafe { core::ptr::write_volatile(clear_register() as *mut u32, TRIGGER_MASK) };
 }
 
 /// Raise the trigger pin, run the fixed NOP sled, lower the pin.
