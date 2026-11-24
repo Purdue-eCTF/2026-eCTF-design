@@ -50,10 +50,14 @@ fn run_fixed() {
     }
 }
 
-/// Wait for the host's go byte, raise the trigger, run the fixed sled, lower it. Does nothing but the wait
-/// if the trigger is disabled.
+/// Drive the trigger low, wait for the host's go byte, raise the trigger, run the fixed sled, lower it.
+/// Does nothing but the wait if the trigger is disabled.
+///
+/// The initial `drive_low` makes sure the pin starts low for every run, even if an earlier test left it high
+/// (e.g. `dbg_trigger_high`), so the host always sees a rising edge.
 #[inline(never)]
 pub fn sequence() {
+    drive_low();
     let _ = uart::read_byte();
     if MASK.load(Ordering::Relaxed) != 0 {
         run_fixed();

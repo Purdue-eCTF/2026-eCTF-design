@@ -103,6 +103,7 @@ fn run_fixed() {
 /// edge. It prints nothing and returns no value: there is no loop count to echo.
 #[inline(never)]
 pub fn sequence() {
+    drive_low();
     wait_for_go();
     run_fixed();
 }
